@@ -355,7 +355,9 @@ export function useCardGeneration(
         }
         parts.push({ text: lastPrompt });
 
-        const imageResponse = await withGeminiRetry(async () => {
+        // Retry up to 2 extra times when Gemini returns a 200 but no image data
+        const IMAGE_EMPTY_RETRIES = 2;
+        let imageResponse = await withGeminiRetry(async () => {
           return await callGeminiProxy(
             GEMINI_IMAGE_MODEL,
             [{ parts }],
@@ -370,6 +372,32 @@ export function useCardGeneration(
           );
         });
 
+        for (let emptyRetry = 0; emptyRetry < IMAGE_EMPTY_RETRIES; emptyRetry++) {
+          if (imageResponse.images && imageResponse.images.length > 0) break;
+          if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+          // Safety block — don't retry if the model explicitly refused
+          const reason = imageResponse.finishReason?.toUpperCase();
+          if (reason === 'SAFETY' || reason === 'PROHIBITED_CONTENT' || imageResponse.promptFeedback?.blockReason) {
+            break;
+          }
+          log.warn(`Empty image response for "${card.text}" (attempt ${emptyRetry + 1}/${IMAGE_EMPTY_RETRIES}), retrying...`);
+          await new Promise((r) => setTimeout(r, 1500 * (emptyRetry + 1)));
+          imageResponse = await withGeminiRetry(async () => {
+            return await callGeminiProxy(
+              GEMINI_IMAGE_MODEL,
+              [{ parts }],
+              {
+                ...PRO_IMAGE_CONFIG,
+                imageConfig: {
+                  aspectRatio: settings.aspectRatio,
+                  imageSize: settings.resolution,
+                },
+              },
+              signal,
+            );
+          });
+        }
+
         if (imageResponse?.usageMetadata) {
           recordUsage?.({
             provider: 'gemini',
@@ -381,7 +409,21 @@ export function useCardGeneration(
 
         let cardUrl = '';
         if (!imageResponse.images || imageResponse.images.length === 0) {
-          throw new Error('No image data received from the AI model. The response may have been blocked or empty.');
+          // Build a descriptive error using diagnostics from the proxy
+          const reason = imageResponse.finishReason;
+          const blocked = imageResponse.promptFeedback?.blockReason;
+          let detail = 'The response may have been blocked or empty.';
+          if (blocked) {
+            detail = `Prompt blocked by safety filter: ${blocked}`;
+          } else if (reason === 'SAFETY' || reason === 'PROHIBITED_CONTENT') {
+            detail = `Image generation blocked (${reason}). Try simplifying the card content.`;
+          } else if (reason) {
+            detail = `Model finish reason: ${reason}. The model may not have generated an image for this content.`;
+          }
+          if (imageResponse.text) {
+            log.warn(`Gemini returned text but no image for "${card.text}":`, imageResponse.text.slice(0, 200));
+          }
+          throw new Error(`No image data received from the AI model. ${detail}`);
         }
         const img = imageResponse.images[0];
         cardUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;

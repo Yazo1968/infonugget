@@ -238,6 +238,12 @@ export interface GeminiProxyResponse {
     candidatesTokenCount?: number;
     totalTokenCount?: number;
   };
+  /** Why the model stopped generating (e.g. STOP, SAFETY, MAX_TOKENS). */
+  finishReason?: string | null;
+  /** Per-category safety ratings from the model. */
+  safetyRatings?: Array<{ category: string; probability: string }> | null;
+  /** Prompt-level feedback — present when the prompt itself was blocked. */
+  promptFeedback?: { blockReason?: string; safetyRatings?: unknown[] } | null;
 }
 
 /**
