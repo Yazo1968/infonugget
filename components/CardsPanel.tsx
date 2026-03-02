@@ -1,6 +1,6 @@
 import React, { useRef, useCallback, useState, useMemo, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
-import { Card, CardItem, DetailLevel, UploadedFile } from '../types';
+import { Card, CardItem, DetailLevel, UploadedFile, isCoverLevel } from '../types';
 import { findCard, allFolderNames } from '../utils/cardUtils';
 import { isNameTaken } from '../utils/naming';
 import { DragLocation } from '../hooks/useCardOperations';
@@ -57,6 +57,15 @@ interface CardsPanelProps {
   onCreateCustomCardInFolder?: (folderId: string, name: string) => void;
   /** Assets panel content rendered as the right section of this combined panel. */
   assetsSlot?: React.ReactNode;
+}
+
+/** For cover cards (TitleCard, TakeawayCard) and Snapshot (DirectContent), content
+ *  lives at the card's own fixed detailLevel. For regular cards, use the toolbar tab. */
+function effectiveLevel(card: Card | null, toolbarLevel: DetailLevel): DetailLevel {
+  if (!card) return toolbarLevel;
+  const cardLevel = card.detailLevel || 'Standard';
+  if (isCoverLevel(cardLevel) || cardLevel === 'DirectContent') return cardLevel;
+  return toolbarLevel;
 }
 
 /** Ensure markdown content starts with an H1 heading matching cardTitle.
@@ -152,19 +161,26 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
 
     // ── Imperative editor content swap ──
     // Instead of remounting the editor (400-560ms), swap content via resetContent.
-    // Track previous card ID to detect changes.
+    // Track both card ID and resolved content to detect changes — this ensures
+    // the editor refreshes when synthesis completes for the currently-active card.
     const prevCardIdRef = useRef(activeCardId);
+    const prevContentRef = useRef('');
     useEffect(() => {
-      if (activeCardId === prevCardIdRef.current) return;
-      prevCardIdRef.current = activeCardId;
-      if (!activeCardId) return;
-      // Swap editor content imperatively — no unmount/remount
-      const card = findCard(cards, activeCardId);
-      if (card) {
-        const raw = card.synthesisMap?.[detailLevel] || '';
-        const content = ensureH1(raw, card.text);
-        editorHandleRef.current?.resetContent(content);
+      if (!activeCardId) {
+        prevCardIdRef.current = activeCardId;
+        prevContentRef.current = '';
+        return;
       }
+      const card = findCard(cards, activeCardId);
+      if (!card) return;
+      const level = effectiveLevel(card, detailLevel);
+      const raw = card.synthesisMap?.[level] || '';
+      const content = ensureH1(raw, card.text);
+      // Skip if neither card nor content changed
+      if (activeCardId === prevCardIdRef.current && content === prevContentRef.current) return;
+      prevCardIdRef.current = activeCardId;
+      prevContentRef.current = content;
+      editorHandleRef.current?.resetContent(content);
     }, [activeCardId, cards, detailLevel]);
 
     // ── Sidebar resize state ──
@@ -235,7 +251,8 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
     // card switches use resetContent imperatively so the editor never re-renders.
     const initialDocRef = useRef<UploadedFile | null>(null);
     if (activeCard && !initialDocRef.current) {
-      const raw = activeCard.synthesisMap?.[detailLevel] || '';
+      const level = effectiveLevel(activeCard, detailLevel);
+      const raw = activeCard.synthesisMap?.[level] || '';
       initialDocRef.current = { id: activeCard.id, name: activeCard.text, content: ensureH1(raw, activeCard.text) } as UploadedFile;
     }
     // Reset when no card is selected so next card gets a fresh initial
@@ -264,8 +281,9 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
     saveRef.current = { activeCard, detailLevel, onSaveCardContent, onRenameCard };
     const handleSave = useCallback(
       (newContent: string) => {
-        const { activeCard: card, detailLevel: level, onSaveCardContent: save, onRenameCard: rename } = saveRef.current;
+        const { activeCard: card, detailLevel: toolbarLevel, onSaveCardContent: save, onRenameCard: rename } = saveRef.current;
         if (!card) return;
+        const level = effectiveLevel(card, toolbarLevel);
         const h1Text = extractH1(newContent);
         if (h1Text && h1Text !== card.text) {
           rename(card.id, h1Text);

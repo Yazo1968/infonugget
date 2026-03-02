@@ -4,7 +4,7 @@ import { assembleRendererPrompt, transformContentToTags, hexToColorName } from '
 // ─────────────────────────────────────────────────────────────────
 // Visualizer (Card Image Generation)
 // ─────────────────────────────────────────────────────────────────
-// Phase 4 — consumed by gemini-3-pro-image-preview (image model).
+// Phase 4 — consumed by gemini-3.1-flash-image-preview (image model).
 //
 // CRITICAL: All prompts in this file use narrative prose only.
 // No markdown (##, **, ---), no XML tags, no key-value pairs,
@@ -49,7 +49,7 @@ export function buildVisualizerPrompt(
 // ─────────────────────────────────────────────────────────────────
 // Annotation-Based Modification
 // ─────────────────────────────────────────────────────────────────
-// Phase 5a — consumed by gemini-3-pro-image-preview (image model).
+// Phase 5a — consumed by gemini-3.1-flash-image-preview (image model).
 //
 // This prompt relies primarily on the reference image for style.
 // Changes from original (per S8):
@@ -95,7 +95,7 @@ Process: Study the original image carefully, noting its style, colors, fonts, an
 // ─────────────────────────────────────────────────────────────────
 // Content-Only Modification (re-render with updated text)
 // ─────────────────────────────────────────────────────────────────
-// Phase 5b — consumed by gemini-3-pro-image-preview (image model).
+// Phase 5b — consumed by gemini-3.1-flash-image-preview (image model).
 //
 // Changes from original (per S8):
 //   - Full narrative rewrite — no markdown, no key-value pairs

@@ -9,7 +9,7 @@
 export const CLAUDE_MODEL = 'claude-sonnet-4-6';
 
 /** Gemini model used for image generation. */
-export const GEMINI_IMAGE_MODEL = 'gemini-3-pro-image-preview';
+export const GEMINI_IMAGE_MODEL = 'gemini-3.1-flash-image-preview';
 
 /** Gemini model used for PDF conversion and heading extraction. */
 export const GEMINI_FLASH_MODEL = 'gemini-2.5-flash';
@@ -47,3 +47,6 @@ export const COVER_TOKEN_LIMIT = 256;
 
 /** Default max tokens for general chat completions (non-card requests). */
 export const CHAT_MAX_TOKENS = 8192;
+
+/** Max tokens for the lightweight "Initiate Chat" call (doc briefs + suggestions). */
+export const INITIATE_CHAT_MAX_TOKENS = 512;

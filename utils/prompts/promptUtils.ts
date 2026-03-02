@@ -38,7 +38,7 @@ export function buildExpertPriming(subject?: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Prompt Utilities for gemini-3-pro-image-preview
+// Prompt Utilities for gemini-3.1-flash-image-preview
 // ─────────────────────────────────────────────────────────────────
 // All functions in this file produce narrative prose optimized for
 // the image generation model. No markdown, no XML, no key-value
@@ -677,9 +677,18 @@ export function assembleRendererPrompt(
   // 4. Content (transformed from markdown to bracketed tags)
   const contentBlock = transformContentToTags(synthesisContent, cardTitle);
 
-  // Assemble: role → style → [reference] → layout → content
+  // 5. Tag rendering instruction — the Flash image model renders bracketed
+  //    tags as literal text unless explicitly told not to.
+  const tagInstruction =
+    'The content below uses bracketed tags like [TITLE], [SECTION], [SUBSECTION], ' +
+    '[DETAIL], [BEGIN TEXT CONTENT], and [END TEXT CONTENT] to indicate text hierarchy. ' +
+    'These tags are structural markers only — do NOT render them as visible text in the image. ' +
+    'Render only the text that follows each tag, using the tag to determine visual weight ' +
+    '(TITLE = largest, SECTION = heading, SUBSECTION = subheading, DETAIL = minor heading).';
+
+  // Assemble: role → style → [reference] → layout → tag instruction → content
   const blocks = [role, styleBlock];
   if (referenceNote) blocks.push(referenceNote);
-  blocks.push(layoutBlock, contentBlock);
+  blocks.push(layoutBlock, tagInstruction, contentBlock);
   return blocks.join('\n\n');
 }

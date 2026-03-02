@@ -55,8 +55,26 @@ const CardRow: React.FC<CardRowProps> = ({
   onRenameCommit,
   onRenameCancel,
 }) => {
-  const isTitleCard = card.detailLevel === 'TitleCard';
-  const showBadge = isCoverLevel(card.detailLevel || 'Standard');
+  const level = card.detailLevel || 'Standard';
+  const badgeLetter =
+    level === 'TitleCard' ? 'T'
+    : level === 'TakeawayCard' ? 'A'
+    : level === 'DirectContent' ? 'S'
+    : level === 'Executive' ? 'E'
+    : level === 'Detailed' ? 'D'
+    : 'S'; // Standard
+  const badgeTitle =
+    level === 'TitleCard' ? 'Title Card'
+    : level === 'TakeawayCard' ? 'Takeaway Card'
+    : level === 'DirectContent' ? 'Snapshot'
+    : level;
+  const badgeColor =
+    level === 'TitleCard'      ? 'text-violet-600 bg-violet-100 dark:text-violet-400 dark:bg-violet-900/40 border-violet-200 dark:border-violet-700'
+    : level === 'TakeawayCard' ? 'text-amber-600 bg-amber-100 dark:text-amber-400 dark:bg-amber-900/40 border-amber-200 dark:border-amber-700'
+    : level === 'Executive'    ? 'text-blue-600 bg-blue-100 dark:text-blue-400 dark:bg-blue-900/40 border-blue-200 dark:border-blue-700'
+    : level === 'Detailed'     ? 'text-cyan-600 bg-cyan-100 dark:text-cyan-400 dark:bg-cyan-900/40 border-cyan-200 dark:border-cyan-700'
+    : level === 'DirectContent'? 'text-emerald-600 bg-emerald-100 dark:text-emerald-400 dark:bg-emerald-900/40 border-emerald-200 dark:border-emerald-700'
+    :                            'text-slate-600 bg-slate-100 dark:text-slate-400 dark:bg-slate-800 border-slate-200 dark:border-slate-600';
 
   return (
     <div
@@ -121,26 +139,13 @@ const CardRow: React.FC<CardRowProps> = ({
         <div className="shrink-0 w-3.5 h-3.5 rounded-full border-[1.5px] border-zinc-200 dark:border-zinc-600 border-t-zinc-500 dark:border-t-zinc-400 animate-spin" title="Generating image…" />
       )}
 
-      {showBadge && (
-        <div className="flex items-center gap-0.5 shrink-0" title={isTitleCard ? 'Title Card' : 'Takeaway Card'}>
-          {isTitleCard ? (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-violet-500">
-              <rect x="2" y="3" width="20" height="14" rx="2" />
-              <path d="M8 21h8" />
-              <path d="M12 17v4" />
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
-              <path d="M9 18h6" />
-              <path d="M10 22h4" />
-              <path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" />
-            </svg>
-          )}
-          <span className={`text-[7px] font-bold uppercase tracking-wider px-1 py-[1px] rounded ${isTitleCard ? 'text-violet-600 bg-violet-50' : 'text-amber-600 bg-amber-50'}`}>
-            {isTitleCard ? 'Title' : 'Takeaway'}
-          </span>
-        </div>
-      )}
+      {/* Detail level badge — single letter */}
+      <span
+        className={`shrink-0 w-3.5 h-3.5 flex items-center justify-center rounded-[3px] border text-[8px] font-bold leading-none ${badgeColor}`}
+        title={badgeTitle}
+      >
+        {badgeLetter}
+      </span>
 
       {/* Card title or rename input */}
       <div className="flex-1 min-w-0">

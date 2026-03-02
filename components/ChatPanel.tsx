@@ -26,6 +26,7 @@ interface ChatPanelProps {
   onCreatePlaceholder?: (title: string, detailLevel: DetailLevel) => string | null;
   onFillPlaceholderCard?: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
   onRemovePlaceholderCard?: (cardId: string, detailLevel: DetailLevel) => void;
+  onInitiateChat?: () => void;
 }
 
 const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -46,6 +47,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   onCreatePlaceholder,
   onFillPlaceholderCard,
   onRemovePlaceholderCard,
+  onInitiateChat,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -250,6 +252,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     setTimeout(() => setCopiedMsgId(null), 1500);
   };
 
+  const parseDocumentLog = useCallback((content: string): { body: string; docLog: string | null } => {
+    const regex = /```document-log\n([\s\S]*?)```/;
+    const match = content.match(regex);
+    if (!match) return { body: content, docLog: null };
+    const body = content.replace(regex, '').trimEnd();
+    return { body, docLog: match[1].trim() };
+  }, []);
+
   const parseCardSuggestions = useCallback((content: string): { body: string; suggestions: string[] } => {
     const regex = /```card-suggestions\n([\s\S]*?)```/;
     const match = content.match(regex);
@@ -325,9 +335,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                             <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                           </svg>
                         </div>
-                        <p className="text-xs text-zinc-500 dark:text-zinc-400 font-light max-w-xs">
-                          Ask questions about your documents, explore themes, and generate card content from the
-                          conversation.
+                        {onInitiateChat && (
+                          <button
+                            onClick={onInitiateChat}
+                            disabled={isLoading}
+                            className="px-5 py-1.5 rounded-full text-[11px] font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors mb-2"
+                          >
+                            Initiate Chat
+                          </button>
+                        )}
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-light max-w-xs">
+                          Reviews your documents and suggests exploration prompts
                         </p>
                       </>
                     )}
@@ -335,20 +353,53 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                 )}
 
                 {messages.map((msg) => {
-                  // System messages
+                  // System messages — collapsible, collapsed by default
                   if (msg.role === 'system') {
                     const noticeHtml = sanitizeHtml(marked.parse(msg.content, { async: false }) as string);
+                    // Extract header: first line stripped of markdown brackets/formatting, truncated to 60 chars
+                    const firstLine = msg.content.split('\n').find((l) => l.trim()) || 'System Update';
+                    const headerText = firstLine.replace(/^\[|\]$|^\*\*|\*\*$/g, '').trim();
+                    const truncatedHeader = headerText.length > 60 ? headerText.slice(0, 57) + '...' : headerText;
+                    const isExpanded = expandedCards.has(msg.id);
                     return (
                       <div key={msg.id} className="px-5 py-2">
                         <div
-                          className="rounded-xl px-4 py-3 system-notice-prose text-[11px] leading-relaxed"
+                          className="rounded-xl overflow-hidden"
                           style={{
                             backgroundColor: 'rgba(42, 159, 212, 0.06)',
                             border: '1px solid rgba(42, 159, 212, 0.2)',
-                            color: '#1a7aaa',
                           }}
-                          dangerouslySetInnerHTML={{ __html: noticeHtml }}
-                        />
+                        >
+                          <button
+                            onClick={() => toggleCardExpanded(msg.id)}
+                            className="w-full flex items-center gap-2 px-4 py-2.5 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+                          >
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className={`shrink-0 transition-transform duration-150 ${isExpanded ? 'rotate-90' : ''}`}
+                              style={{ color: '#1a7aaa' }}
+                            >
+                              <path d="m9 18 6-6-6-6" />
+                            </svg>
+                            <span className="text-[10px] font-medium truncate" style={{ color: '#1a7aaa' }}>
+                              {truncatedHeader}
+                            </span>
+                          </button>
+                          {isExpanded && (
+                            <div
+                              className="px-4 pb-3 system-notice-prose text-[11px] leading-relaxed"
+                              style={{ color: '#1a7aaa' }}
+                              dangerouslySetInnerHTML={{ __html: noticeHtml }}
+                            />
+                          )}
+                        </div>
                       </div>
                     );
                   }
@@ -405,10 +456,51 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                     );
                   }
 
-                  // Assistant messages
-                  const { body, suggestions } = parseCardSuggestions(msg.content);
+                  // Assistant messages — parse doc-log first, then card suggestions on remaining body
+                  const { body: bodyAfterDocLog, docLog } = parseDocumentLog(msg.content);
+                  const { body, suggestions } = parseCardSuggestions(bodyAfterDocLog);
+                  const docLogKey = msg.id + '-doclog';
+                  const docLogLineCount = docLog ? docLog.split('\n').filter((l) => l.trim()).length : 0;
                   return (
                     <div key={msg.id} className="group/msg px-5 py-3">
+                      {/* Document log — collapsible, collapsed by default */}
+                      {docLog && (
+                        <div
+                          className="mb-2 rounded-xl overflow-hidden border"
+                          style={{
+                            backgroundColor: 'rgba(42, 159, 212, 0.04)',
+                            borderColor: 'rgba(42, 159, 212, 0.15)',
+                          }}
+                        >
+                          <button
+                            onClick={() => toggleCardExpanded(docLogKey)}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-black/[0.02] dark:hover:bg-white/[0.02] transition-colors"
+                          >
+                            <svg
+                              width="10"
+                              height="10"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2.5"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              className={`shrink-0 transition-transform duration-150 ${expandedCards.has(docLogKey) ? 'rotate-90' : ''}`}
+                              style={{ color: '#1a7aaa' }}
+                            >
+                              <path d="m9 18 6-6-6-6" />
+                            </svg>
+                            <span className="text-[10px] font-medium" style={{ color: '#1a7aaa' }}>
+                              Documents ({docLogLineCount} {docLogLineCount === 1 ? 'source' : 'sources'})
+                            </span>
+                          </button>
+                          {expandedCards.has(docLogKey) && (
+                            <div className="px-4 pb-2.5 text-[11px]" style={{ color: '#1a7aaa' }}>
+                              {renderMarkdown(docLog)}
+                            </div>
+                          )}
+                        </div>
+                      )}
                       <div
                         className={`max-w-[95%] ${msg.isCardContent ? 'bg-zinc-50 dark:bg-zinc-800 rounded-xl border border-zinc-300 dark:border-zinc-600 overflow-hidden' : ''}`}
                       >

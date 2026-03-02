@@ -9,7 +9,7 @@ const log = createLogger('TokenUsage');
 
 const COST_RATES: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }> = {
   [CLAUDE_MODEL]: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  [GEMINI_IMAGE_MODEL]: { input: 1.25, output: 5 },
+  [GEMINI_IMAGE_MODEL]: { input: 0.25, output: 0.067 },
 };
 
 // Fallback for unknown models

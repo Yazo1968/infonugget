@@ -26,23 +26,21 @@ export function buildContentPrompt(
     wordCountRange = '70-100';
     scopeGuidance = `**Scope:** This is an EXECUTIVE SUMMARY. Prioritize ruthlessly — include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
     formattingGuidance = `**Formatting (strict for Executive):**
-- Use bold for 1-2 key metrics or terms only
 - Maximum one ## heading below the title
-- No tables, no ###, no blockquotes
-- Prefer a tight paragraph or 2-3 bullets — nothing more`;
+- Prefer a tight paragraph or 2-3 bullets — nothing more
+- No tables, no numbered lists, no ###`;
   } else if (level === 'Detailed') {
     wordCountRange = '450-500';
     scopeGuidance = `**Scope:** This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships. Cover all relevant dimensions of the topic.`;
-    formattingGuidance = `**Formatting (use full markdown range):**
+    formattingGuidance = `**Formatting:**
 - Use bullet points for lists of features, attributes, or non-sequential items
 - Use numbered lists for sequential steps, ranked items, or ordered processes
 - Use tables when comparing items across multiple dimensions or presenting structured data
 - Use bold for key terms, metrics, and important phrases
-- Use blockquotes for notable quotes or callout statements
 - Choose the format that best represents the data — do NOT flatten everything into plain paragraphs`;
   } else {
     scopeGuidance = `**Scope:** This is a STANDARD summary. Cover the key points, important data, and primary relationships. Include enough detail to be informative but stay concise.`;
-    formattingGuidance = `**Formatting (use full markdown range):**
+    formattingGuidance = `**Formatting:**
 - Use bullet points for lists of features, attributes, or non-sequential items
 - Use numbered lists for sequential steps, ranked items, or ordered processes
 - Use tables only when comparing 3+ items across multiple dimensions
@@ -70,6 +68,16 @@ Extract and restructure the section's content into infographic-ready text within
 
 ${formattingGuidance}
 
+**Allowed Content Formats (whitelist — use ONLY these):**
+1. **Headings** (## and ###) — section and subsection structure
+2. **Paragraphs** — continuous flowing prose composed of complete sentences. A paragraph must NEVER contain inline lists or items separated by dashes, semicolons, or slashes. If content is a series of discrete items, use a bullet list, numbered list, or table instead
+3. **Bullet lists** (\`- item\`) — for unordered sets of items, features, or attributes
+4. **Numbered lists** (\`1. item\`) — for sequential steps, ranked items, or ordered processes
+5. **Tables** — for structured data comparing items across dimensions
+6. **Bold** (\`**text**\`) — for emphasis on key terms, metrics, or phrases within any of the above
+
+No other markdown constructs are permitted: no blockquotes, no code blocks, no horizontal rules, no inline enumerations within paragraphs.
+
 **Heading Hierarchy (strict):**
 - Do NOT include the section title as a heading — it will be added separately
 - Use ## for main sections within the content
@@ -84,7 +92,7 @@ ${formattingGuidance}
 // ─────────────────────────────────────────────────────────────────
 // Planner (Creative Visual Brief)
 // ─────────────────────────────────────────────────────────────────
-// Phase 3 — consumed by Gemini Flash (text LLM).
+// Phase 2 — consumed by Claude (text LLM).
 //
 // Produces a conceptual creative brief — NOT a rigid wireframe.
 // Focuses on data relationships, visual concept, groupings, and

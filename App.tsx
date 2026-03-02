@@ -126,6 +126,7 @@ const App: React.FC = () => {
     clearMessages: clearInsightsMessages,
     pendingDocChanges,
     hasConversation: insightsHasConversation,
+    initiateChat: initiateInsightsChat,
     handleDocChangeContinue,
     handleDocChangeStartFresh,
   } = useInsightsLab(recordUsage);
@@ -785,6 +786,7 @@ const App: React.FC = () => {
                       onCreatePlaceholder={handleChatCreatePlaceholder}
                       onFillPlaceholderCard={handleChatFillPlaceholder}
                       onRemovePlaceholderCard={removePlaceholderCard}
+                      onInitiateChat={initiateInsightsChat}
                     />
                   </ErrorBoundary>
 

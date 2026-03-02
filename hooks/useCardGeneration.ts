@@ -16,12 +16,6 @@ import {
   buildCoverVisualizerPrompt,
 } from '../utils/prompts/coverGeneration';
 import { buildExpertPriming } from '../utils/prompts/promptUtils';
-import {
-  buildPwcPlannerPrompt,
-  buildPwcVisualizerPrompt,
-  buildPwcCoverPlannerPrompt,
-  buildPwcCoverVisualizerPrompt,
-} from '../utils/prompts/pwcGeneration';
 import { resolveEnabledDocs } from '../utils/documentResolution';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
@@ -167,6 +161,7 @@ export function useCardGeneration(
           maxTokens: isCover
             ? (CARD_TOKEN_LIMITS[level] ?? COVER_TOKEN_LIMIT)
             : (CARD_TOKEN_LIMITS[level] ?? CARD_TOKEN_LIMITS.Detailed),
+          temperature: 0.3,
           signal,
         });
 
@@ -238,16 +233,19 @@ export function useCardGeneration(
       }));
 
       try {
-        let contentToMap = card.synthesisMap?.[currentLevel];
+        const contentToMap = card.synthesisMap?.[currentLevel];
 
         if (!contentToMap) {
-          contentToMap = (await performSynthesis(card, currentLevel, signal)) || '';
+          addToast({
+            type: 'warning',
+            message: `No content available for "${card.text}"`,
+            detail: 'Please create content for this card before generating an image.',
+            duration: 6000,
+          });
+          return;
         }
 
-        if (!contentToMap) throw new Error(`Could not obtain ${currentLevel} synthesis for mapping.`);
-
         const isCover = isCoverLevel(currentLevel);
-        const isPwc = settings.style === 'PwC Corporate';
         setCardStatus(card.id, `Planning layout for [${card.text}]...`);
 
         if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
@@ -255,20 +253,16 @@ export function useCardGeneration(
         let visualPlan: string | undefined;
         try {
           const plannerPrompt = isCover
-            ? isPwc
-              ? buildPwcCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
-              : buildCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
-            : isPwc
-              ? buildPwcPlannerPrompt(card.text, contentToMap, settings.aspectRatio, card.visualPlanMap?.[currentLevel])
-              : buildPlannerPrompt(
-                  card.text,
-                  contentToMap,
-                  settings.aspectRatio,
-                  card.visualPlanMap?.[currentLevel],
-                  nuggetSubject,
-                );
+            ? buildCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
+            : buildPlannerPrompt(
+                card.text,
+                contentToMap,
+                settings.aspectRatio,
+                card.visualPlanMap?.[currentLevel],
+                nuggetSubject,
+              );
 
-          const plannerResponse = await callClaude(plannerPrompt, { maxTokens: 4096, signal });
+          const plannerResponse = await callClaude(plannerPrompt, { maxTokens: 1024, temperature: 0.7, signal });
           visualPlan = plannerResponse?.text || undefined;
           if (plannerResponse?.usage) {
             recordUsage?.({
@@ -291,12 +285,8 @@ export function useCardGeneration(
 
         const shouldUseRef = !!(referenceImage && useReferenceImage && !skipReferenceOnce);
         const lastPrompt = isCover
-          ? isPwc
-            ? buildPwcCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
-            : buildCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
-          : isPwc
-            ? buildPwcVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef)
-            : buildVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, nuggetSubject);
+          ? buildCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
+          : buildVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, nuggetSubject);
 
         if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 

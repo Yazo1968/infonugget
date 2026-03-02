@@ -59,13 +59,21 @@ export function pruneMessages(
   // Phase 1: Filter out card content responses (they're saved as cards, no need to replay)
   const filtered = history.filter((m) => !(m.isCardContent && m.role === 'assistant'));
 
-  // Phase 2: Convert to Claude message format
+  // Phase 2: Convert to Claude message format.
+  // System messages become user/assistant pairs to maintain turn alternation.
+  // Consecutive system messages are merged into a single pair to save tokens.
   const allMessages: ClaudeMessage[] = [];
-  for (const msg of filtered) {
+  for (let i = 0; i < filtered.length; i++) {
+    const msg = filtered[i];
     if (msg.role === 'system') {
-      // System messages → user/assistant pair so Claude sees them
-      allMessages.push({ role: 'user', content: msg.content });
-      allMessages.push({ role: 'assistant', content: 'Understood.' });
+      // Collect consecutive system messages into one block
+      let merged = msg.content;
+      while (i + 1 < filtered.length && filtered[i + 1].role === 'system') {
+        i++;
+        merged += '\n\n' + filtered[i].content;
+      }
+      allMessages.push({ role: 'user', content: merged });
+      allMessages.push({ role: 'assistant', content: 'Noted.' });
       continue;
     }
     allMessages.push({ role: msg.role, content: msg.content });

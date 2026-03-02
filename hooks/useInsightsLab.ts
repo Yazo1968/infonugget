@@ -1,11 +1,11 @@
 import { useState, useCallback, useMemo } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { ChatMessage, DetailLevel, DocChangeEvent, isCoverLevel } from '../types';
-import { callClaude } from '../utils/ai';
-import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT, CHAT_MAX_TOKENS } from '../utils/constants';
+import { callClaude, ClaudeMessage } from '../utils/ai';
+import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT, CHAT_MAX_TOKENS, INITIATE_CHAT_MAX_TOKENS } from '../utils/constants';
 import { RecordUsageFn } from './useTokenUsage';
 import { useAbortController } from './useAbortController';
-import { buildInsightsSystemPrompt, buildCardContentInstruction } from '../utils/prompts/insightsLab';
+import { buildInsightsSystemPrompt, buildCardContentInstruction, buildInitiateChatPrompt } from '../utils/prompts/insightsLab';
 import { buildCoverContentInstruction } from '../utils/prompts/coverGeneration';
 import { computeDocumentHash } from '../utils/documentHash';
 import { computeMessageBudget, pruneMessages } from '../utils/tokenEstimation';
@@ -390,6 +390,109 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
     clearMessages();
   }, [clearMessages]);
 
+  /**
+   * Lightweight initial chat call: generates document briefs + exploration suggestions.
+   * Only the assistant response is persisted — no synthetic user message saved.
+   */
+  const initiateChat = useCallback(async () => {
+    if (!selectedNugget || selectedNugget.type !== 'insights') return;
+    if ((selectedNugget.messages?.length ?? 0) > 0 || isLoading) return;
+
+    const resolvedDocs = resolveDocumentContext();
+    if (resolvedDocs.length === 0) return;
+
+    setIsLoading(true);
+    const controller = createAbort();
+
+    try {
+      const fileApiDocs = resolvedDocs.filter((d) => d.fileId);
+      const inlineDocs = resolvedDocs.filter((d) => !d.fileId && d.content);
+
+      // System blocks — all cache: false (one-shot call)
+      const systemBlocks: Array<{ text: string; cache: boolean }> = [
+        { text: buildInitiateChatPrompt(selectedNugget.subject), cache: false },
+      ];
+      if (inlineDocs.length > 0) {
+        const docContext = inlineDocs
+          .map((d) => `--- Document: ${d.name} ---\n${d.content}\n--- End Document ---`)
+          .join('\n\n');
+        systemBlocks.push({ text: `Current documents:\n\n${docContext}`, cache: false });
+      }
+
+      // Inject bookmark-based TOC for native PDFs
+      for (const d of fileApiDocs) {
+        if (d.sourceType === 'native-pdf' && d.bookmarks?.length) {
+          const tocPrompt = buildTocSystemPrompt(d.bookmarks, d.name);
+          if (tocPrompt) systemBlocks.push({ text: tocPrompt, cache: false });
+        }
+      }
+
+      // Synthetic user message listing document names — NOT persisted
+      const docList = resolvedDocs.map((d) => d.name).join(', ');
+      const syntheticText = `Review these documents: ${docList}`;
+
+      // Build messages array with Files API doc blocks
+      const claudeMessages: ClaudeMessage[] = [];
+      if (fileApiDocs.length > 0) {
+        const docBlocks = fileApiDocs.map((d) => ({
+          type: 'document' as const,
+          source: { type: 'file' as const, file_id: d.fileId! },
+          title: d.name,
+        }));
+        claudeMessages.push({
+          role: 'user',
+          content: [...docBlocks, { type: 'text' as const, text: syntheticText }] as any,
+        });
+      } else {
+        claudeMessages.push({ role: 'user', content: syntheticText });
+      }
+
+      const { text: responseText, usage: claudeUsage } = await callClaude('', {
+        systemBlocks,
+        messages: claudeMessages,
+        maxTokens: INITIATE_CHAT_MAX_TOKENS,
+        temperature: 0.5,
+        signal: controller.signal,
+      });
+
+      recordUsage?.({
+        provider: 'claude',
+        model: CLAUDE_MODEL,
+        inputTokens: claudeUsage?.input_tokens ?? 0,
+        outputTokens: claudeUsage?.output_tokens ?? 0,
+        cacheReadTokens: claudeUsage?.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
+      });
+
+      const assistantMessage: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        role: 'assistant',
+        content: responseText,
+        timestamp: Date.now(),
+      };
+
+      appendNuggetMessage(assistantMessage);
+
+      // Update lastDocHash
+      const currentHash = computeDocumentHash(selectedNugget.documents);
+      setNuggets((prev) => prev.map((n) => (n.id === selectedNugget.id ? { ...n, lastDocHash: currentHash } : n)));
+    } catch (err: any) {
+      if (isAbortError(err)) return;
+      log.error('Initiate chat error:', err);
+
+      const errorMessage: ChatMessage = {
+        id: Math.random().toString(36).substr(2, 9),
+        role: 'assistant',
+        content: `Error: ${err.message || 'Failed to initiate chat. Please try again.'}`,
+        timestamp: Date.now(),
+      };
+      appendNuggetMessage(errorMessage);
+    } finally {
+      clearAbort();
+      setIsLoading(false);
+    }
+  }, [selectedNugget, isLoading, resolveDocumentContext, appendNuggetMessage, recordUsage, setNuggets, createAbort, clearAbort, isAbortError]);
+
   return {
     messages: selectedNugget?.messages || [],
     isLoading,
@@ -398,6 +501,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
     clearMessages,
     pendingDocChanges,
     hasConversation,
+    initiateChat,
     handleDocChangeContinue,
     handleDocChangeStartFresh,
   };

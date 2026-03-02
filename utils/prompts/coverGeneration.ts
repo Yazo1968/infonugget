@@ -239,7 +239,7 @@ RULES:
 // ─────────────────────────────────────────────────────────────────
 // 4. Cover Visualizer Prompt (Image Generation)
 // ─────────────────────────────────────────────────────────────────
-// Consumed by gemini-3-pro-image-preview (image model).
+// Consumed by gemini-3.1-flash-image-preview (image model).
 // All narrative prose — no markdown, no XML, no key-value pairs.
 // Optimized for visual-first cover slides.
 // ─────────────────────────────────────────────────────────────────
@@ -294,10 +294,18 @@ export function buildCoverVisualizerPrompt(
   // 5. Content — minimal, just title + supporting text in bracketed tags
   const contentBlock = transformCoverContentToTags(coverContent, cardTitle);
 
-  // Assemble: role → style → [reference] → layout → content
+  // 6. Tag rendering instruction — prevent Flash model from rendering tags as text
+  const tagInstruction =
+    'The content below uses bracketed tags like [TITLE], [SUBTITLE], [TAGLINE], ' +
+    '[TAKEAWAY-BULLET], [BEGIN COVER CONTENT], and [END COVER CONTENT] to indicate text hierarchy. ' +
+    'These tags are structural markers only — do NOT render them as visible text in the image. ' +
+    'Render only the text that follows each tag, using the tag to determine visual weight ' +
+    '(TITLE = largest hero text, SUBTITLE = secondary, TAGLINE = smallest, TAKEAWAY-BULLET = list item).';
+
+  // Assemble: role → style → [reference] → layout → tag instruction → content
   const blocks = [role, styleBlock];
   if (referenceNote) blocks.push(referenceNote);
-  blocks.push(layoutBlock, contentBlock);
+  blocks.push(layoutBlock, tagInstruction, contentBlock);
   return blocks.join('\n\n');
 }
 

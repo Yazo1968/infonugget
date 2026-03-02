@@ -131,7 +131,7 @@ export const STYLE_IDENTITIES: Record<string, string> = {
   'Corporate Memphis':
     'Friendly flat illustrations with disproportionate human figures — oversized limbs, tiny heads. Blobby organic shapes, no outlines, warm optimistic tech-company tone.',
   'PwC Corporate':
-    'Clean, authoritative corporate consulting aesthetic with disciplined restraint. White background with orange as the singular hero accent for callout borders, key statistics, and focal chart elements. Grey data visualizations with only the focal metric highlighted in orange. Modular card-based layout with generous whitespace, clear section dividers, and a strict visual hierarchy. No decorative flourishes — every element serves the argument. Flat charts with minimal gridlines, direct value labeling, and orange left-border callout boxes for key figures.',
+    'Clean, authoritative corporate consulting aesthetic with disciplined restraint. White background with orange as the singular hero accent for callout borders, key statistics, and focal chart elements. Grey data visualizations with only the focal metric highlighted in orange. Modular card-based layout with generous whitespace, clear section dividers, and a strict visual hierarchy. No decorative flourishes — every element serves the argument. Flat charts with minimal gridlines, direct value labeling, and orange left-border callout boxes for key figures. Hero statistics appear as oversized burnt orange numerals serving as primary visual anchors. Three-zone vertical structure: headline conclusion at top, evidence and data in the middle, bumper takeaway at the bottom. Section dividers are thin horizontal rules. The contrast between serif headings and sans-serif body is a core visual signature. Avoid flowcharts, mind maps, Venn diagrams, fishbone diagrams, radial layouts, hub-spoke, concentric rings, network graphs, organic shapes, and decorative illustrations.',
 };
 
 // Snapshot of built-in style names — used to guard against overwriting and for UI dividers
@@ -166,7 +166,7 @@ export const DEFAULT_STYLING: StylingOptions = {
   palette: VISUAL_STYLES['Flat Design'],
   fonts: STYLE_FONTS['Flat Design'],
   aspectRatio: '16:9',
-  resolution: '1K',
+  resolution: '2K',
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -178,12 +178,13 @@ export const DEFAULT_STYLING: StylingOptions = {
 
 /** Config for Gemini Flash text-only calls: low thinking + text-only output */
 const _FLASH_TEXT_CONFIG = {
-  thinkingConfig: { thinkingLevel: 'LOW' },
+  thinkingConfig: { thinkingLevel: 'Low' as any },
   responseModalities: ['TEXT'],
 };
 
-/** Config for Gemini Pro Image calls: must include responseModalities to ensure image output */
+/** Config for Gemini image generation calls. Supported levels: Minimal (default), High. */
 export const PRO_IMAGE_CONFIG = {
+  thinkingConfig: { thinkingLevel: 'Minimal' as any },
   responseModalities: ['TEXT', 'IMAGE'],
 };
 

@@ -124,3 +124,28 @@ Return ONLY the card content starting with #. No preamble, no explanation, no ca
 
 REMINDER: Always start with # [Title]. ${wordCountRange} words maximum. Count before responding.`.trim();
 }
+
+export function buildInitiateChatPrompt(subject?: string): string {
+  const expertPriming = buildExpertPriming(subject);
+  const roleStatement = expertPriming
+    ? `${expertPriming} You are performing an initial review of the uploaded documents.`
+    : 'You are a document analyst performing an initial review of uploaded documents.';
+
+  return `${roleStatement}
+
+Produce a brief overview of each document and suggest exploration prompts. Respond with ONLY the two fenced blocks below — no other text before, between, or after them.
+
+\`\`\`document-log
+- **Annual Report 2024** (PDF) — Revenue grew 12% driven by cloud services expansion
+- **Market Analysis** (Markdown) — Competitive landscape across five regional segments
+\`\`\`
+
+Follow this exact format for every document. Each brief must be specific to the actual content (mention key topics, entities, or findings) — never generic. Maximum 12 words per brief.
+
+\`\`\`card-suggestions
+Compare revenue trends across the two reporting periods
+Summarize the competitive positioning in the APAC segment
+\`\`\`
+
+Include 2-4 exploration prompts tailored to the documents, under 15 words each. Suggestions should help explore relationships, insights, or comparisons across documents.`;
+}

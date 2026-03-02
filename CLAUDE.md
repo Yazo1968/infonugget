@@ -4,8 +4,8 @@
 
 InfoNugget v6.0 — client-side React SPA for AI-powered content card generation. Users organize work into Projects > Nuggets > Documents, then use AI to synthesize content cards with generated imagery.
 
-- **Stack**: React 19 + TypeScript 5.8 + Vite 6, no backend
-- **AI**: Claude Sonnet 4.6 (text/chat via browser fetch) + Gemini Flash/Pro Image (`@google/genai` SDK)
+- **Stack**: React 19 + TypeScript 5.8 + Vite 6, planning migration to Supabase (backend/DB) + Vercel (deployment)
+- **AI**: Claude Sonnet 4.6 (text/chat via browser fetch) + Gemini 3.1 Flash Image (`@google/genai` SDK, model: `gemini-3.1-flash-image-preview`)
 - **Persistence**: IndexedDB (`infonugget-db`), auto-save with debounce
 - **State**: React Context (5 focused contexts under `context/` + composition hook `useAppContext`), no Redux/Zustand
 - **Entry**: `index.tsx` → `StorageProvider` → `ToastProvider` → `AppProvider` → `App`
@@ -25,7 +25,7 @@ npx tsc --noEmit  # Type-check only (should be zero errors)
 ## Key Architecture
 
 ### 3-Phase Card Pipeline
-Content Synthesis (Claude) → Layout Planning (Claude) → Image Generation (Gemini Pro Image). See `hooks/useCardGeneration.ts`.
+Content Synthesis (Claude) → Layout Planning (Claude) → Image Generation (Gemini 3.1 Flash Image). See `hooks/useCardGeneration.ts`.
 
 ### Card Folder System
 `Nugget.cards` is `CardItem[]` — discriminated union of `Card | CardFolder`. Folders use `kind: 'folder'` with `isCardFolder()` type guard. Tree utilities in `utils/cardUtils.ts`. InsightsCardList renders folders with drag-and-drop using `VisibleItem[]` index.
@@ -37,7 +37,7 @@ Documents belong to individual nuggets. Each has `sourceType`: `'markdown'` or `
 Flex row: Projects | Sources | Chat | Auto-Deck | Cards | Assets. First 4 panels use strip buttons + portal overlays (`createPortal` to `document.body`). Shared logic in `hooks/usePanelOverlay.ts`.
 
 ### Prompt Anti-Leakage
-Content converted via `transformContentToTags()` — markdown to bracketed tags, font names to descriptors, hex to color names. See `utils/prompts/promptUtils.ts`.
+Content converted via `transformContentToTags()` — markdown to bracketed tags, font names to descriptors, hex to color names. Tag rendering instruction injected into image prompts to prevent Flash model from rendering `[TITLE]`, `[SECTION]` etc. as visible text. See `utils/prompts/promptUtils.ts`.
 
 ## Shared Utilities & Constants
 
@@ -54,6 +54,9 @@ Content converted via `transformContentToTags()` — markdown to bracketed tags,
 
 ### `hooks/useAbortController.ts` — Abort lifecycle management
 Shared `useAbortController()` hook used by `useCardGeneration`, `useInsightsLab`, and `useAutoDeck`. Provides `create`, `createFresh`, `abort`, `clear`, and `isAbortError`.
+
+### Gemini Image Config
+`PRO_IMAGE_CONFIG` in `utils/ai.ts` — shared config spread into every Gemini image generation call. `thinkingLevel: 'Minimal'` (title case per Google docs), `responseModalities: ['TEXT', 'IMAGE']`. Default resolution: `2K` (same token cost as 1K: 1120 tokens). Image config (`aspectRatio`, `imageSize`) set per-call in `useCardGeneration.ts`.
 
 ## App.tsx Structure (~974 lines)
 
