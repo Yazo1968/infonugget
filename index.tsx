@@ -18,6 +18,11 @@ function AuthGate() {
   const [profileChecked, setProfileChecked] = useState(false);
   const [needsProfile, setNeedsProfile] = useState(false);
 
+  // Reset to landing page when user signs out
+  useEffect(() => {
+    if (!user) setPage('landing');
+  }, [user]);
+
   // Check if authenticated user has a display_name set
   useEffect(() => {
     if (!user) {
