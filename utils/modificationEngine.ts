@@ -1,5 +1,5 @@
 import { GEMINI_IMAGE_MODEL } from './constants';
-import { withGeminiRetry, PRO_IMAGE_CONFIG, getGeminiAI } from './ai';
+import { withGeminiRetry, PRO_IMAGE_CONFIG, callGeminiProxy } from './ai';
 import { buildModificationPrompt, buildContentModificationPrompt } from './prompts/imageGeneration';
 
 interface ModificationRequest {
@@ -78,19 +78,14 @@ export async function executeModification(
   }
 
   const response = await withGeminiRetry(async () => {
-    const ai = await getGeminiAI();
-    return await ai.models.generateContent({
-      model: GEMINI_IMAGE_MODEL,
-      contents: [
-        {
-          parts,
-        },
-      ],
-      config: {
+    return await callGeminiProxy(
+      GEMINI_IMAGE_MODEL,
+      [{ parts }],
+      {
         ...PRO_IMAGE_CONFIG,
         ...(Object.keys(imageConfig).length > 0 && { imageConfig }),
       },
-    });
+    );
   });
 
   // Record Gemini usage
@@ -103,15 +98,11 @@ export async function executeModification(
     });
   }
 
-  // Extract the modified image from the response
+  // Extract the modified image from the proxy response
   let newImageUrl = '';
-  if (response.candidates && response.candidates[0]?.content?.parts) {
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) {
-        newImageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-        break;
-      }
-    }
+  if (response.images && response.images.length > 0) {
+    const img = response.images[0];
+    newImageUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
   }
 
   if (!newImageUrl) {
@@ -154,10 +145,9 @@ export async function executeContentModification(
   if (resolution) imageConfig.imageSize = resolution;
 
   const response = await withGeminiRetry(async () => {
-    const ai = await getGeminiAI();
-    return await ai.models.generateContent({
-      model: GEMINI_IMAGE_MODEL,
-      contents: [
+    return await callGeminiProxy(
+      GEMINI_IMAGE_MODEL,
+      [
         {
           parts: [
             { text: systemPrompt },
@@ -170,11 +160,11 @@ export async function executeContentModification(
           ],
         },
       ],
-      config: {
+      {
         ...PRO_IMAGE_CONFIG,
         ...(Object.keys(imageConfig).length > 0 && { imageConfig }),
       },
-    });
+    );
   });
 
   // Record Gemini usage
@@ -188,13 +178,9 @@ export async function executeContentModification(
   }
 
   let newImageUrl = '';
-  if (response.candidates && response.candidates[0]?.content?.parts) {
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) {
-        newImageUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-        break;
-      }
-    }
+  if (response.images && response.images.length > 0) {
+    const img = response.images[0];
+    newImageUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
   }
 
   if (!newImageUrl) {

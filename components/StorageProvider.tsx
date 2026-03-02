@@ -9,6 +9,7 @@ import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { useStyleContext } from '../context/StyleContext';
 import { IndexedDBBackend } from '../utils/storage/IndexedDBBackend';
+import { SupabaseBackend } from '../utils/storage/SupabaseBackend';
 import { StorageBackend } from '../utils/storage/StorageBackend';
 import {
   deserializeFile,
@@ -25,10 +26,18 @@ import {
 } from '../utils/storage/serialize';
 import { usePersistence } from '../hooks/usePersistence';
 import { LoadingScreen } from './LoadingScreen';
+import { useAuth } from '../context/AuthContext';
 
-// ── Singleton storage instance (exported for direct use by useTokenUsage) ──
+// ── Storage instance (set dynamically based on auth state) ──
 
-export const storage: StorageBackend = new IndexedDBBackend();
+let _storage: StorageBackend = new IndexedDBBackend();
+
+export function getStorage(): StorageBackend {
+  return _storage;
+}
+
+// Legacy export for backward compatibility (App.tsx imports this)
+export { _storage as storage };
 
 // ── Persistence connector (auto-save, renders nothing) ──
 
@@ -40,7 +49,7 @@ const PersistenceConnector: React.FC = () => {
   const { openProjectId } = useAppContext();
 
   usePersistence({
-    storage,
+    storage: _storage,
     activeCardId,
     nuggets,
     projects,
@@ -86,6 +95,7 @@ async function cleanupOrphanedData(storageBackend: StorageBackend, hydratedNugge
 // ── Hydration logic ──
 
 async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
+  const storage = _storage;
   await storage.init();
 
   // Load from all stores in parallel
@@ -303,9 +313,16 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
 export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [initialState, setInitialState] = useState<InitialPersistedState | null>(null);
   const [loading, setLoading] = useState(true);
+  const { user } = useAuth();
 
   useEffect(() => {
     let cancelled = false;
+
+    // Switch to SupabaseBackend when authenticated
+    if (user?.id) {
+      _storage = new SupabaseBackend(user.id);
+      log.log('Using SupabaseBackend for user:', user.id);
+    }
 
     hydrateFromStorage()
       .then((state) => {
@@ -325,7 +342,7 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [user?.id]);
 
   if (loading) {
     return <LoadingScreen />;

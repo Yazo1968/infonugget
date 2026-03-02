@@ -5,7 +5,7 @@ import { useAbortController } from './useAbortController';
 import { Card, CardItem, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, GEMINI_IMAGE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard } from '../utils/cardUtils';
-import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, getGeminiAI } from '../utils/ai';
+import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, callGeminiProxy } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
 import { buildContentPrompt, buildPlannerPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
@@ -302,18 +302,18 @@ export function useCardGeneration(
         parts.push({ text: lastPrompt });
 
         const imageResponse = await withGeminiRetry(async () => {
-          const ai = await getGeminiAI();
-          return await ai.models.generateContent({
-            model: GEMINI_IMAGE_MODEL,
-            contents: [{ parts }],
-            config: {
+          return await callGeminiProxy(
+            GEMINI_IMAGE_MODEL,
+            [{ parts }],
+            {
               ...PRO_IMAGE_CONFIG,
               imageConfig: {
                 aspectRatio: settings.aspectRatio,
                 imageSize: settings.resolution,
               },
             },
-          });
+            signal,
+          );
         });
 
         if (imageResponse?.usageMetadata) {
@@ -326,17 +326,11 @@ export function useCardGeneration(
         }
 
         let cardUrl = '';
-        const candidate = imageResponse.candidates?.[0];
-        const responseParts = candidate?.content?.parts;
-        if (!responseParts) {
+        if (!imageResponse.images || imageResponse.images.length === 0) {
           throw new Error('No image data received from the AI model. The response may have been blocked or empty.');
         }
-        for (const part of responseParts) {
-          if (part.inlineData) {
-            cardUrl = `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}`;
-            break;
-          }
-        }
+        const img = imageResponse.images[0];
+        cardUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
 
         if (cardUrl) {
           updateNuggetCard(card.id, (c) => {

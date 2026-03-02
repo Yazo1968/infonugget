@@ -1,6 +1,6 @@
 import { StylingOptions, Palette, FontPair, CustomStyle } from '../types';
-import type { GoogleGenAI } from '@google/genai';
 import { createLogger } from './logger';
+import { supabase } from './supabase';
 import {
   CLAUDE_MODEL,
   API_MAX_RETRIES,
@@ -8,6 +8,23 @@ import {
   RETRY_JITTER_MAX_MS,
   RETRY_DELAY_CAP_MS,
 } from './constants';
+
+// ─────────────────────────────────────────────────────────────────
+// Supabase Edge Function URLs
+// ─────────────────────────────────────────────────────────────────
+
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
+const CLAUDE_PROXY_URL = `${SUPABASE_URL}/functions/v1/claude-proxy`;
+const CLAUDE_FILES_PROXY_URL = `${SUPABASE_URL}/functions/v1/claude-files-proxy`;
+const GEMINI_PROXY_URL = `${SUPABASE_URL}/functions/v1/gemini-proxy`;
+
+/** Get the current Supabase auth token for Edge Function calls. */
+async function getAuthToken(): Promise<string> {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error('Not authenticated');
+  return session.access_token;
+}
 
 const log = createLogger('AI');
 
@@ -189,42 +206,45 @@ export const PRO_IMAGE_CONFIG = {
 };
 
 // ─────────────────────────────────────────────────────────────────
-// Gemini key rotation — primary + fallback key with auto-failover
+// Gemini Proxy — calls Gemini via Supabase Edge Function
 // ─────────────────────────────────────────────────────────────────
 
-const GEMINI_KEYS = [process.env.API_KEY, process.env.GEMINI_API_KEY_FALLBACK].filter(Boolean) as string[];
-
-let _currentKeyIndex = 0;
-let _GoogleGenAICtor: (new (opts: { apiKey: string }) => GoogleGenAI) | null = null;
-let _aiInstance: GoogleGenAI | null = null;
-
-/** Get the current Gemini AI instance (lazy singleton, loads @google/genai on demand). */
-export async function getGeminiAI(): Promise<GoogleGenAI> {
-  if (!_aiInstance) {
-    if (!_GoogleGenAICtor) {
-      const { GoogleGenAI: Ctor } = await import('@google/genai');
-      _GoogleGenAICtor = Ctor;
-    }
-    _aiInstance = new _GoogleGenAICtor({ apiKey: GEMINI_KEYS[_currentKeyIndex] || '' });
-  }
-  return _aiInstance;
+export interface GeminiProxyResponse {
+  text?: string;
+  images?: Array<{ data: string; mimeType: string }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    totalTokenCount?: number;
+  };
 }
 
-/** Switch to the next available Gemini API key. Returns true if a fallback was available. */
-function rotateGeminiKey(): boolean {
-  if (_currentKeyIndex + 1 < GEMINI_KEYS.length) {
-    _currentKeyIndex++;
-    _aiInstance = null; // force re-creation with new key
-    log.warn(`Rotated to fallback key (index ${_currentKeyIndex})`);
-    return true;
+/**
+ * Call Gemini via the Supabase Edge Function proxy.
+ * Replaces direct `@google/genai` SDK usage — API keys are server-side only.
+ */
+export async function callGeminiProxy(
+  model: string,
+  contents: any,
+  config: any,
+  signal?: AbortSignal,
+): Promise<GeminiProxyResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(GEMINI_PROXY_URL, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+      'apikey': SUPABASE_ANON_KEY,
+    },
+    body: JSON.stringify({ model, contents, config }),
+    signal,
+  });
+  if (!res.ok) {
+    const errorBody = await res.text();
+    throw new Error(`Gemini proxy error ${res.status}: ${errorBody}`);
   }
-  return false;
-}
-
-/** Reset back to the primary key (call on app init or after a cooldown). */
-function _resetGeminiKey(): void {
-  _currentKeyIndex = 0;
-  _aiInstance = null;
+  return res.json();
 }
 
 /** Compare two StylingOptions for style-anchoring mismatch (style, aspectRatio, palette — NOT resolution/fonts/level) */
@@ -289,23 +309,15 @@ const withRetry = async <T>(
 };
 
 /**
- * Gemini-aware retry wrapper: runs `withRetry` first, and if all retries fail
- * with a retryable error, rotates to the fallback API key and retries once more.
+ * Gemini-aware retry wrapper. Key rotation is now handled server-side
+ * by the Edge Function, so this simply delegates to withRetry.
  */
 export const withGeminiRetry = async <T>(
   fn: () => Promise<T>,
   maxRetries = API_MAX_RETRIES,
   onRetry?: (attempt: number, maxAttempts: number, delayMs: number) => void,
 ): Promise<T> => {
-  try {
-    return await withRetry(fn, maxRetries, onRetry);
-  } catch (err: any) {
-    if (isRetryableError(err) && rotateGeminiKey()) {
-      log.warn('Primary key exhausted, retrying with fallback key...');
-      return await withRetry(fn, maxRetries, onRetry);
-    }
-    throw err;
-  }
+  return await withRetry(fn, maxRetries, onRetry);
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -313,13 +325,12 @@ export const withGeminiRetry = async <T>(
 // Supports prompt caching via cache_control on system + message blocks.
 // ─────────────────────────────────────────────────────────────────
 
-/** Shared Anthropic API headers. */
-function anthropicHeaders(apiKey: string): Record<string, string> {
+/** Shared headers for Claude proxy calls via Supabase Edge Function. */
+function claudeProxyHeaders(token: string): Record<string, string> {
   return {
-    'x-api-key': apiKey,
-    'anthropic-version': '2023-06-01',
-    'anthropic-beta': 'files-api-2025-04-14',
-    'anthropic-dangerous-direct-browser-access': 'true',
+    'Authorization': `Bearer ${token}`,
+    'Content-Type': 'application/json',
+    'apikey': SUPABASE_ANON_KEY,
   };
 }
 
@@ -394,8 +405,6 @@ export async function callClaude(
   prompt: string,
   options?: CallClaudeOptions | { base64: string; mediaType: string },
 ): Promise<{ text: string; usage: ClaudeUsage }> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
 
   // Normalize legacy 2-arg calls: callClaude(prompt, { base64, mediaType })
   let document: { base64: string; mediaType: string } | undefined;
@@ -499,10 +508,12 @@ export async function callClaude(
     body.system = systemPayload;
   }
 
+  const token = await getAuthToken();
+
   const response = await withRetry(async () => {
-    const res = await fetch('https://api.anthropic.com/v1/messages', {
+    const res = await fetch(CLAUDE_PROXY_URL, {
       method: 'POST',
-      headers: { ...anthropicHeaders(apiKey), 'Content-Type': 'application/json' },
+      headers: claudeProxyHeaders(token),
       body: JSON.stringify(body),
       signal,
     });
@@ -549,7 +560,7 @@ interface FilesAPIResponse {
 }
 
 /**
- * Upload text content to the Anthropic Files API.
+ * Upload text content to the Anthropic Files API via Supabase Edge Function proxy.
  * Returns the file_id for referencing in subsequent Messages requests.
  */
 export async function uploadToFilesAPI(
@@ -557,16 +568,18 @@ export async function uploadToFilesAPI(
   filename: string,
   mimeType: string = 'text/plain',
 ): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not configured');
+  const token = await getAuthToken();
 
   const blob = content instanceof Blob ? content : new Blob([content], { type: mimeType });
   const formData = new FormData();
   formData.append('file', blob, filename);
 
-  const res = await fetch('/api/anthropic-files', {
+  const res = await fetch(CLAUDE_FILES_PROXY_URL, {
     method: 'POST',
-    headers: anthropicHeaders(apiKey),
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'apikey': SUPABASE_ANON_KEY,
+    },
     body: formData,
   });
 
@@ -677,16 +690,17 @@ Rules:
 }
 
 /**
- * Delete a file from the Anthropic Files API.
+ * Delete a file from the Anthropic Files API via Supabase Edge Function proxy.
  */
 export async function deleteFromFilesAPI(fileId: string): Promise<void> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return; // silent no-op if no key
-
   try {
-    const res = await fetch(`/api/anthropic-files/${fileId}`, {
+    const token = await getAuthToken();
+    const res = await fetch(`${CLAUDE_FILES_PROXY_URL}/${fileId}`, {
       method: 'DELETE',
-      headers: anthropicHeaders(apiKey),
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'apikey': SUPABASE_ANON_KEY,
+      },
     });
     if (res.ok) {
       log.debug(`Deleted file ${fileId}`);

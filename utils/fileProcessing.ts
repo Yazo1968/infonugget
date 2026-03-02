@@ -1,6 +1,6 @@
 import { Heading, UploadedFile } from '../types';
 import { GEMINI_FLASH_MODEL } from './constants';
-import { getGeminiAI, withGeminiRetry } from './ai';
+import { callGeminiProxy, withGeminiRetry } from './ai';
 import { createLogger } from './logger';
 import { parseMarkdownStructure } from './markdown';
 import { HEADING_EXTRACTION_PROMPT, PDF_CONVERSION_PROMPT } from './prompts/documentConversion';
@@ -45,22 +45,16 @@ async function convertPdfWithGemini(file: File): Promise<string> {
   log.debug(`PDF base64 ready (${base64.length} chars), sending to Gemini Flash…`);
 
   const response = await withGeminiRetry(async () => {
-    const ai = await getGeminiAI();
-    return await ai.models.generateContent({
-      model: GEMINI_FLASH_MODEL,
-      contents: [
+    return await callGeminiProxy(
+      GEMINI_FLASH_MODEL,
+      [
         { parts: [{ inlineData: { data: base64, mimeType: 'application/pdf' } }, { text: PDF_CONVERSION_PROMPT }] },
       ],
-      config: { httpOptions: { timeout: 300000 } },
-    });
+      { httpOptions: { timeout: 300000 } },
+    );
   });
 
-  // Filter out thinking parts (Gemini 2.5 may include thought tokens)
-  const text =
-    response.candidates?.[0]?.content?.parts
-      ?.filter((p: any) => p.text && !p.thought)
-      .map((p: any) => p.text)
-      .join('') || '';
+  const text = response.text || '';
 
   log.debug(`Gemini conversion complete (${text.length} chars)`);
   return text;
@@ -119,24 +113,18 @@ export async function extractHeadingsWithGemini(base64: string, fileName: string
     log.debug(`Extracting headings + word counts via Gemini Flash for "${fileName}"...`);
 
     const response = await withGeminiRetry(async () => {
-      const ai = await getGeminiAI();
-      return await ai.models.generateContent({
-        model: GEMINI_FLASH_MODEL,
-        contents: [
+      return await callGeminiProxy(
+        GEMINI_FLASH_MODEL,
+        [
           {
             parts: [{ inlineData: { data: base64, mimeType: 'application/pdf' } }, { text: HEADING_EXTRACTION_PROMPT }],
           },
         ],
-        config: { httpOptions: { timeout: 300000 } },
-      });
+        { httpOptions: { timeout: 300000 } },
+      );
     });
 
-    // Filter out thinking parts (Gemini 2.5 may include thought tokens)
-    const text =
-      response.candidates?.[0]?.content?.parts
-        ?.filter((p: any) => p.text && !p.thought)
-        .map((p: any) => p.text)
-        .join('') || '';
+    const text = response.text || '';
 
     log.debug(`Gemini heading response (${text.length} chars)`);
 
