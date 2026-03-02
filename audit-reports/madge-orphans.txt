@@ -1,6 +1,0 @@
-- Finding files
-Processed 69 files (4s) (1 warning)
-
-index.tsx
-vite.config.ts
-
