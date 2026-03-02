@@ -49,6 +49,22 @@
   50% { background-color: rgb(59 130 246 / 0.15); }
 }
 
+/* ─── Auth page transition ─── */
+
+@keyframes auth-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.auth-view-enter {
+  animation: auth-fade-in 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
 /* ─── Base body styles ─── */
 
 body {

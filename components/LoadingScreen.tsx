@@ -1,7 +1,7 @@
 import React from 'react';
 
 export const LoadingScreen: React.FC = () => (
-  <div className="h-screen w-full flex flex-col items-center justify-center" style={{ backgroundColor: '#0a0a0a' }}>
+  <div className="h-screen w-full flex flex-col items-center justify-center bg-zinc-50 dark:bg-[#0a0a0a]">
     {/* Logo */}
     <div className="relative mb-8">
       <div
@@ -15,11 +15,11 @@ export const LoadingScreen: React.FC = () => (
 
     {/* Wordmark */}
     <h1 className="text-4xl tracking-tighter mb-3">
-      <span className="font-light italic text-zinc-500">info</span>
-      <span className="font-semibold not-italic text-white">nugget</span>
+      <span className="font-light italic text-zinc-400 dark:text-zinc-500">info</span>
+      <span className="font-semibold not-italic text-zinc-900 dark:text-white">nugget</span>
     </h1>
 
     {/* Loading message */}
-    <p className="text-xs font-light text-zinc-500">Loading your workspace...</p>
+    <p className="text-xs font-light text-zinc-400 dark:text-zinc-500">Loading your workspace...</p>
   </div>
 );

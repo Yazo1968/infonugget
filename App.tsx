@@ -15,7 +15,7 @@ import {
   uploadToFilesAPI,
   deleteFromFilesAPI,
 } from './utils/ai';
-import { LandingPage } from './components/LandingPage';
+import { Dashboard } from './components/Dashboard';
 import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
 import AutoDeckPanel from './components/AutoDeckPanel';
@@ -539,7 +539,7 @@ const App: React.FC = () => {
   return (
     <div className="min-h-screen bg-white">
       {!openProjectId ? (
-        <LandingPage
+        <Dashboard
           projects={projects}
           nuggets={nuggets}
           onOpenProject={handleOpenProject}
