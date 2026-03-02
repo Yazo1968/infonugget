@@ -564,7 +564,17 @@ export function useCardGeneration(
     for (const item of selectedItems) {
       setCardStatus(item.id, `Queued for batch generation...`);
     }
-    await Promise.allSettled(selectedItems.map((item) => generateCard(item, undefined, controller.signal)));
+
+    // Process cards SEQUENTIALLY to avoid Gemini rate-limiting.
+    // Parallel requests cause the model to return text-only (no image) for most cards.
+    for (const item of selectedItems) {
+      if (controller.signal.aborted) break;
+      try {
+        await generateCard(item, undefined, controller.signal);
+      } catch {
+        // generateCard handles its own errors with toasts — continue to next card
+      }
+    }
     // Individual card statuses are cleared in generateCard's finally block
   };
 
