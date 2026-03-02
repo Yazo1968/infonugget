@@ -3,6 +3,9 @@
 /* Override default media-based dark mode with class-based (.dark on <html>) */
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* Ensure all buttons have pointer cursor */
+button { cursor: pointer; }
+
 /* ─── CSS Custom Properties ─── */
 
 :root {
