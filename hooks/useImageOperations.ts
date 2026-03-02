@@ -3,8 +3,12 @@ import JSZip from 'jszip';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage } from '../types';
-import { findCard, findParentFolder, mapCards, mapCardById } from '../utils/cardUtils';
+import { findCard, findParentFolder, flattenCards, mapCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
+import { getStorage } from '../components/StorageProvider';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('ImageOps');
 
 export interface UseImageOperationsParams {
   activeCard: Card | null;
@@ -108,6 +112,8 @@ export function useImageOperations({
   const handleDeleteCardImage = useCallback(() => {
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
+    const nuggetId = selectedNugget.id;
+    const cardId = activeCardId;
     const cardUpdater = (c: Card) => {
       const newUrlMap = { ...(c.cardUrlMap || {}) };
       delete newUrlMap[level];
@@ -128,16 +134,22 @@ export function useImageOperations({
         lastGeneratedContentMap: newGenContentMap,
       };
     };
-    updateNugget(selectedNugget.id, (n) => ({
+    updateNugget(nuggetId, (n) => ({
       ...n,
-      cards: mapCardById(n.cards, activeCardId, cardUpdater),
+      cards: mapCardById(n.cards, cardId, cardUpdater),
       lastModifiedAt: Date.now(),
     }));
+    // Persist deletion to backend immediately (don't rely on orphan cleanup)
+    getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
+      log.warn('Failed to delete image from storage:', err);
+    });
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
 
   const handleDeleteCardVersions = useCallback(() => {
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
+    const nuggetId = selectedNugget.id;
+    const cardId = activeCardId;
     const cardUpdater = (c: Card) => {
       const newUrlMap = { ...(c.cardUrlMap || {}) };
       delete newUrlMap[level];
@@ -158,17 +170,26 @@ export function useImageOperations({
         lastGeneratedContentMap: newGenContentMap,
       };
     };
-    updateNugget(selectedNugget.id, (n) => ({
+    updateNugget(nuggetId, (n) => ({
       ...n,
-      cards: mapCardById(n.cards, activeCardId, cardUpdater),
+      cards: mapCardById(n.cards, cardId, cardUpdater),
       lastModifiedAt: Date.now(),
     }));
+    // Persist deletion to backend immediately
+    getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
+      log.warn('Failed to delete image from storage:', err);
+    });
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
 
   const handleDeleteAllCardImages = useCallback(() => {
     if (!selectedNugget) return;
     const level = activeLogicTab;
-    updateNugget(selectedNugget.id, (n) => ({
+    const nuggetId = selectedNugget.id;
+    // Collect all card IDs that have images at this level before updating state
+    const cardIdsToDelete = flattenCards(selectedNugget.cards)
+      .filter((c) => c.cardUrlMap?.[level])
+      .map((c) => c.id);
+    updateNugget(nuggetId, (n) => ({
       ...n,
       cards: mapCards(n.cards, (c) => {
         const newUrlMap = { ...(c.cardUrlMap || {}) };
@@ -192,6 +213,12 @@ export function useImageOperations({
       }),
       lastModifiedAt: Date.now(),
     }));
+    // Persist all deletions to backend immediately
+    for (const cardId of cardIdsToDelete) {
+      getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
+        log.warn('Failed to delete image from storage:', err);
+      });
+    }
   }, [selectedNugget, activeLogicTab, updateNugget]);
 
   // ── Downloads ──
