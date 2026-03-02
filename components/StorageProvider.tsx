@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { UploadedFile, InsightsSession, Nugget, Project, InitialPersistedState, CustomStyle } from '../types';
-import { AppProvider } from '../context/AppContext';
+import { AppProvider, useAppContext } from '../context/AppContext';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
@@ -10,6 +10,7 @@ import { StorageBackend } from '../utils/storage/StorageBackend';
 import {
   deserializeFile,
   deserializeCard,
+  deserializeCardItems,
   deserializeNugget,
   deserializeNuggetDocument,
   deserializeProject,
@@ -33,6 +34,7 @@ const PersistenceConnector: React.FC = () => {
   const { projects } = useProjectContext();
   const { activeCardId, selectedProjectId } = useSelectionContext();
   const { customStyles } = useStyleContext();
+  const { openProjectId } = useAppContext();
 
   usePersistence({
     storage,
@@ -42,6 +44,7 @@ const PersistenceConnector: React.FC = () => {
     selectedNuggetId,
     selectedDocumentId,
     selectedProjectId,
+    openProjectId,
     customStyles,
   });
 
@@ -134,9 +137,9 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
       storage.loadNuggetImages(sn.id),
       storage.loadNuggetDocuments(sn.id),
     ]);
-    const hydratedHeadings = headings.map((sh) => deserializeCard(sh, images));
+    const hydratedCards = deserializeCardItems(headings, images, sn.folders);
     const hydratedDocs = nuggetDocs.map((sd) => deserializeNuggetDocument(sd));
-    nuggets.push(deserializeNugget(sn, hydratedHeadings, hydratedDocs));
+    nuggets.push(deserializeNugget(sn, hydratedCards, hydratedDocs));
   }
 
   // ── Runtime migration: v2 data → v3 (documents were in global library, nuggets had documentIds) ──
@@ -188,9 +191,10 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
 
         await storage.saveNugget(serializeNugget(nugget));
         await storage.saveNuggetDocument(serializeNuggetDocument(nuggetId, file));
-        const storedH = nugget.cards.map((h) => serializeCard(h, nuggetId));
+        // Legacy migration: cards are always flat Card[], no folders
+        const storedH = hydratedHeadings.map((h) => serializeCard(h, nuggetId));
         await storage.saveNuggetHeadings(nuggetId, storedH);
-        for (const h of nugget.cards) {
+        for (const h of hydratedHeadings) {
           const imgs = extractImages(h, nuggetId);
           for (const img of imgs) {
             await storage.saveNuggetImage(img);
@@ -229,9 +233,10 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
       for (const doc of insightsDocs) {
         await storage.saveNuggetDocument(serializeNuggetDocument(nuggetId, doc));
       }
-      const storedH = nugget.cards.map((h) => serializeCard(h, nuggetId));
+      // Legacy migration: insightsSession.cards is always flat Card[], no folders
+      const storedH = insightsSession.cards.map((h) => serializeCard(h, nuggetId));
       await storage.saveNuggetHeadings(nuggetId, storedH);
-      for (const h of nugget.cards) {
+      for (const h of insightsSession.cards) {
         const imgs = extractImages(h, nuggetId);
         for (const img of imgs) {
           await storage.saveNuggetImage(img);
@@ -283,6 +288,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     selectedDocumentId: appState?.selectedDocumentId ?? null,
     selectedProjectId: appState?.selectedProjectId ?? null,
     activeCardId: appState?.activeCardId ?? null,
+    openProjectId: appState?.openProjectId ?? null,
     workflowMode: 'insights',
     tokenUsageTotals: storedTokenUsage as Record<string, number> | undefined,
     customStyles: (storedCustomStyles as CustomStyle[] | null) ?? undefined,

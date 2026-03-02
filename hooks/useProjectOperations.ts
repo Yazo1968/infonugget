@@ -2,24 +2,59 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
-import { Nugget, Project, UploadedFile } from '../types';
-import { PendingFileUpload } from '../components/NuggetCreationModal';
+import { Nugget, Project, UploadedFile, CardItem, isCardFolder, PendingFileUpload } from '../types';
 import { getUniqueName } from '../utils/naming';
 import { uploadToFilesAPI } from '../utils/ai';
-import { processFileToDocument, processNativePdf, base64ToBlob } from '../utils/fileProcessing';
+import { processFileToDocument, fileToBase64, base64ToBlob } from '../utils/fileProcessing';
+import { flattenBookmarks } from '../utils/pdfBookmarks';
+import type { PdfProcessorResult } from '../components/PdfProcessorModal';
 import { useToast } from '../components/ToastNotification';
 import { generateSubject } from '../utils/subjectGeneration';
 import { RecordUsageFn } from './useTokenUsage';
 
+/** Re-upload a document's content to the Files API, returning a new fileId (or undefined on failure). */
+async function reuploadDocToFilesAPI(doc: UploadedFile): Promise<string | undefined> {
+  try {
+    if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
+      return await uploadToFilesAPI(base64ToBlob(doc.pdfBase64, 'application/pdf'), doc.name, 'application/pdf');
+    } else if (doc.content) {
+      return await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
+    }
+  } catch (err) {
+    console.warn('[useProjectOperations] Files API re-upload failed for', doc.name, err);
+  }
+  return undefined;
+}
+
+/** Deep-clone a CardItem[], giving each card and folder a new ID. */
+function cloneCardItems(items: CardItem[]): CardItem[] {
+  return items.map((item) =>
+    isCardFolder(item)
+      ? {
+          ...item,
+          id: crypto.randomUUID(),
+          cards: item.cards.map((c) => ({
+            ...c,
+            id: `card-${Math.random().toString(36).substr(2, 9)}`,
+          })),
+        }
+      : { ...item, id: `card-${Math.random().toString(36).substr(2, 9)}` }
+  );
+}
+
+/** Ref bridge: askPdfProcessor from useDocumentOperations, set in App.tsx after both hooks are created. */
+export type AskPdfProcessorFn = (pdfBase64: string, fileName: string) => Promise<PdfProcessorResult | 'cancel' | 'discard' | 'convert-to-markdown'>;
+
 export interface UseProjectOperationsParams {
   recordUsage: RecordUsageFn;
+  askPdfProcessorRef?: React.RefObject<AskPdfProcessorFn | null>;
 }
 
 /**
  * Project & nugget operations — creation, duplication, copy/move, subject management.
  * Extracted from App.tsx for domain separation (item 4.2).
  */
-export function useProjectOperations({ recordUsage }: UseProjectOperationsParams) {
+export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UseProjectOperationsParams) {
   const { nuggets, addNugget, updateNugget, setSelectedNuggetId } = useNuggetContext();
   const { projects, setProjects, addProject, addNuggetToProject, removeNuggetFromProject } = useProjectContext();
   const { setSelectionLevel } = useSelectionContext();
@@ -68,43 +103,23 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
         pendingSubjectGenRef.current = nugget.id;
         subjectGenDocIdsRef.current = new Set(pendingFiles.map((pf) => pf.placeholderId));
 
-        for (const pf of pendingFiles) {
+        // Separate markdown files (parallel) from native-PDFs (sequential with modal)
+        const mdPending = pendingFiles.filter((pf) => pf.mode === 'markdown');
+        const pdfPending = pendingFiles.filter((pf) => pf.mode === 'native-pdf');
+
+        // Process markdown files in parallel (fire-and-forget)
+        for (const pf of mdPending) {
           (async () => {
             try {
-              let processed: UploadedFile;
-
-              if (pf.mode === 'native-pdf') {
-                // processNativePdf now handles bookmark-first extraction internally
-                const nativePdf = await processNativePdf(pf.file, pf.placeholderId);
-                // Upload PDF to Files API
-                let pdfFileId: string | undefined;
+              let processed = await processFileToDocument(pf.file, pf.placeholderId);
+              if (processed.content) {
                 try {
-                  pdfFileId = await uploadToFilesAPI(
-                    base64ToBlob(nativePdf.pdfBase64!, 'application/pdf'),
-                    pf.file.name,
-                    'application/pdf',
-                  );
+                  const fileId = await uploadToFilesAPI(processed.content, pf.file.name, 'text/plain');
+                  processed = { ...processed, fileId };
                 } catch (err) {
-                  console.warn('[App] Native PDF Files API upload failed:', err);
-                }
-                processed = {
-                  ...nativePdf,
-                  fileId: pdfFileId,
-                };
-              } else {
-                processed = await processFileToDocument(pf.file, pf.placeholderId);
-                // Try Files API upload for Claude context
-                if (processed.content) {
-                  try {
-                    const fileId = await uploadToFilesAPI(processed.content, pf.file.name, 'text/plain');
-                    processed = { ...processed, fileId };
-                  } catch (err) {
-                    console.warn('[App] Files API upload failed (will use inline fallback):', err);
-                  }
+                  console.warn('[App] Files API upload failed (will use inline fallback):', err);
                 }
               }
-
-              // Update the document within the nugget
               updateNugget(nugget.id, (n) => ({
                 ...n,
                 documents: n.documents.map((d) => (d.id === pf.placeholderId ? processed : d)),
@@ -122,6 +137,132 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
                 detail: err instanceof Error ? err.message : 'An unexpected error occurred.',
                 duration: 10000,
               });
+            }
+          })();
+        }
+
+        // Process native-PDF files sequentially — each opens PdfProcessorModal for Gemini analysis
+        if (pdfPending.length > 0) {
+          (async () => {
+            for (const pf of pdfPending) {
+              try {
+                const pdfBase64 = await fileToBase64(pf.file);
+
+                // Update placeholder so it's visible as processing
+                updateNugget(nugget.id, (n) => ({
+                  ...n,
+                  documents: n.documents.map((d) =>
+                    d.id === pf.placeholderId
+                      ? { ...d, sourceType: 'native-pdf' as const, pdfBase64, status: 'processing' as const }
+                      : d,
+                  ),
+                }));
+
+                // Open PdfProcessorModal via ref bridge
+                const askPdfProcessor = askPdfProcessorRef?.current;
+                if (!askPdfProcessor) {
+                  // Fallback: store directly without bookmarks (ref not wired yet — shouldn't happen)
+                  let pdfFileId: string | undefined;
+                  try {
+                    pdfFileId = await uploadToFilesAPI(base64ToBlob(pdfBase64, 'application/pdf'), pf.file.name, 'application/pdf');
+                  } catch { /* best-effort */ }
+                  updateNugget(nugget.id, (n) => ({
+                    ...n,
+                    documents: n.documents.map((d) =>
+                      d.id === pf.placeholderId
+                        ? { ...d, status: 'ready' as const, progress: 100, bookmarks: [], bookmarkSource: 'manual' as const, structure: [], fileId: pdfFileId, createdAt: Date.now(), originalName: pf.file.name, version: 1, sourceOrigin: { type: 'uploaded' as const, timestamp: Date.now() } }
+                        : d,
+                    ),
+                    lastModifiedAt: Date.now(),
+                  }));
+                  continue;
+                }
+
+                const result = await askPdfProcessor(pdfBase64, pf.file.name);
+
+                if (result === 'discard' || result === 'cancel') {
+                  // Remove document from the nugget + remove from subject tracking
+                  updateNugget(nugget.id, (n) => ({
+                    ...n,
+                    documents: n.documents.filter((d) => d.id !== pf.placeholderId),
+                    lastModifiedAt: Date.now(),
+                  }));
+                  subjectGenDocIdsRef.current.delete(pf.placeholderId);
+                } else if (result === 'convert-to-markdown') {
+                  // Reset to markdown mode and re-process
+                  updateNugget(nugget.id, (n) => ({
+                    ...n,
+                    documents: n.documents.map((d) =>
+                      d.id === pf.placeholderId
+                        ? { ...d, sourceType: 'markdown' as const, pdfBase64: undefined, bookmarks: undefined, bookmarkSource: undefined, structure: [], status: 'processing' as const, progress: 0 }
+                        : d,
+                    ),
+                  }));
+                  try {
+                    let processed = await processFileToDocument(pf.file, pf.placeholderId);
+                    if (processed.content) {
+                      try {
+                        const fileId = await uploadToFilesAPI(processed.content, pf.file.name, 'text/plain');
+                        processed = { ...processed, fileId };
+                      } catch { /* best-effort */ }
+                    }
+                    updateNugget(nugget.id, (n) => ({
+                      ...n,
+                      documents: n.documents.map((d) => (d.id === pf.placeholderId ? processed : d)),
+                      lastModifiedAt: Date.now(),
+                    }));
+                  } catch (err) {
+                    updateNugget(nugget.id, (n) => ({
+                      ...n,
+                      documents: n.documents.map((d) => (d.id === pf.placeholderId ? { ...d, status: 'error' as const } : d)),
+                    }));
+                  }
+                } else {
+                  // Accept with bookmarks — upload to Files API and commit
+                  const { pdfBase64: processedBase64, bookmarks, bookmarkSource } = result;
+                  let pdfFileId: string | undefined;
+                  try {
+                    pdfFileId = await uploadToFilesAPI(base64ToBlob(processedBase64, 'application/pdf'), pf.file.name, 'application/pdf');
+                  } catch (err) {
+                    console.warn('[App] Native PDF Files API upload failed:', err);
+                  }
+                  const structure = bookmarks.length > 0 ? flattenBookmarks(bookmarks) : [];
+                  updateNugget(nugget.id, (n) => ({
+                    ...n,
+                    documents: n.documents.map((d) =>
+                      d.id === pf.placeholderId
+                        ? {
+                            ...d,
+                            pdfBase64: processedBase64,
+                            bookmarks,
+                            bookmarkSource,
+                            structure,
+                            status: 'ready' as const,
+                            progress: 100,
+                            createdAt: Date.now(),
+                            originalName: pf.file.name,
+                            version: 1,
+                            sourceOrigin: { type: 'uploaded' as const, timestamp: Date.now() },
+                            fileId: pdfFileId,
+                          }
+                        : d,
+                    ),
+                    lastModifiedAt: Date.now(),
+                  }));
+                }
+              } catch (err) {
+                console.error(`[App] Processing failed for ${pf.file.name}:`, err);
+                updateNugget(nugget.id, (n) => ({
+                  ...n,
+                  documents: n.documents.map((d) => (d.id === pf.placeholderId ? { ...d, status: 'error' as const } : d)),
+                }));
+                addToast({
+                  type: 'error',
+                  message: `Failed to process "${pf.file.name}"`,
+                  detail: err instanceof Error ? err.message : 'An unexpected error occurred.',
+                  duration: 10000,
+                });
+              }
             }
           })();
         }
@@ -180,7 +321,7 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
   // ── Copy nugget to project ──
 
   const handleCopyNuggetToProject = useCallback(
-    (nuggetId: string, targetProjectId: string) => {
+    async (nuggetId: string, targetProjectId: string) => {
       const nugget = nuggets.find((n) => n.id === nuggetId);
       if (!nugget) return;
       const now = Date.now();
@@ -190,12 +331,19 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
       const targetNuggetNames = targetProject
         ? targetProject.nuggetIds.map((nid) => nuggets.find((n) => n.id === nid)?.name || '').filter(Boolean)
         : [];
+      // Re-upload documents to Files API so each copy gets its own fileId
+      const clonedDocs = await Promise.all(
+        nugget.documents.map(async (d) => {
+          const newFileId = d.fileId ? await reuploadDocToFilesAPI(d) : undefined;
+          return { ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}`, fileId: newFileId };
+        }),
+      );
       const copiedNugget: Nugget = {
         ...nugget,
         id: newNuggetId,
         name: getUniqueName(`${nugget.name} (copy)`, targetNuggetNames),
-        documents: nugget.documents.map((d) => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
-        cards: nugget.cards.map((c) => ({ ...c, id: `card-${Math.random().toString(36).substr(2, 9)}` })),
+        documents: clonedDocs,
+        cards: cloneCardItems(nugget.cards),
         messages: [...(nugget.messages || [])],
         createdAt: now,
         lastModifiedAt: now,
@@ -209,24 +357,30 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
   // ── Duplicate project ──
 
   const handleDuplicateProject = useCallback(
-    (projectId: string) => {
+    async (projectId: string) => {
       const project = projects.find((p) => p.id === projectId);
       if (!project) return;
       const now = Date.now();
       const newProjectId = `project-${now}-${Math.random().toString(36).substr(2, 9)}`;
       const newNuggetIds: string[] = [];
 
-      // Deep-clone each nugget in the project
+      // Deep-clone each nugget, re-uploading documents to Files API
       for (const nuggetId of project.nuggetIds) {
         const nugget = nuggets.find((n) => n.id === nuggetId);
         if (!nugget) continue;
         const newNuggetId = `nugget-${now}-${Math.random().toString(36).substr(2, 9)}-${newNuggetIds.length}`;
+        const clonedDocs = await Promise.all(
+          nugget.documents.map(async (d) => {
+            const newFileId = d.fileId ? await reuploadDocToFilesAPI(d) : undefined;
+            return { ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}`, fileId: newFileId };
+          }),
+        );
         const copiedNugget: Nugget = {
           ...nugget,
           id: newNuggetId,
           name: nugget.name, // keep same name — it's in a different project
-          documents: nugget.documents.map((d) => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
-          cards: nugget.cards.map((c) => ({ ...c, id: `card-${Math.random().toString(36).substr(2, 9)}` })),
+          documents: clonedDocs,
+          cards: cloneCardItems(nugget.cards),
           messages: [...(nugget.messages || [])],
           createdAt: now,
           lastModifiedAt: now,
@@ -277,7 +431,7 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
   // ── Create project for nugget (copy or move) ──
 
   const handleCreateProjectForNugget = useCallback(
-    (nuggetId: string, projectName: string, mode: 'copy' | 'move', sourceProjectId: string) => {
+    async (nuggetId: string, projectName: string, mode: 'copy' | 'move', sourceProjectId: string) => {
       const now = Date.now();
       const newProjectId = `project-${now}-${Math.random().toString(36).substr(2, 9)}`;
       // Auto-increment project name if it already exists
@@ -305,16 +459,22 @@ export function useProjectOperations({ recordUsage }: UseProjectOperationsParams
           newProject,
         ]);
       } else {
-        // Copy: duplicate the nugget, create project with the copy's ID
+        // Copy: duplicate the nugget, re-upload documents to Files API
         const nugget = nuggets.find((n) => n.id === nuggetId);
         if (!nugget) return;
         const newNuggetId = `nugget-${now}-${Math.random().toString(36).substr(2, 9)}`;
+        const clonedDocs = await Promise.all(
+          nugget.documents.map(async (d) => {
+            const newFileId = d.fileId ? await reuploadDocToFilesAPI(d) : undefined;
+            return { ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}`, fileId: newFileId };
+          }),
+        );
         const copiedNugget: Nugget = {
           ...nugget,
           id: newNuggetId,
           name: `${nugget.name} (copy)`,
-          documents: nugget.documents.map((d) => ({ ...d, id: `doc-${Math.random().toString(36).substr(2, 9)}` })),
-          cards: nugget.cards.map((c) => ({ ...c, id: `card-${Math.random().toString(36).substr(2, 9)}` })),
+          documents: clonedDocs,
+          cards: cloneCardItems(nugget.cards),
           messages: [...(nugget.messages || [])],
           createdAt: now,
           lastModifiedAt: now,

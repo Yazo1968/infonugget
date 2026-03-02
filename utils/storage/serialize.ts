@@ -2,6 +2,9 @@ import {
   UploadedFile,
   Heading,
   Card,
+  CardItem,
+  CardFolder,
+  isCardFolder,
   DetailLevel,
   InsightsSession,
   Nugget,
@@ -107,6 +110,107 @@ export function extractImages(card: Card, fileId: string): StoredImage[] {
   return images;
 }
 
+// ── CardItem (Card | CardFolder) serialization ──
+
+/**
+ * Serialize a CardItem[] into flat StoredHeading[] + folder metadata.
+ * Cards inside folders get `folderId` set. All items get `orderIndex` for ordering.
+ */
+export function serializeCardItems(
+  items: CardItem[],
+  nuggetId: string,
+): { headings: StoredHeading[]; folders: StoredNugget['folders'] } {
+  const headings: StoredHeading[] = [];
+  const folders: NonNullable<StoredNugget['folders']> = [];
+
+  items.forEach((item, topIdx) => {
+    if (isCardFolder(item)) {
+      folders.push({
+        id: item.id,
+        name: item.name,
+        collapsed: item.collapsed,
+        orderIndex: topIdx,
+        createdAt: item.createdAt,
+        lastModifiedAt: item.lastModifiedAt,
+        autoDeckSessionId: item.autoDeckSessionId,
+      });
+      item.cards.forEach((card, cardIdx) => {
+        const sh = serializeCard(card, nuggetId);
+        sh.folderId = item.id;
+        sh.orderIndex = cardIdx;
+        headings.push(sh);
+      });
+    } else {
+      const sh = serializeCard(item, nuggetId);
+      sh.orderIndex = topIdx;
+      headings.push(sh);
+    }
+  });
+
+  return { headings, folders: folders.length > 0 ? folders : undefined };
+}
+
+/**
+ * Deserialize StoredHeading[] + folder metadata back into CardItem[].
+ * Backward compatible: headings without folderId become root-level cards.
+ */
+export function deserializeCardItems(
+  headings: StoredHeading[],
+  images: StoredImage[],
+  folders?: StoredNugget['folders'],
+): CardItem[] {
+  if (!folders || folders.length === 0) {
+    // No folders — all cards at root (backward compat)
+    return headings.map((sh) => deserializeCard(sh, images));
+  }
+
+  const folderMap = new Map(folders.map((f) => [f.id, f]));
+  const folderHeadings = new Map<string, StoredHeading[]>();
+  const rootHeadings: { orderIndex: number; heading: StoredHeading }[] = [];
+
+  for (const sh of headings) {
+    const fid = sh.folderId;
+    if (fid && folderMap.has(fid)) {
+      const arr = folderHeadings.get(fid) || [];
+      arr.push(sh);
+      folderHeadings.set(fid, arr);
+    } else {
+      rootHeadings.push({ orderIndex: sh.orderIndex ?? 0, heading: sh });
+    }
+  }
+
+  // Build result with ordering
+  const items: { orderIndex: number; item: CardItem }[] = [];
+
+  for (const rh of rootHeadings) {
+    items.push({ orderIndex: rh.orderIndex, item: deserializeCard(rh.heading, images) });
+  }
+
+  for (const [folderId, sf] of folderMap) {
+    const fh = (folderHeadings.get(folderId) || []).sort(
+      (a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0),
+    );
+    const cards = fh.map((h) => deserializeCard(h, images));
+    const folder: CardFolder = {
+      kind: 'folder' as const,
+      id: sf.id,
+      name: sf.name,
+      cards,
+      collapsed: sf.collapsed,
+      createdAt: sf.createdAt,
+      lastModifiedAt: sf.lastModifiedAt,
+      autoDeckSessionId: sf.autoDeckSessionId,
+    };
+    items.push({
+      orderIndex: sf.orderIndex,
+      item: folder,
+    });
+  }
+
+  items.sort((a, b) => a.orderIndex - b.orderIndex);
+  return items.map((i) => i.item);
+}
+
 /** Migrate any legacy level keys inside a Partial<Record<DetailLevel, T>> map. */
 function migrateLevelMap<T>(map?: Partial<Record<string, T>>): Partial<Record<DetailLevel, T>> | undefined {
   if (!map) return map as any;
@@ -204,12 +308,13 @@ export function serializeNugget(n: Nugget): StoredNugget {
     lastDocChangeSyncIndex: n.lastDocChangeSyncIndex,
     subject: n.subject,
     stylingOptions: n.stylingOptions,
+    qualityReport: n.qualityReport,
     createdAt: n.createdAt,
     lastModifiedAt: n.lastModifiedAt,
   };
 }
 
-export function deserializeNugget(sn: StoredNugget, cards: Card[], documents: UploadedFile[]): Nugget {
+export function deserializeNugget(sn: StoredNugget, cards: CardItem[], documents: UploadedFile[]): Nugget {
   return {
     id: sn.id,
     name: sn.name,
@@ -221,6 +326,7 @@ export function deserializeNugget(sn: StoredNugget, cards: Card[], documents: Up
     lastDocChangeSyncIndex: sn.lastDocChangeSyncIndex,
     subject: sn.subject,
     stylingOptions: sn.stylingOptions,
+    qualityReport: sn.qualityReport,
     createdAt: sn.createdAt,
     lastModifiedAt: sn.lastModifiedAt,
   };

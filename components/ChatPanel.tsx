@@ -6,7 +6,6 @@ import { ChatMessage, DetailLevel, UploadedFile, DocChangeEvent } from '../types
 import { DocumentChangeNotice } from './Dialogs';
 import PanelRequirements from './PanelRequirements';
 import { useThemeContext } from '../context/ThemeContext';
-import { useNuggetContext } from '../context/NuggetContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 
 interface ChatPanelProps {
@@ -23,6 +22,10 @@ interface ChatPanelProps {
   hasConversation?: boolean;
   onDocChangeContinue?: (text: string, isCardRequest: boolean, detailLevel?: DetailLevel) => void;
   onDocChangeStartFresh?: () => void;
+  tabBarRef?: React.RefObject<HTMLElement | null>;
+  onCreatePlaceholder?: (title: string, detailLevel: DetailLevel) => string | null;
+  onFillPlaceholderCard?: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
+  onRemovePlaceholderCard?: (cardId: string, detailLevel: DetailLevel) => void;
 }
 
 const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -39,13 +42,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   hasConversation,
   onDocChangeContinue,
   onDocChangeStartFresh,
+  tabBarRef,
+  onCreatePlaceholder,
+  onFillPlaceholderCard,
+  onRemovePlaceholderCard,
 }) => {
   const { darkMode } = useThemeContext();
-  const { toggleNuggetDocument } = useNuggetContext();
-  const { stripRef, shouldRender, handleResizeStart, overlayStyle } = usePanelOverlay({
+  const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
     isOpen,
     defaultWidth: Math.min(window.innerWidth * 0.5, 750),
     minWidth: 300,
+    anchorRef: tabBarRef,
   });
   const [inputText, setInputText] = useState('');
   const [showSendMenu, setShowSendMenu] = useState(false);
@@ -62,11 +69,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
 
-  // ── Document list popup state (hover + locked, like SourcesPanel) ──
-  const [docListOpen, setDocListOpen] = useState(false);
-  const [docListMode, setDocListMode] = useState<'hover' | 'locked'>('hover');
-  const docToggleRef = useRef<HTMLDivElement>(null);
-  const docListRef = useRef<HTMLDivElement>(null);
 
   // ── Document change notice state ──
   const [showDocChangeNotice, setShowDocChangeNotice] = useState(false);
@@ -74,16 +76,47 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const [pendingSendIsCard, setPendingSendIsCard] = useState(false);
   const [pendingSendLevel, setPendingSendLevel] = useState<DetailLevel | undefined>(undefined);
 
+  // Track placeholder card created for the in-flight "Generate Card" request
+  const pendingPlaceholderRef = useRef<{ cardId: string; level: DetailLevel } | null>(null);
+
   // Auto-save card content as card when a new card message arrives
   const autoSavedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     for (const msg of messages) {
       if (msg.isCardContent && msg.role === 'assistant' && !msg.savedAsCardId && !autoSavedRef.current.has(msg.id)) {
         autoSavedRef.current.add(msg.id);
-        onSaveAsCard(msg, msg.content);
+
+        const pending = pendingPlaceholderRef.current;
+        if (pending && onFillPlaceholderCard) {
+          // Fill the existing placeholder with real content + extract H1 as title
+          const titleMatch = msg.content.match(/^#\s+(.+)$/m);
+          const newTitle = titleMatch ? titleMatch[1].trim() : undefined;
+          onFillPlaceholderCard(pending.cardId, pending.level, msg.content, newTitle);
+          pendingPlaceholderRef.current = null;
+        } else {
+          // Fallback: no placeholder exists, create card directly
+          onSaveAsCard(msg, msg.content);
+        }
       }
     }
-  }, [messages, onSaveAsCard]);
+  }, [messages, onSaveAsCard, onFillPlaceholderCard]);
+
+  // Clean up placeholder if loading ends without a card being filled (error case)
+  const prevLoadingRef = useRef(false);
+  useEffect(() => {
+    if (prevLoadingRef.current && !isLoading && pendingPlaceholderRef.current) {
+      // Give a brief delay so the auto-save effect can run first
+      const timer = setTimeout(() => {
+        if (pendingPlaceholderRef.current) {
+          onRemovePlaceholderCard?.(pendingPlaceholderRef.current.cardId, pendingPlaceholderRef.current.level);
+          pendingPlaceholderRef.current = null;
+        }
+      }, 200);
+      prevLoadingRef.current = isLoading;
+      return () => clearTimeout(timer);
+    }
+    prevLoadingRef.current = isLoading;
+  }, [isLoading, onRemovePlaceholderCard]);
 
   // Scroll: instant on load/nugget switch, smooth on new messages
   useEffect(() => {
@@ -134,10 +167,17 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         setShowDocChangeNotice(true);
         return;
       }
+      // Create placeholder card before sending so it appears instantly with a spinner
+      if (onCreatePlaceholder) {
+        const placeholderId = onCreatePlaceholder(text, level);
+        if (placeholderId) {
+          pendingPlaceholderRef.current = { cardId: placeholderId, level };
+        }
+      }
       onSendMessage(text, true, level);
       setInputText('');
     },
-    [inputText, isLoading, onSendMessage, pendingDocChanges, hasConversation, onDocChangeContinue],
+    [inputText, isLoading, onSendMessage, pendingDocChanges, hasConversation, onDocChangeContinue, onCreatePlaceholder],
   );
 
   const handleKeyDown = useCallback(
@@ -149,19 +189,6 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     },
     [handleSend],
   );
-
-  // Close doc list popup on outside click (only when locked)
-  useEffect(() => {
-    if (!docListOpen || docListMode !== 'locked') return;
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (docToggleRef.current && docToggleRef.current.contains(target)) return;
-      if (docListRef.current && docListRef.current.contains(target)) return;
-      setDocListOpen(false);
-    };
-    window.addEventListener('mousedown', handleClick);
-    return () => window.removeEventListener('mousedown', handleClick);
-  }, [docListOpen, docListMode]);
 
   // Close send menu on outside click or Escape
   useEffect(() => {
@@ -265,176 +292,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
 
   return (
     <>
-      <button
-        ref={stripRef}
-        data-panel-strip
-        onClick={onToggle}
-        className="flex flex-col items-center pt-2 pb-1 overflow-hidden rounded-l-lg shadow-[5px_0_10px_rgba(0,0,0,0.35)] shrink-0 w-10 cursor-pointer -ml-2.5 z-[2] relative"
-        style={{ backgroundColor: darkMode ? 'rgb(30,48,68)' : 'rgb(50,90,130)' }}
-      >
-        <div className="w-8 shrink-0 flex items-center justify-center">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="shrink-0 text-white"
-          >
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-        </div>
-        <span
-          className="text-[13px] font-bold uppercase tracking-wider text-white mt-2"
-          style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' } as React.CSSProperties}
-        >
-          Create Cards by Chat
-        </span>
-      </button>
-
       {shouldRender &&
         createPortal(
+          <>
           <div
             data-panel-overlay
-            className="fixed z-[105] flex flex-col bg-white dark:bg-zinc-900 border-4 rounded-r-lg shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
+            className="fixed z-[105] flex flex-col bg-white dark:bg-zinc-900 border-4 shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
             style={{
-              borderColor: darkMode ? 'rgb(30,48,68)' : 'rgb(50,90,130)',
+              borderColor: 'rgb(51,115,196)',
               ...overlayStyle,
             }}
           >
-            {/* Resize handle */}
-            <div
-              onMouseDown={handleResizeStart}
-              className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-black/10 transition-colors"
-            />
-            <>
-              {/* Document list bar — hover opens, click locks (same as SourcesPanel) */}
-              {documents.length > 0 && (
-                <>
-                  <div className="shrink-0 border-y border-zinc-100 dark:border-zinc-700">
-                    <div
-                      ref={docToggleRef}
-                      className="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer"
-                      onMouseEnter={() => {
-                        if (docListOpen && docListMode === 'locked') return;
-                        setDocListMode('hover');
-                        setDocListOpen(true);
-                      }}
-                      onMouseLeave={(e) => {
-                        if (docListMode === 'locked') return;
-                        const related = e.relatedTarget as Node | null;
-                        if (docListRef.current && related && docListRef.current.contains(related)) return;
-                        setDocListOpen(false);
-                      }}
-                      onClick={() => {
-                        if (docListOpen && docListMode === 'locked') {
-                          setDocListOpen(false);
-                        } else {
-                          setDocListMode('locked');
-                          setDocListOpen(true);
-                        }
-                      }}
-                    >
-                      <span
-                        className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400"
-                        style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}
-                      >
-                        Select Active Documents
-                      </span>
-                      <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-light">{documents.length}</span>
-                      {/* Chevron icon */}
-                      <div className="shrink-0 w-5 h-5 rounded flex items-center justify-center transition-all text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">
-                        <svg
-                          width="12"
-                          height="12"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2.5"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        >
-                          <polyline points={docListOpen ? '18 15 12 9 6 15' : '6 9 12 15 18 9'} />
-                        </svg>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Document list popup — portaled to body */}
-                  {docListOpen &&
-                    createPortal(
-                      <div
-                        ref={docListRef}
-                        className="fixed z-[120]"
-                        style={{
-                          ...(docToggleRef.current
-                            ? (() => {
-                                const r = docToggleRef.current.getBoundingClientRect();
-                                return { top: r.bottom, left: r.left };
-                              })()
-                            : {}),
-                        }}
-                        onMouseLeave={(e) => {
-                          if (docListMode === 'locked') return;
-                          const related = e.relatedTarget as Node | null;
-                          if (docToggleRef.current && related && docToggleRef.current.contains(related)) return;
-                          setDocListOpen(false);
-                        }}
-                      >
-                        {/* Invisible bridge padding on top, visible content inside */}
-                        <div
-                          className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 py-2 px-1 max-h-[50vh] overflow-y-auto mt-1"
-                          style={{ scrollbarWidth: 'thin' as const }}
-                        >
-                          {documents.map((doc) => {
-                            const isEnabled = doc.enabled !== false;
-                            return (
-                              <div
-                                key={doc.id}
-                                className={`flex items-center gap-1.5 px-3 py-1.5 cursor-pointer select-none transition-colors rounded-lg ${isEnabled ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'} hover:bg-zinc-100 dark:hover:bg-zinc-700`}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  toggleNuggetDocument(doc.id);
-                                }}
-                              >
-                                {/* Enabled checkbox */}
-                                <button
-                                  className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
-                                    isEnabled
-                                      ? 'border-zinc-300 dark:border-zinc-600 bg-zinc-900'
-                                      : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-zinc-300 dark:hover:border-zinc-600'
-                                  }`}
-                                >
-                                  {isEnabled && (
-                                    <svg
-                                      width="12"
-                                      height="12"
-                                      viewBox="0 0 24 24"
-                                      fill="none"
-                                      stroke="white"
-                                      strokeWidth="2.5"
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                    >
-                                      <polyline points="20 6 9 17 4 12" />
-                                    </svg>
-                                  )}
-                                </button>
-                                <span className="text-[11px] truncate block flex-1 min-w-0">{doc.name}</span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>,
-                      document.body,
-                    )}
-                </>
-              )}
-
-              <div className="flex-1 overflow-y-auto">
+            <div className="flex-1 overflow-y-auto px-3 [&>*]:max-w-2xl [&>*]:mx-auto">
                 {messages.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8">
                     <PanelRequirements level="sources" />
@@ -749,8 +618,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
 
               {/* Input area */}
-              <div className="shrink-0 px-4 py-3">
-                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 focus-within:ring-1 focus-within:ring-zinc-300 transition-shadow">
+              <div className="shrink-0 px-4 py-3 max-w-2xl mx-auto w-full">
+                <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 transition-shadow">
                   <textarea
                     ref={textareaRef}
                     value={inputText}
@@ -760,7 +629,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                     aria-label="Chat message"
                     disabled={isLoading}
                     rows={2}
-                    className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 disabled:opacity-50 placeholder:text-zinc-500"
+                    className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none disabled:opacity-50 placeholder:text-zinc-500"
                   />
                   <div className="flex items-center justify-between px-2 pb-2">
                     {/* Left actions */}
@@ -1036,8 +905,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                   </div>,
                   document.body,
                 )}
-            </>
-          </div>,
+          </div>
+          </>,
           document.body,
         )}
     </>

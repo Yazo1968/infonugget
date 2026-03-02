@@ -49,6 +49,8 @@ export interface Heading {
   startIndex?: number;
   /** Page number where this heading appears (native PDF only). */
   page?: number;
+  /** Word count for this section's body text (native PDF only, from Gemini extraction). */
+  wordCount?: number;
 }
 
 // ── PDF bookmark tree node (nested TOC structure for native PDFs) ──
@@ -59,6 +61,8 @@ export interface BookmarkNode {
   page: number;
   level: number;
   children: BookmarkNode[];
+  /** Word count for this section's body text (from Gemini extraction). */
+  wordCount?: number;
 }
 
 /** How the bookmark tree was obtained. */
@@ -102,6 +106,27 @@ export interface Card {
   autoDeckSessionId?: string;
 }
 
+/** A folder that groups cards in the card list. Created by batch generation. */
+export interface CardFolder {
+  kind: 'folder';
+  id: string;
+  name: string;
+  cards: Card[];
+  collapsed?: boolean;
+  createdAt: number;
+  lastModifiedAt: number;
+  /** Links this folder to the Auto-Deck session that created it */
+  autoDeckSessionId?: string;
+}
+
+/** A single item in the nugget's card list — either a loose card or a folder. */
+export type CardItem = Card | CardFolder;
+
+/** Type guard: is this item a CardFolder? */
+export function isCardFolder(item: CardItem): item is CardFolder {
+  return (item as CardFolder).kind === 'folder';
+}
+
 // ── Document origin tracking ──
 
 export interface SourceOrigin {
@@ -128,8 +153,6 @@ export interface UploadedFile {
   enabled?: boolean;
   /** Anthropic Files API file ID — used to reference the document in chat without re-uploading content. */
   fileId?: string;
-  /** Anthropic Files API file ID for the MetaTOC file (native-pdf only). */
-  metaTocFileId?: string;
   /** Distinguishes how this document is stored and rendered. undefined = 'markdown' (backward compat). */
   sourceType?: 'markdown' | 'native-pdf';
   /** Raw PDF as base64 for iframe viewer (only for native-pdf documents). */
@@ -158,6 +181,12 @@ export interface UploadedFile {
   lastEnabledAt?: number;
   /** Timestamp when chat was last disabled for this document (epoch ms). */
   lastDisabledAt?: number;
+}
+
+export interface PendingFileUpload {
+  file: File;
+  placeholderId: string;
+  mode: 'markdown' | 'native-pdf';
 }
 
 export interface ZoomState {
@@ -283,6 +312,52 @@ export interface DocChangeEvent {
   timestamp: number;
 }
 
+// ── Document Quality Check types ──
+
+export interface TopicCluster {
+  /** Cluster subject label, e.g. "AI & Workforce Transformation" */
+  subject: string;
+  /** One-sentence description of what this cluster covers */
+  description: string;
+  /** IDs of documents in this cluster */
+  documentIds: string[];
+  /** True if this cluster has no relationship to other clusters */
+  isolated: boolean;
+}
+
+export interface QualityConflict {
+  /** What the conflict is about */
+  description: string;
+  /** The conflicting claims from different documents */
+  entries: Array<{
+    documentId: string;
+    documentName: string;
+    /** What this document states */
+    claim: string;
+    /** Section/paragraph reference in the document */
+    location: string;
+  }>;
+  /** Recommendation on how to resolve */
+  recommendation: string;
+}
+
+export interface QualityReport {
+  /** Current check status: green = clear, amber = needs recheck, red = issues found */
+  status: 'green' | 'amber' | 'red';
+  /** Groups of related documents by topic */
+  clusters: TopicCluster[];
+  /** Cross-document contradictions */
+  conflicts: QualityConflict[];
+  /** Whether any documents are unrelated to others */
+  hasUnrelatedDocs: boolean;
+  /** True if user dismissed warnings and chose to proceed */
+  dismissed: boolean;
+  /** When the last check was performed */
+  lastCheckTimestamp: number;
+  /** Index into docChangeLog at time of check — used for amber detection */
+  docChangeLogIndexAtCheck: number;
+}
+
 // ── Nugget types ──
 
 export type NuggetType = 'insights';
@@ -292,7 +367,7 @@ export interface Nugget {
   name: string;
   type: NuggetType;
   documents: UploadedFile[];
-  cards: Card[];
+  cards: CardItem[];
   messages?: ChatMessage[];
   lastDocHash?: string; // hash of active documents at time of last API call
   /** Ordered log of document mutations for change notification */
@@ -303,6 +378,8 @@ export interface Nugget {
   subject?: string;
   /** Per-nugget styling preferences for the generation toolbar. Persisted to IndexedDB. */
   stylingOptions?: StylingOptions;
+  /** Document quality check report — clusters, conflicts, warnings */
+  qualityReport?: QualityReport;
   createdAt: number;
   lastModifiedAt: number;
 }
@@ -448,6 +525,8 @@ export interface InitialPersistedState {
   selectedDocumentId?: string | null;
   selectedProjectId?: string | null;
   activeCardId: string | null;
+  /** Which project is "opened" in the workspace (null = show landing page). */
+  openProjectId?: string | null;
   workflowMode: WorkflowMode;
   // Token usage totals (persisted across refreshes)
   tokenUsageTotals?: Record<string, number>;

@@ -2,12 +2,13 @@ import { useEffect, useRef, useCallback } from 'react';
 import { Nugget, Project, CustomStyle } from '../types';
 import { StorageBackend, StoredImage } from '../utils/storage/StorageBackend';
 import {
-  serializeCard,
   serializeNugget,
   serializeNuggetDocument,
   serializeProject,
+  serializeCardItems,
   extractImages,
 } from '../utils/storage/serialize';
+import { flattenCards } from '../utils/cardUtils';
 
 const APP_STATE_DEBOUNCE_MS = 300;
 const DATA_DEBOUNCE_MS = 1500;
@@ -20,6 +21,7 @@ interface PersistenceOptions {
   selectedNuggetId: string | null;
   selectedDocumentId: string | null;
   selectedProjectId: string | null;
+  openProjectId: string | null;
   customStyles: CustomStyle[];
 }
 
@@ -31,6 +33,7 @@ export function usePersistence({
   selectedNuggetId,
   selectedDocumentId,
   selectedProjectId,
+  openProjectId,
   customStyles,
 }: PersistenceOptions): void {
   const appStateTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,13 +63,13 @@ export function usePersistence({
     if (appStateTimer.current) clearTimeout(appStateTimer.current);
     appStateTimer.current = setTimeout(() => {
       storage
-        .saveAppState({ selectedNuggetId, selectedDocumentId, selectedProjectId, activeCardId })
+        .saveAppState({ selectedNuggetId, selectedDocumentId, selectedProjectId, activeCardId, openProjectId })
         .catch((err) => console.warn('[Persistence] Failed to save app state:', err));
     }, APP_STATE_DEBOUNCE_MS);
     return () => {
       if (appStateTimer.current) clearTimeout(appStateTimer.current);
     };
-  }, [selectedNuggetId, selectedDocumentId, selectedProjectId, activeCardId, storage]);
+  }, [selectedNuggetId, selectedDocumentId, selectedProjectId, activeCardId, openProjectId, storage]);
 
   // ── Nuggets save (includes per-nugget documents) ──
   // Track previous nugget references for dirty detection via object identity
@@ -86,11 +89,12 @@ export function usePersistence({
 
       // Serialize everything for this nugget
       const storedNugget = serializeNugget(nugget);
-      const storedCards = nugget.cards.map((c) => serializeCard(c, nugget.id));
+      const { headings: storedCards, folders } = serializeCardItems(nugget.cards, nugget.id);
+      storedNugget.folders = folders;
 
-      // Collect ALL images for this nugget
+      // Collect ALL images for this nugget (flatten folders to get all Card objects)
       const allImages: StoredImage[] = [];
-      for (const card of nugget.cards) {
+      for (const card of flattenCards(nugget.cards)) {
         allImages.push(...extractImages(card, nugget.id));
       }
 

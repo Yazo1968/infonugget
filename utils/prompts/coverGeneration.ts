@@ -94,9 +94,6 @@ REMINDER: 40-60 words maximum. This is a cover slide, not a content card.`.trim(
 export function buildCoverContentPrompt(
   cardTitle: string,
   coverType: DetailLevel,
-  fullDocument: string,
-  sectionText: string,
-  excludeDocument = false,
   subject?: string,
 ): string {
   const expertPriming = buildExpertPriming(subject);
@@ -104,7 +101,7 @@ export function buildCoverContentPrompt(
 
   if (coverType === 'TitleCard') {
     instructions = `${expertPriming ? expertPriming + '\n\n' : ''}Cover Slide Content — [${cardTitle}]
-Read the provided document for context. Then focus on [${cardTitle}] and its sub-sections.
+Using the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section and its sub-sections.
 
 **Task:**
 Generate content for a TITLE CARD SLIDE. The cover must use "${cardTitle}" as the title (or a refined, punchier version of it).
@@ -127,7 +124,7 @@ Generate content for a TITLE CARD SLIDE. The cover must use "${cardTitle}" as th
   } else {
     // TakeawayCard
     instructions = `${expertPriming ? expertPriming + '\n\n' : ''}Cover Slide Content — [${cardTitle}]
-Read the provided document for context. Then focus on [${cardTitle}] and its sub-sections.
+Using the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section and its sub-sections.
 
 **Task:**
 Generate content for a TAKEAWAY CARD SLIDE. The cover must use "${cardTitle}" as the title (or a refined, punchier version of it), paired with the key takeaways from the section as bullet points.
@@ -152,10 +149,7 @@ Generate content for a TAKEAWAY CARD SLIDE. The cover must use "${cardTitle}" as
 `.trim();
   }
 
-  if (excludeDocument) {
-    return `${instructions}\n\nFOCUS SECTION DATA:\n${sectionText}`;
-  }
-  return `${instructions}\n\nFULL DOCUMENT CONTEXT:\n${fullDocument}\n\nFOCUS SECTION DATA:\n${sectionText}`;
+  return instructions;
 }
 
 // ─────────────────────────────────────────────────────────────────

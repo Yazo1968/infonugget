@@ -428,6 +428,23 @@ export function useDocumentEditing({
     });
   }, []);
 
+  /** Replace the entire selection set with the given IDs. */
+  const setSelectedIds = useCallback((ids: Set<string>) => {
+    setHeadings((prev) => prev.map((h) => ({ ...h, selected: ids.has(h.id) })));
+  }, []);
+
+  /** Select a contiguous range between two heading IDs (inclusive), additive to existing selection. */
+  const selectRange = useCallback((fromId: string, toId: string) => {
+    setHeadings((prev) => {
+      const fromIdx = prev.findIndex((h) => h.id === fromId);
+      const toIdx = prev.findIndex((h) => h.id === toId);
+      if (fromIdx === -1 || toIdx === -1) return prev;
+      const lo = Math.min(fromIdx, toIdx);
+      const hi = Math.max(fromIdx, toIdx);
+      return prev.map((h, i) => (i >= lo && i <= hi ? { ...h, selected: true } : h));
+    });
+  }, []);
+
   const selectHeadingAndDescendants = useCallback((headingId: string) => {
     setHeadings((prev) => {
       const idx = prev.findIndex((h) => h.id === headingId);
@@ -605,6 +622,32 @@ export function useDocumentEditing({
     [editorRef, headings, snapshotBeforeChange, parseHeadings],
   );
 
+  /** Swap editor content without unmounting. Resets dirty, undo/redo, headings. */
+  const resetContent = useCallback((newMarkdown: string) => {
+    if (!editorRef.current) return;
+    suppressDirtyRef.current = true;
+    initialContentRef.current = newMarkdown;
+    // Disconnect observer to avoid spurious dirty/heading events during innerHTML swap
+    editorObserverRef.current?.disconnect();
+    editorRef.current.innerHTML = sanitizeHtml(marked.parse(newMarkdown, { async: false }) as string);
+    undoStack.current = [];
+    redoStack.current = [];
+    lastSnapshotRef.current = editorRef.current.innerHTML;
+    if (snapshotTimerRef.current) {
+      clearTimeout(snapshotTimerRef.current);
+      snapshotTimerRef.current = null;
+    }
+    setIsDirty(false);
+    parseHeadings();
+    // Reconnect observer + unsuppress dirty after paint
+    requestAnimationFrame(() => {
+      if (editorRef.current && editorObserverRef.current) {
+        editorObserverRef.current.observe(editorRef.current, { childList: true, subtree: true, characterData: true });
+      }
+      suppressDirtyRef.current = false;
+    });
+  }, [editorRef, editorObserverRef, parseHeadings]);
+
   return {
     isDirty,
     activeFormats,
@@ -618,9 +661,12 @@ export function useDocumentEditing({
     changeHeadingLevel,
     scrollToHeading,
     updateH1,
+    resetContent,
     toggleSelection,
     deselectAll,
     selectByLevels,
+    setSelectedIds,
+    selectRange,
     selectHeadingContent,
     selectHeadingAndDescendants,
     reorderHeading,

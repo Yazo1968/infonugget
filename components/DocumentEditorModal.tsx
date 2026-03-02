@@ -1,6 +1,7 @@
 import React, { useRef, useCallback, useState, useEffect, forwardRef, useImperativeHandle } from 'react';
 import { createPortal } from 'react-dom';
 import { UploadedFile, DetailLevel } from '../types';
+import { computeMdSectionWordCount, getEligibleDetailLevels, getMaxDetailLevel, computeLodPassCounts, type LodPassCounts } from '../utils/cardUtils';
 import { FormatToolbar } from './FormatToolbar';
 import { FindReplaceBar } from './FindReplaceBar';
 import { useDocumentEditing, EditorHeading } from '../hooks/useDocumentEditing';
@@ -16,7 +17,9 @@ interface DocumentEditorModalProps {
   /** When 'inline', renders without portal/backdrop/header — embeds directly in parent layout */
   mode?: 'modal' | 'inline';
   /** Called when user clicks "Generate Card Content" with a detail level from the heading context menu */
-  onGenerateCard?: (headingId: string, detailLevel: DetailLevel, headingText: string, sourceDocName?: string) => void;
+  onGenerateCard?: (headingId: string, detailLevel: DetailLevel, headingText: string, sourceDocName?: string, existingCardId?: string) => void;
+  /** Create a folder with placeholders for batch generation (2+ cards). Returns card IDs in same order as titles. */
+  onCreateBatchFolder?: (titles: string[], detailLevel: DetailLevel | DetailLevel[], sourceDocName: string) => string[] | null;
   /** When true, closing always shows a confirmation dialog (used for new custom cards) */
   isCustomCard?: boolean;
   /** Called when user discards a custom card — removes the heading entirely */
@@ -35,6 +38,14 @@ interface DocumentEditorModalProps {
   sidebarDivider?: React.ReactNode;
   /** Lifted spinner state — IDs currently being generated (survives panel collapse) */
   generatingSourceIds?: Set<string>;
+  /** Controlled content collapse state (inline mode only) */
+  contentCollapsed?: boolean;
+  /** Callback when content collapse state changes */
+  onContentCollapsedChange?: (collapsed: boolean) => void;
+  /** Minimum width for the editor column (inline mode only) */
+  contentMinWidth?: number;
+  /** Notify parent when editor dirty state changes */
+  onDirtyChange?: (isDirty: boolean) => void;
 }
 
 /** Imperative handle exposed to parent for unsaved-changes gating */
@@ -44,6 +55,8 @@ export interface DocumentEditorHandle {
   discard: () => void;
   /** Update the first H1 heading text in the live editor (for external renames) */
   updateH1: (newTitle: string) => void;
+  /** Swap editor content without unmounting — resets dirty, undo/redo, headings */
+  resetContent: (markdown: string) => void;
 }
 
 // ── Context Menu State ──
@@ -61,6 +74,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
       onClose,
       mode = 'modal',
       onGenerateCard,
+      onCreateBatchFolder,
       isCustomCard,
       onDiscardCustomCard,
       onSaveCustomCard,
@@ -70,6 +84,10 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
       sidebarWidth,
       sidebarDivider,
       generatingSourceIds,
+      contentCollapsed: contentCollapsedProp,
+      onContentCollapsedChange,
+      contentMinWidth,
+      onDirtyChange: onEditorDirtyChange,
     },
     handleRef,
   ) => {
@@ -87,11 +105,16 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
     // ── Sidebar state ──
     const [sidebarOpen, setSidebarOpen] = useState(true);
 
+    // ── Content editor collapse state (inline mode only) ──
+    const [contentCollapsedInternal, setContentCollapsedInternal] = useState(false);
+    const contentCollapsed = contentCollapsedProp ?? contentCollapsedInternal;
+    const setContentCollapsed = onContentCollapsedChange ?? setContentCollapsedInternal;
+
     // ── TOC sidebar resize (default sidebar only) ──
-    const TOC_DEFAULT_WIDTH = 220;
+    // null = use CSS 20% (1:4 split); number = user-resized pixel width
     const TOC_MIN_WIDTH = 140;
     const TOC_MAX_WIDTH = 480;
-    const [tocWidth, setTocWidth] = useState(TOC_DEFAULT_WIDTH);
+    const [tocWidth, setTocWidth] = useState<number | null>(null);
     const tocDragging = useRef(false);
     const tocDragStartX = useRef(0);
     const tocDragStartWidth = useRef(0);
@@ -100,7 +123,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
     const prevSidebarOpen = useRef(sidebarOpen);
     useEffect(() => {
       if (!prevSidebarOpen.current && sidebarOpen) {
-        setTocWidth(TOC_DEFAULT_WIDTH);
+        setTocWidth(null);
       }
       prevSidebarOpen.current = sidebarOpen;
     }, [sidebarOpen]);
@@ -110,7 +133,8 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
         e.preventDefault();
         tocDragging.current = true;
         tocDragStartX.current = e.clientX;
-        tocDragStartWidth.current = tocWidth;
+        // When tocWidth is null (CSS 20%), read the actual rendered width
+        tocDragStartWidth.current = tocWidth ?? (tocRef.current?.getBoundingClientRect().width ?? 220);
         (e.target as HTMLElement).setPointerCapture(e.pointerId);
       },
       [tocWidth],
@@ -154,6 +178,9 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
     const [tocDragGhostStyle, setTocDragGhostStyle] = useState<React.CSSProperties | null>(null);
     const tocDragGhostText = useRef('');
 
+    // Tracks last clicked heading for Shift+Click range selection
+    const lastClickedHeadingRef = useRef<string | null>(null);
+
     // Find/replace hook (shares editorObserverRef with editing hook)
     const findReplace = useDocumentFindReplace(editorRef, scrollContainerRef, editorObserverRef);
 
@@ -168,6 +195,11 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
     });
 
     const { headings } = editing;
+
+    // Notify parent when editor dirty state changes
+    useEffect(() => {
+      onEditorDirtyChange?.(editing.isDirty);
+    }, [editing.isDirty, onEditorDirtyChange]);
 
     // ── TOC drag handler callbacks (need headings + editing) ──
     const handleTocPointerDown = useCallback((e: React.PointerEvent, headingIndex: number, text: string) => {
@@ -316,9 +348,10 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
         save: () => editing.saveEdits(),
         discard: () => editing.discardEdits(),
         updateH1: (newTitle: string) => editing.updateH1(newTitle),
+        resetContent: (markdown: string) => editing.resetContent(markdown),
       }),
       // eslint-disable-next-line react-hooks/exhaustive-deps -- accessing stable methods via editing.method; the object ref changes but the methods are stable
-      [editing.isDirty, editing.saveEdits, editing.discardEdits, editing.updateH1],
+      [editing.isDirty, editing.saveEdits, editing.discardEdits, editing.updateH1, editing.resetContent],
     );
 
     // ── Close context menu on click outside or Escape ──
@@ -446,10 +479,28 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
     };
 
     // Tier 1: left-click — set active heading, scroll, clear tier 2
-    const handleHeadingClick = (id: string) => {
+    // Ctrl/Cmd+Click: toggle individual heading in/out of tier 2 selection
+    // Shift+Click: range select from last clicked heading to current
+    const handleHeadingClick = (e: React.MouseEvent, id: string) => {
+      if (e.ctrlKey || e.metaKey) {
+        // Ctrl+Click: toggle this heading's tier 2 selection
+        editing.toggleSelection(id);
+        setActiveHeadingId(null);
+        lastClickedHeadingRef.current = id;
+        return;
+      }
+      if (e.shiftKey && lastClickedHeadingRef.current) {
+        // Shift+Click: select range from anchor to current
+        editing.deselectAll();
+        editing.selectRange(lastClickedHeadingRef.current, id);
+        setActiveHeadingId(null);
+        return;
+      }
+      // Normal click: deselect tier 2, set active, scroll
       editing.deselectAll();
       setActiveHeadingId(id);
       editing.scrollToHeading(id);
+      lastClickedHeadingRef.current = id;
     };
 
     // Tier 2: right-click — select for batch operations, no scroll, no tier 1 change
@@ -635,8 +686,8 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
       'text-[10px] font-normal text-zinc-500 dark:text-zinc-400',
     ];
 
-    // ── Shared editor body (used in both modal and inline modes) ──
-    const editorBody = (
+    // ── Toolbar + Find bar (rendered inside editor column, not full width) ──
+    const toolbarEl = (
       <>
         {/* Format Toolbar */}
         <div className="shrink-0 h-[40px] border-b border-zinc-200 dark:border-zinc-600">
@@ -675,7 +726,12 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
             />
           </div>
         )}
+      </>
+    );
 
+    // ── Shared editor body (used in both modal and inline modes) ──
+    const editorBody = (
+      <>
         {/* Main content: Sidebar + Editor */}
         <div className="flex-1 flex overflow-hidden">
           {/* Sidebar: custom content, default headings, or hidden */}
@@ -685,74 +741,63 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                 className="shrink-0 overflow-y-auto bg-white dark:bg-zinc-900"
                 style={{ width: sidebarWidth ?? 220 }}
               >
-                <div className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-zinc-500 dark:text-zinc-400">
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="shrink-0"
-                  >
-                    <line x1="8" y1="6" x2="21" y2="6" />
-                    <line x1="8" y1="12" x2="21" y2="12" />
-                    <line x1="8" y1="18" x2="21" y2="18" />
-                    <line x1="3" y1="6" x2="3.01" y2="6" />
-                    <line x1="3" y1="12" x2="3.01" y2="12" />
-                    <line x1="3" y1="18" x2="3.01" y2="18" />
-                  </svg>
-                  <span className="text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap">
-                    Cards List
-                  </span>
+                <div className="shrink-0 sticky top-0 z-10 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-600">
+                  <div className="shrink-0 flex flex-row items-center pt-2 pb-1">
+                    <div className="w-8 shrink-0 flex items-center justify-center">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                        <line x1="8" y1="6" x2="21" y2="6" />
+                        <line x1="8" y1="12" x2="21" y2="12" />
+                        <line x1="8" y1="18" x2="21" y2="18" />
+                        <line x1="3" y1="6" x2="3.01" y2="6" />
+                        <line x1="3" y1="12" x2="3.01" y2="12" />
+                        <line x1="3" y1="18" x2="3.01" y2="18" />
+                      </svg>
+                    </div>
+                    <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Cards List</span>
+                  </div>
                 </div>
                 {sidebarContent}
               </aside>
               {sidebarDivider}
             </>
           ) : !hideSidebar ? (
+            sidebarOpen ? (
             <aside
               ref={tocRef}
-              className="shrink-0 border-r border-zinc-100 dark:border-zinc-600 overflow-y-auto bg-[#fafafa] dark:bg-zinc-800/50 transition-all duration-200"
-              style={{ width: sidebarOpen ? tocWidth : 40 }}
+              className="shrink-0 overflow-y-auto bg-[#fafafa] dark:bg-zinc-800/50 transition-all duration-200"
+              style={{ width: tocWidth ?? '25%' }}
             >
               <div
-                className="sticky top-0 z-10"
+                className="sticky top-0 z-10 border-b border-zinc-200 dark:border-zinc-600"
                 style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
               >
                 <button
-                  onClick={() => setSidebarOpen((prev) => !prev)}
-                  className="flex items-center gap-1.5 px-3 pt-3 pb-1 text-zinc-500 dark:text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300 transition-colors cursor-pointer"
-                  title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+                  onClick={() => setSidebarOpen(false)}
+                  className="flex flex-row items-center pt-2 pb-1 hover:opacity-80 transition-colors cursor-pointer"
+                  title="Collapse sidebar"
                 >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    className="shrink-0"
-                  >
-                    <line x1="8" y1="6" x2="21" y2="6" />
-                    <line x1="8" y1="12" x2="21" y2="12" />
-                    <line x1="8" y1="18" x2="21" y2="18" />
-                    <line x1="3" y1="6" x2="3.01" y2="6" />
-                    <line x1="3" y1="12" x2="3.01" y2="12" />
-                    <line x1="3" y1="18" x2="3.01" y2="18" />
-                  </svg>
-                  {sidebarOpen && (
-                    <span className="text-[10px] font-semibold uppercase tracking-wider whitespace-nowrap">
-                      Table of Content
-                    </span>
-                  )}
+                  <div className="w-8 shrink-0 flex items-center justify-center">
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="shrink-0 text-zinc-500 dark:text-zinc-400"
+                    >
+                      <rect width="18" height="18" x="3" y="3" rx="2" />
+                      <path d="M9 3v18" />
+                    </svg>
+                  </div>
+                  <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
+                    Table of Content
+                  </span>
                 </button>
               </div>
-              {sidebarOpen && (
+              {true && (
                 <div className="px-2 pt-1">
                   {/* Document root node — parent of all headings */}
                   <div
@@ -928,9 +973,9 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                           <div className="h-px bg-zinc-200 dark:bg-zinc-700 mb-1 mt-2 ml-1" />
                         )}
                         <div
-                          onClick={() => {
+                          onClick={(e) => {
                             if (tocDragState.current?.active) return;
-                            handleHeadingClick(heading.id);
+                            handleHeadingClick(e, heading.id);
                           }}
                           className={`
                       ${indent} group relative flex items-center space-x-1 py-1 px-1 transition-all duration-300 cursor-pointer border border-transparent
@@ -976,6 +1021,14 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                           >
                             {heading.text}
                           </span>
+
+                          {/* Word count badge */}
+                          {(() => {
+                            const wc = computeMdSectionWordCount(heading.text, doc);
+                            return wc != null && wc > 0 ? (
+                              <span className="text-[9px] text-zinc-400 dark:text-zinc-500 shrink-0 tabular-nums">{wc}w</span>
+                            ) : null;
+                          })()}
 
                           {/* Kebab menu button */}
                           <button
@@ -1030,22 +1083,157 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                 </div>
               )}
             </aside>
+            ) : (
+            /* TOC collapsed strip */
+            <div
+              className="shrink-0 w-10 flex flex-col"
+              style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+            >
+              <div
+                className="shrink-0 sticky top-0 z-10"
+                style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+              >
+                <button
+                  onClick={() => setSidebarOpen(true)}
+                  className="flex flex-col items-center gap-1.5 py-3 px-1 w-full hover:opacity-80 transition-colors cursor-pointer"
+                  title="Expand sidebar"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                    <rect width="18" height="18" x="3" y="3" rx="2" />
+                    <path d="M9 3v18" />
+                  </svg>
+                  <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>
+                    Table of Content
+                  </span>
+                </button>
+              </div>
+            </div>
+            )
           ) : null}
 
           {/* TOC sidebar resize divider (only when default TOC sidebar is open) */}
           {!sidebarContent && !hideSidebar && sidebarOpen && (
             <div
-              className="shrink-0 w-1 cursor-col-resize group relative select-none"
+              className="shrink-0 w-[5px] cursor-col-resize group relative select-none flex items-center justify-center"
               onPointerDown={handleTocDividerDown}
               onPointerMove={handleTocDividerMove}
               onPointerUp={handleTocDividerUp}
             >
-              <div className="absolute inset-y-0 left-0 w-px bg-zinc-100 dark:bg-zinc-700 group-hover:bg-zinc-300 dark:group-hover:bg-zinc-600 transition-colors" />
+              <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-zinc-200 dark:bg-zinc-600 group-hover:bg-zinc-400 dark:group-hover:bg-zinc-500 transition-colors" />
+              <div className="w-[5px] h-6 rounded-full bg-zinc-300 dark:bg-zinc-500 group-hover:bg-zinc-400 dark:group-hover:bg-zinc-400 transition-colors" />
             </div>
           )}
 
-          {/* Scrollable Editor Area */}
-          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto">
+          {/* Editor column: toolbar + scrollable content (TOC-style collapse for inline mode) */}
+          <div
+            className={`flex flex-col overflow-hidden transition-all duration-200 ${isInline && contentCollapsed ? 'shrink-0 w-10' : isInline && contentMinWidth ? 'shrink-0' : 'flex-1'}`}
+            style={isInline && contentCollapsed
+              ? { backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }
+              : isInline && contentMinWidth ? { width: contentMinWidth } : undefined}
+          >
+          {/* Inline mode: header + collapse button + toolbar */}
+          {isInline ? (
+            <>
+              {(sidebarContent || hideSidebar) ? (
+                /* Card Content header — collapsible (Cards panel) */
+                <div
+                  className={`shrink-0 sticky top-0 z-10 ${contentCollapsed ? '' : 'border-b border-zinc-200 dark:border-zinc-600'}`}
+                  style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+                >
+                  <button
+                    onClick={() => setContentCollapsed(!contentCollapsed)}
+                    className={`${contentCollapsed ? 'flex flex-col items-center gap-1.5 py-3 px-1 w-full' : 'shrink-0 flex flex-row items-center pt-2 pb-1'} hover:opacity-80 transition-colors cursor-pointer`}
+                    title={contentCollapsed ? 'Expand editor' : 'Collapse editor'}
+                  >
+                    {contentCollapsed ? (
+                      <>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M9 3v18" />
+                        </svg>
+                        <span className="text-[9px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>
+                          Card Content
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <div className="w-8 shrink-0 flex items-center justify-center">
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                            <rect width="18" height="18" x="3" y="3" rx="2" />
+                            <path d="M9 3v18" />
+                          </svg>
+                        </div>
+                        <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
+                          Card Content
+                        </span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              ) : (
+                /* Document header — non-collapsible (Sources panel) */
+                <div
+                  className="shrink-0 sticky top-0 z-10 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-600"
+                >
+                  <div className="shrink-0 flex flex-row items-center pt-2 pb-1">
+                    <div className="w-8 shrink-0 flex items-center justify-center">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                      </svg>
+                    </div>
+                    <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
+                      Document
+                    </span>
+                  </div>
+                </div>
+              )}
+              <div className={contentCollapsed ? 'hidden' : ''}>
+              <div className="shrink-0 h-[40px] flex items-center border-b border-zinc-200 dark:border-zinc-600">
+                <div className="flex-1 min-w-0">
+                  <FormatToolbar
+                    activeFormats={editing.activeFormats}
+                    executeCommand={editing.executeCommand}
+                    insertTable={editing.insertTable}
+                    showFind={findReplace.showFind}
+                    setShowFind={findReplace.setShowFind}
+                    findInputRef={findReplace.findInputRef}
+                    isDirty={editing.isDirty}
+                    onSave={() => editing.saveEdits()}
+                    hasContent={true}
+                  />
+                </div>
+              </div>
+              {findReplace.showFind && (
+                <div className="shrink-0 border-b border-zinc-100 dark:border-zinc-600">
+                  <FindReplaceBar
+                    findInputRef={findReplace.findInputRef}
+                    findQuery={findReplace.findQuery}
+                    setFindQuery={findReplace.setFindQuery}
+                    replaceQuery={findReplace.replaceQuery}
+                    setReplaceQuery={findReplace.setReplaceQuery}
+                    findMatchCount={findReplace.findMatchCount}
+                    findActiveIndex={findReplace.findActiveIndex}
+                    setFindActiveIndex={findReplace.setFindActiveIndex}
+                    findMatchCase={findReplace.findMatchCase}
+                    setFindMatchCase={findReplace.setFindMatchCase}
+                    findNext={findReplace.findNext}
+                    findPrev={findReplace.findPrev}
+                    closeFindBar={findReplace.closeFindBar}
+                    handleReplace={findReplace.handleReplace}
+                    handleReplaceAll={findReplace.handleReplaceAll}
+                  />
+                </div>
+              )}
+              </div>
+            </>
+          ) : (
+            toolbarEl
+          )}
+          {/* Scrollable Editor Area (hidden when collapsed in inline mode) */}
+          <div ref={scrollContainerRef} className={`flex-1 overflow-y-auto ${isInline && contentCollapsed ? 'hidden' : ''}`}>
             <div className="max-w-4xl mx-auto px-4 py-6">
               <div
                 ref={editorRef}
@@ -1079,9 +1267,23 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
               />
             </div>
           </div>
+          </div>
         </div>
       </>
     );
+
+    // ── LOD Eligibility (pre-computed for context menu gating) ──
+    let sectionLodCounts: LodPassCounts | null = null;
+    {
+      const ids = getTier2Ids();
+      const texts = ids
+        .map((id) => headings.find((hh) => hh.id === id)?.text)
+        .filter((t): t is string => !!t);
+      if (texts.length > 0) {
+        sectionLodCounts = computeLodPassCounts(texts, doc);
+      }
+    }
+    const docEligible = getEligibleDetailLevels(computeMdSectionWordCount('__whole_document__', doc));
 
     // ── Context Menu (rendered as portal in both modes for correct positioning) ──
     const contextMenuEl =
@@ -1143,63 +1345,9 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                     {generateContentSubmenuOpen && (
                       <div
                         ref={generateSubmenuRef}
-                        className="absolute left-full top-0 ml-1 min-w-[160px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-600 py-1 animate-in fade-in zoom-in-95 duration-100"
+                        className="absolute left-full top-0 ml-1 min-w-[200px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-600 py-1 animate-in fade-in zoom-in-95 duration-100"
                       >
-                        {[
-                          { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                          { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                          { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
-                        ].map((opt) => (
-                          <button
-                            key={opt.level}
-                            onClick={async () => {
-                              const ids = getTier2Ids();
-                              const targets = ids
-                                .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
-                                .filter((t) => t.text);
-                              closeMenu();
-                              await Promise.all(targets.map((t) => onGenerateCard(t.id, opt.level, t.text, doc.name)));
-                            }}
-                            className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
-                          >
-                            <span className="font-medium">{opt.label}</span>
-                            <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{opt.desc}</span>
-                          </button>
-                        ))}
-
-                        {/* Divider */}
-                        <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
-
-                        {/* Title/Takeaway card options */}
-                        {[
-                          { level: 'TitleCard' as DetailLevel, label: 'Title Card', desc: 'Title + Subtitle' },
-                          {
-                            level: 'TakeawayCard' as DetailLevel,
-                            label: 'Takeaway Card',
-                            desc: 'Title + Key Takeaways',
-                          },
-                        ].map((opt) => (
-                          <button
-                            key={opt.level}
-                            onClick={async () => {
-                              const ids = getTier2Ids();
-                              const targets = ids
-                                .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
-                                .filter((t) => t.text);
-                              closeMenu();
-                              await Promise.all(targets.map((t) => onGenerateCard(t.id, opt.level, t.text, doc.name)));
-                            }}
-                            className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
-                          >
-                            <span className="font-medium text-violet-600">{opt.label}</span>
-                            <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{opt.desc}</span>
-                          </button>
-                        ))}
-
-                        {/* Divider */}
-                        <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
-
-                        {/* Direct Content option — raw content as-is */}
+                        {/* Snapshot — content as-is, no gate (fallback for very short sections) */}
                         <button
                           onClick={async () => {
                             const ids = getTier2Ids();
@@ -1207,16 +1355,184 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                               .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
                               .filter((t) => t.text);
                             closeMenu();
+                            let cardIds: string[] | null = null;
+                            if (targets.length >= 2 && onCreateBatchFolder) {
+                              cardIds = onCreateBatchFolder(
+                                targets.map((t) => t.text),
+                                'DirectContent' as DetailLevel,
+                                doc.name,
+                              );
+                            }
                             await Promise.all(
-                              targets.map((t) =>
-                                onGenerateCard(t.id, 'DirectContent' as DetailLevel, t.text, doc.name),
+                              targets.map((t, i) =>
+                                onGenerateCard(t.id, 'DirectContent' as DetailLevel, t.text, doc.name, cardIds?.[i]),
                               ),
                             );
                           }}
                           className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
                         >
-                          <span className="font-medium text-emerald-600">Direct Content</span>
-                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Raw as-is</span>
+                          <span className="font-medium text-emerald-600">Snapshot</span>
+                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Content as-is</span>
+                        </button>
+
+                        {[
+                          { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
+                          { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
+                          { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                        ].map((opt) => {
+                          const lodKey = opt.level as 'Executive' | 'Standard' | 'Detailed';
+                          const passCount = sectionLodCounts?.counts[lodKey] ?? null;
+                          const total = sectionLodCounts?.total ?? 0;
+                          const isDisabled = passCount !== null && passCount < total;
+                          const isSingle = total === 1;
+
+                          // Badge text: no data → word range, single → ~Nw, multi → pass/total
+                          const badgeText = sectionLodCounts === null
+                            ? opt.desc
+                            : isSingle
+                              ? (sectionLodCounts.wordCounts[0] !== null ? `~${sectionLodCounts.wordCounts[0]}w` : opt.desc)
+                              : `${passCount}/${total}`;
+
+                          // Tooltip
+                          const tooltip = isDisabled
+                            ? (isSingle
+                                ? 'Section too short for this level'
+                                : `${total - passCount!} of ${total} sections too short for this level`)
+                            : undefined;
+
+                          return (
+                          <button
+                            key={opt.level}
+                            disabled={isDisabled}
+                            title={tooltip}
+                            onClick={async () => {
+                              if (isDisabled) return;
+                              const ids = getTier2Ids();
+                              const targets = ids
+                                .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
+                                .filter((t) => t.text);
+                              closeMenu();
+                              let cardIds: string[] | null = null;
+                              if (targets.length >= 2 && onCreateBatchFolder) {
+                                cardIds = onCreateBatchFolder(
+                                  targets.map((t) => t.text),
+                                  opt.level,
+                                  doc.name,
+                                );
+                              }
+                              await Promise.all(targets.map((t, i) => onGenerateCard(t.id, opt.level, t.text, doc.name, cardIds?.[i])));
+                            }}
+                            className={`w-full text-left px-3 py-2 text-[11px] transition-colors flex items-center justify-between gap-3 ${isDisabled ? 'text-zinc-300 dark:text-zinc-600 cursor-not-allowed' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                          >
+                            <span className="font-medium">{opt.label}</span>
+                            <span className={`text-[9px] ${isDisabled ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-500 dark:text-zinc-400'}`}>{badgeText}</span>
+                          </button>
+                          );
+                        })}
+
+                        {/* Each at Maximum LOD — only for multi-selection, hidden when all 3 LODs fully pass */}
+                        {(() => {
+                          const total = sectionLodCounts?.total ?? 0;
+                          if (total < 2) return null;
+                          // Hide when all three LOD levels are fully available
+                          if (sectionLodCounts && sectionLodCounts.counts.Executive >= total && sectionLodCounts.counts.Standard >= total && sectionLodCounts.counts.Detailed >= total) return null;
+                          // Compute max LOD per heading — Snapshot (DirectContent) as fallback
+                          const ids = getTier2Ids();
+                          const perHeading = ids.map((id) => {
+                            const text = headings.find((hh) => hh.id === id)?.text || '';
+                            const wc = text ? computeMdSectionWordCount(text, doc) : null;
+                            const maxLod = getMaxDetailLevel(wc) ?? ('DirectContent' as DetailLevel);
+                            return { id, text, maxLod };
+                          }).filter((h) => h.text);
+                          if (perHeading.length < 2) return null;
+                          return (
+                            <button
+                              onClick={async () => {
+                                closeMenu();
+                                let cardIds: string[] | null = null;
+                                if (onCreateBatchFolder) {
+                                  cardIds = onCreateBatchFolder(
+                                    perHeading.map((h) => h.text),
+                                    perHeading.map((h) => h.maxLod),
+                                    doc.name,
+                                  );
+                                }
+                                await Promise.all(
+                                  perHeading.map((h, i) =>
+                                    onGenerateCard(h.id, h.maxLod, h.text, doc.name, cardIds?.[i]),
+                                  ),
+                                );
+                              }}
+                              className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
+                            >
+                              <span className="font-medium text-amber-600">Each at Max LOD</span>
+                              <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{perHeading.length}/{total}</span>
+                            </button>
+                          );
+                        })()}
+
+                        {/* Divider */}
+                        <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
+
+                        {/* Takeaway Card — gated at 100w */}
+                        {(() => {
+                          const takeawayPassCount = sectionLodCounts?.counts.TakeawayCard ?? null;
+                          const takeawayTotal = sectionLodCounts?.total ?? 0;
+                          const takeawayDisabled = takeawayPassCount !== null && takeawayPassCount < takeawayTotal;
+                          const isSingle = takeawayTotal === 1;
+                          const takeawayBadge = sectionLodCounts === null
+                            ? 'Title + Key Takeaways'
+                            : isSingle
+                              ? (sectionLodCounts.wordCounts[0] !== null ? `~${sectionLodCounts.wordCounts[0]}w` : 'Title + Key Takeaways')
+                              : `${takeawayPassCount}/${takeawayTotal}`;
+                          const takeawayTooltip = takeawayDisabled
+                            ? (isSingle
+                                ? 'Section too short for takeaway card'
+                                : `${takeawayTotal - takeawayPassCount!} of ${takeawayTotal} sections too short for takeaway card`)
+                            : undefined;
+                          return (
+                            <button
+                              disabled={takeawayDisabled}
+                              title={takeawayTooltip}
+                              onClick={async () => {
+                                if (takeawayDisabled) return;
+                                const ids = getTier2Ids();
+                                const targets = ids
+                                  .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
+                                  .filter((t) => t.text);
+                                closeMenu();
+                                let cardIds: string[] | null = null;
+                                if (targets.length >= 2 && onCreateBatchFolder) {
+                                  cardIds = onCreateBatchFolder(targets.map((t) => t.text), 'TakeawayCard' as DetailLevel, doc.name);
+                                }
+                                await Promise.all(targets.map((t, i) => onGenerateCard(t.id, 'TakeawayCard' as DetailLevel, t.text, doc.name, cardIds?.[i])));
+                              }}
+                              className={`w-full text-left px-3 py-2 text-[11px] transition-colors flex items-center justify-between gap-3 ${takeawayDisabled ? 'text-zinc-300 dark:text-zinc-600 cursor-not-allowed' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                            >
+                              <span className={`font-medium ${takeawayDisabled ? '' : 'text-violet-600'}`}>Takeaway Card</span>
+                              <span className={`text-[9px] ${takeawayDisabled ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-500 dark:text-zinc-400'}`}>{takeawayBadge}</span>
+                            </button>
+                          );
+                        })()}
+
+                        {/* Title Card — no gate */}
+                        <button
+                          onClick={async () => {
+                            const ids = getTier2Ids();
+                            const targets = ids
+                              .map((id) => ({ id, text: headings.find((hh) => hh.id === id)?.text || '' }))
+                              .filter((t) => t.text);
+                            closeMenu();
+                            let cardIds: string[] | null = null;
+                            if (targets.length >= 2 && onCreateBatchFolder) {
+                              cardIds = onCreateBatchFolder(targets.map((t) => t.text), 'TitleCard' as DetailLevel, doc.name);
+                            }
+                            await Promise.all(targets.map((t, i) => onGenerateCard(t.id, 'TitleCard' as DetailLevel, t.text, doc.name, cardIds?.[i])));
+                          }}
+                          className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
+                        >
+                          <span className="font-medium text-violet-600">Title Card</span>
+                          <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Title + Subtitle</span>
                         </button>
                       </div>
                     )}
@@ -1505,50 +1821,8 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                 </button>
 
                 {docGenerateSubmenuOpen && (
-                  <div className="absolute left-full top-0 ml-1 min-w-[160px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-600 py-1 animate-in fade-in zoom-in-95 duration-100">
-                    {[
-                      { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                      { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                      { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
-                    ].map((opt) => (
-                      <button
-                        key={opt.level}
-                        onClick={async () => {
-                          setDocContextMenu(null);
-                          setDocGenerateSubmenuOpen(false);
-                          await onGenerateCard('__whole_document__', opt.level, doc.name, doc.name);
-                        }}
-                        className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
-                      >
-                        <span className="font-medium">{opt.label}</span>
-                        <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{opt.desc}</span>
-                      </button>
-                    ))}
-
-                    <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
-
-                    {[
-                      { level: 'TitleCard' as DetailLevel, label: 'Title Card', desc: 'Title + Subtitle' },
-                      { level: 'TakeawayCard' as DetailLevel, label: 'Takeaway Card', desc: 'Title + Key Takeaways' },
-                    ].map((opt) => (
-                      <button
-                        key={opt.level}
-                        onClick={async () => {
-                          setDocContextMenu(null);
-                          setDocGenerateSubmenuOpen(false);
-                          await onGenerateCard('__whole_document__', opt.level, doc.name, doc.name);
-                        }}
-                        className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
-                      >
-                        <span className="font-medium text-violet-600">{opt.label}</span>
-                        <span className="text-[9px] text-zinc-500 dark:text-zinc-400">{opt.desc}</span>
-                      </button>
-                    ))}
-
-                    {/* Divider */}
-                    <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
-
-                    {/* Direct Content option — raw content as-is */}
+                  <div className="absolute left-full top-0 ml-1 min-w-[200px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-600 py-1 animate-in fade-in zoom-in-95 duration-100">
+                    {/* Snapshot — content as-is, no gate */}
                     <button
                       onClick={async () => {
                         setDocContextMenu(null);
@@ -1557,8 +1831,69 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                       }}
                       className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
                     >
-                      <span className="font-medium text-emerald-600">Direct Content</span>
-                      <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Raw as-is</span>
+                      <span className="font-medium text-emerald-600">Snapshot</span>
+                      <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Content as-is</span>
+                    </button>
+
+                    {[
+                      { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
+                      { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
+                      { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                    ].map((opt) => {
+                      const isDisabled = docEligible !== null && !docEligible.has(opt.level);
+                      return (
+                      <button
+                        key={opt.level}
+                        disabled={isDisabled}
+                        title={isDisabled ? 'Document too short for this level' : undefined}
+                        onClick={async () => {
+                          if (isDisabled) return;
+                          setDocContextMenu(null);
+                          setDocGenerateSubmenuOpen(false);
+                          await onGenerateCard('__whole_document__', opt.level, doc.name, doc.name);
+                        }}
+                        className={`w-full text-left px-3 py-2 text-[11px] transition-colors flex items-center justify-between gap-3 ${isDisabled ? 'text-zinc-300 dark:text-zinc-600 cursor-not-allowed' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                      >
+                        <span className="font-medium">{opt.label}</span>
+                        <span className={`text-[9px] ${isDisabled ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-500 dark:text-zinc-400'}`}>{opt.desc}</span>
+                      </button>
+                      );
+                    })}
+
+                    <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
+
+                    {/* Takeaway Card — gated at 100w */}
+                    {(() => {
+                      const takeawayDocDisabled = docEligible !== null && !docEligible.has('TakeawayCard');
+                      return (
+                        <button
+                          disabled={takeawayDocDisabled}
+                          title={takeawayDocDisabled ? 'Document too short for takeaway card' : undefined}
+                          onClick={async () => {
+                            if (takeawayDocDisabled) return;
+                            setDocContextMenu(null);
+                            setDocGenerateSubmenuOpen(false);
+                            await onGenerateCard('__whole_document__', 'TakeawayCard' as DetailLevel, doc.name, doc.name);
+                          }}
+                          className={`w-full text-left px-3 py-2 text-[11px] transition-colors flex items-center justify-between gap-3 ${takeawayDocDisabled ? 'text-zinc-300 dark:text-zinc-600 cursor-not-allowed' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                        >
+                          <span className={`font-medium ${takeawayDocDisabled ? '' : 'text-violet-600'}`}>Takeaway Card</span>
+                          <span className={`text-[9px] ${takeawayDocDisabled ? 'text-zinc-300 dark:text-zinc-600' : 'text-zinc-500 dark:text-zinc-400'}`}>Title + Key Takeaways</span>
+                        </button>
+                      );
+                    })()}
+
+                    {/* Title Card — no gate */}
+                    <button
+                      onClick={async () => {
+                        setDocContextMenu(null);
+                        setDocGenerateSubmenuOpen(false);
+                        await onGenerateCard('__whole_document__', 'TitleCard' as DetailLevel, doc.name, doc.name);
+                      }}
+                      className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center justify-between gap-3"
+                    >
+                      <span className="font-medium text-violet-600">Title Card</span>
+                      <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Title + Subtitle</span>
                     </button>
                   </div>
                 )}

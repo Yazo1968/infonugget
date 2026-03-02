@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Nugget, UploadedFile, Card, ChatMessage } from '../types';
+import type { Nugget, UploadedFile, Card, CardItem, ChatMessage } from '../types';
 
 // ── Nugget context — nugget state, CRUD, card helpers, document mutation helpers ──
 
@@ -24,7 +24,7 @@ export interface NuggetContextValue {
   // Card helpers (operate on selected nugget)
   updateNuggetCard: (cardId: string, updater: (c: Card) => Card) => void;
   updateNuggetCards: (updater: (c: Card) => Card) => void;
-  updateNuggetContentAndCards: (content: string, cards: Card[]) => void;
+  updateNuggetContentAndCards: (content: string, cards: CardItem[]) => void;
   appendNuggetMessage: (message: ChatMessage) => void;
 
   // Document mutation helpers (operate on selected nugget)

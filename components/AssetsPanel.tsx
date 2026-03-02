@@ -26,7 +26,7 @@ interface AssetsPanelProps {
   contentDirty?: boolean;
   currentContent?: string;
   onDownloadImage?: () => void;
-  onDownloadAllImages?: () => void;
+  onDownloadSelectedImages?: () => void;
   referenceImage?: ReferenceImage | null;
   onStampReference?: () => void;
   useReferenceImage?: boolean;
@@ -60,7 +60,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   contentDirty,
   currentContent,
   onDownloadImage,
-  onDownloadAllImages,
+  onDownloadSelectedImages,
   referenceImage,
   onStampReference,
   useReferenceImage,
@@ -239,7 +239,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
       {/* ─── Design Toolbar ─── */}
       <div className="relative z-30">
         {/* ─── Title row ─── */}
-        <div className="shrink-0 flex flex-row items-center pt-2 pb-1">
+        <div className="shrink-0 flex flex-row items-center pt-2 pb-1 border-b border-zinc-200 dark:border-zinc-600">
           <div className="w-8 shrink-0 flex items-center justify-center">
             <svg
               width="16"
@@ -779,12 +779,12 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                       </button>
                       <button
                         onClick={() => {
-                          onDownloadAllImages?.();
+                          onDownloadSelectedImages?.();
                           setOpenMenu(null);
                         }}
                         className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
                       >
-                        Download All
+                        Download Selected
                       </button>
                     </div>
                   </div>

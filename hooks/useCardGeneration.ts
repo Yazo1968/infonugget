@@ -1,11 +1,12 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
-import { Card, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { Card, CardItem, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { flattenCards, findCard } from '../utils/cardUtils';
 import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, getGeminiAI } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
-import { buildContentPrompt, buildPlannerPrompt, buildNativePdfSectionHint } from '../utils/prompts/contentGeneration';
+import { buildContentPrompt, buildPlannerPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
 import { buildVisualizerPrompt } from '../utils/prompts/imageGeneration';
 import {
   buildCoverContentPrompt,
@@ -68,11 +69,13 @@ export function useCardGeneration(
   // Derived
   const _activeCard = useMemo(() => {
     if (!selectedNugget) return null;
-    return selectedNugget.cards.find((c) => c.id === selectedNugget.cards.find(() => true)?.id) || null;
+    const allCards = flattenCards(selectedNugget.cards);
+    return allCards[0] || null;
   }, [selectedNugget]);
 
   const currentSynthesisContent = useMemo(() => {
-    const card = selectedNugget?.cards.find((c) => c.id === selectedNugget?.cards[0]?.id);
+    const allCards = flattenCards(selectedNugget?.cards ?? []);
+    const card = allCards[0];
     if (!card) return '';
     const level = card.detailLevel || 'Standard';
     return card.synthesisMap?.[level] || '';
@@ -80,7 +83,8 @@ export function useCardGeneration(
 
   const contentDirty = useMemo(() => {
     if (!selectedNugget) return false;
-    const card = selectedNugget.cards[0];
+    const allCards = flattenCards(selectedNugget.cards);
+    const card = allCards[0];
     if (!card?.cardUrlMap?.[activeLogicTab]) return false;
     if (!card.lastGeneratedContentMap?.[activeLogicTab]) return false;
     const content = card.synthesisMap?.[card.detailLevel || 'Standard'] || '';
@@ -88,50 +92,18 @@ export function useCardGeneration(
   }, [selectedNugget, activeLogicTab]);
 
   const selectedCount = useMemo(() => {
-    const cards = selectedNugget?.cards ?? [];
+    const cards = flattenCards(selectedNugget?.cards ?? []);
     return cards.filter((c) => c.selected).length;
   }, [selectedNugget]);
-
-  // ── Helpers ──
-
-  const getSectionContext = (target: Card, structure: Card[], content: string): string => {
-    const targetIdx = structure.findIndex((c) => c.id === target.id);
-    if (targetIdx === -1) return content;
-
-    const findOffset = (card: Card) => {
-      const escapedText = card.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const regex = new RegExp(`^(#{1,6})\\s+${escapedText}\\s*$`, 'g');
-      const matches = [...content.matchAll(regex)];
-      const match = matches.find((m) => m[0].includes(card.text));
-      return match ? match.index : null;
-    };
-
-    const targetOffset = findOffset(target) ?? 0;
-
-    let nextHeadingOffset = content.length;
-    for (let i = targetIdx + 1; i < structure.length; i++) {
-      if (structure[i].level <= target.level) {
-        nextHeadingOffset = findOffset(structure[i]) ?? content.length;
-        break;
-      }
-    }
-
-    return content.substring(targetOffset, nextHeadingOffset);
-  };
 
   // ── Internal: synthesize content for a card ──
 
   const performSynthesis = useCallback(
     async (card: Card, level: DetailLevel, signal?: AbortSignal) => {
       if (!selectedNugget) return null;
-      const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false && (d.content || d.fileId));
-      // Split: docs with fileId go via Files API only; docs without fileId go inline
-      const fileApiDocs = enabledDocs.filter((d) => d.fileId);
-      const inlineDocs = enabledDocs.filter((d) => !d.fileId && d.content);
-      const inlineContent = inlineDocs.map((d) => d.content).join('\n\n---\n\n');
-      const activeStructure = selectedNugget.cards;
-
-      if ((!inlineContent && fileApiDocs.length === 0) || !activeStructure) return null;
+      const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false);
+      const docsWithFileId = enabledDocs.filter((d) => d.fileId);
+      if (docsWithFileId.length === 0) return null;
 
       // Set synthesizing status
       updateNuggetCard(card.id, (c) => ({
@@ -149,19 +121,15 @@ export function useCardGeneration(
         );
 
       try {
-        // Section extraction only works on inline markdown content
-        const sectionText = inlineContent ? getSectionContext(card, activeStructure, inlineContent) : '';
-
-        // For native PDFs (no markdown), build a section hint with page boundaries
-        const nativePdfSectionHint =
-          !sectionText && fileApiDocs.length > 0 ? buildNativePdfSectionHint(card.text, enabledDocs) : '';
+        // Build unified section focus (handles both MD and PDF)
+        const nuggetSubject = selectedNugget?.subject;
+        const sectionFocus = buildSectionFocus(card.text, enabledDocs);
 
         // Branch: cover prompts vs content prompts
-        const nuggetSubject = selectedNugget?.subject;
-        const synthesisPrompt = isCover
-          ? buildCoverContentPrompt(card.text, level, inlineContent, sectionText, true, nuggetSubject)
-          : buildContentPrompt(card.text, level, inlineContent, sectionText, true, nuggetSubject);
-        const finalPrompt = synthesisPrompt + nativePdfSectionHint;
+        const contentPrompt = isCover
+          ? buildCoverContentPrompt(card.text, level, nuggetSubject)
+          : buildContentPrompt(card.text, level, nuggetSubject);
+        const finalPrompt = sectionFocus ? `${sectionFocus}\n\n${contentPrompt}` : contentPrompt;
 
         const expertPriming = buildExpertPriming(nuggetSubject);
         const systemRole = isCover
@@ -173,42 +141,34 @@ export function useCardGeneration(
             : 'You are an expert content synthesizer. You extract, restructure, and condense document content into infographic-ready text. Follow the formatting and word count requirements precisely.';
 
         const systemBlocks: Array<{ text: string; cache: boolean }> = [{ text: systemRole, cache: false }];
-        // Only inline docs (no fileId) go into system blocks — avoids double-sending
-        if (inlineDocs.length > 0) {
-          systemBlocks.push({ text: `FULL DOCUMENT CONTEXT:\n${inlineContent}`, cache: true });
-        }
 
-        // Build messages array with Files API document blocks prepended
-        const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [];
-        if (fileApiDocs.length > 0) {
-          const docBlocks = fileApiDocs.map((d) => ({
-            type: 'document' as const,
-            source: { type: 'file' as const, file_id: d.fileId! },
-            title: d.name,
-          }));
-          messages.push({
+        // Build user message with document blocks + section focus + content prompt
+        const docBlocks = docsWithFileId.map((d) => ({
+          type: 'document' as const,
+          source: { type: 'file' as const, file_id: d.fileId! },
+          title: d.name,
+        }));
+        const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [
+          {
             role: 'user' as const,
             content: [...docBlocks, { type: 'text' as const, text: finalPrompt }],
-          });
-        }
-
-        const { text: rawSynthesized, usage: claudeUsage } = await callClaude(
-          fileApiDocs.length > 0 ? '' : finalPrompt,
-          {
-            systemBlocks,
-            ...(fileApiDocs.length > 0 ? { messages } : {}),
-            maxTokens: isCover
-              ? level === 'TakeawayCard'
-                ? 350
-                : 256
-              : level === 'Executive'
-                ? 300
-                : level === 'Standard'
-                  ? 600
-                  : 1200,
-            signal,
           },
-        );
+        ];
+
+        const { text: rawSynthesized, usage: claudeUsage } = await callClaude('', {
+          systemBlocks,
+          messages,
+          maxTokens: isCover
+            ? level === 'TakeawayCard'
+              ? 350
+              : 256
+            : level === 'Executive'
+              ? 300
+              : level === 'Standard'
+                ? 600
+                : 1200,
+          signal,
+        });
 
         recordUsage?.({
           provider: 'claude',
@@ -502,8 +462,8 @@ export function useCardGeneration(
   // ── Batch operations ──
 
   const handleGenerateAll = useCallback(() => {
-    const cards = selectedNugget?.cards;
-    if (!cards) return;
+    const cards = flattenCards(selectedNugget?.cards ?? []);
+    if (cards.length === 0) return;
 
     const selectedItems = cards.filter((c) => c.selected);
     if (selectedItems.length === 0) {
@@ -536,8 +496,7 @@ export function useCardGeneration(
 
   const handleImageModified = useCallback(
     (cardId: string, newImageUrl: string, history: ImageVersion[]) => {
-      const cards = selectedNugget?.cards ?? [];
-      const card = cards.find((c) => c.id === cardId);
+      const card = findCard(selectedNugget?.cards ?? [], cardId);
       const level = card?.detailLevel || 'Standard';
       const currentContent = card?.synthesisMap?.[level] || '';
 

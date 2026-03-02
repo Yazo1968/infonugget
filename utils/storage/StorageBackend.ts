@@ -6,6 +6,7 @@ import {
   InsightsDocument,
   DocChangeEvent,
   SourceOrigin,
+  QualityReport,
 } from '../../types';
 
 // ── Stored types (what lives in the database) ──
@@ -15,6 +16,8 @@ export interface AppSessionState {
   selectedDocumentId?: string | null;
   selectedProjectId?: string | null;
   activeCardId: string | null;
+  /** Which project is "opened" in the workspace (null = show landing page). */
+  openProjectId?: string | null;
   // Legacy fields — kept for backward compat reads, ignored on write
   selectedFileId?: string | null;
   workflowMode?: string;
@@ -46,6 +49,10 @@ export interface StoredHeading {
   createdAt?: number;
   lastEditedAt?: number;
   sourceDocuments?: string[];
+  /** CardFolder ID this card belongs to (undefined = root-level card). */
+  folderId?: string;
+  /** Ordering index for reconstructing card/folder order on deserialization. */
+  orderIndex?: number;
 }
 
 export interface StoredImageVersion {
@@ -78,6 +85,18 @@ export interface StoredNugget {
   stylingOptions?: StylingOptions;
   createdAt: number;
   lastModifiedAt: number;
+  /** Document quality check report — clusters, conflicts, warnings */
+  qualityReport?: QualityReport;
+  /** CardFolder metadata for nuggets that contain card folders. */
+  folders?: Array<{
+    id: string;
+    name: string;
+    collapsed?: boolean;
+    orderIndex: number;
+    createdAt: number;
+    lastModifiedAt: number;
+    autoDeckSessionId?: string;
+  }>;
 }
 
 export interface StoredNuggetDocument {
@@ -97,7 +116,7 @@ export interface StoredNuggetDocument {
   /** Anthropic Files API file ID — used to reference the document in chat without re-uploading content. */
   fileId?: string;
   /** Document heading structure (TOC). For native PDFs, extracted via Claude; for markdown, derived from content. */
-  structure?: Array<{ level: number; text: string; id: string; startIndex?: number; page?: number }>;
+  structure?: Array<{ level: number; text: string; id: string; startIndex?: number; page?: number; wordCount?: number }>;
   /** How the TOC was extracted: from an explicit TOC page or by visual scanning. */
   tocSource?: 'toc_page' | 'visual_scan';
   /** Original file format before conversion to markdown. */
@@ -119,7 +138,7 @@ export interface StoredNuggetDocument {
   /** Timestamp when chat was last disabled (epoch ms). */
   lastDisabledAt?: number;
   /** Nested bookmark tree (native-pdf only). Single source of truth for document structure. */
-  bookmarks?: Array<{ id: string; title: string; page: number; level: number; children: any[] }>;
+  bookmarks?: Array<{ id: string; title: string; page: number; level: number; children: any[]; wordCount?: number }>;
   /** How the bookmark tree was obtained (native-pdf only). */
   bookmarkSource?: 'pdf_bookmarks' | 'ai_generated' | 'manual';
 }

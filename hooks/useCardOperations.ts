@@ -2,16 +2,31 @@ import { useCallback, useMemo } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
-import { Card, DetailLevel, ChatMessage, Nugget } from '../types';
+import { Card, CardFolder, CardItem, DetailLevel, ChatMessage, Nugget, isCardFolder } from '../types';
 import { getUniqueName } from '../utils/naming';
+import {
+  flattenCards,
+  findCard,
+  findFolder,
+  mapCards,
+  removeCard,
+  removeCardsWhere,
+  removeFolder,
+  allFolderNames,
+} from '../utils/cardUtils';
+
+/** Location of a card/folder within the card tree (root-level or inside a folder). */
+export type DragLocation =
+  | { type: 'root'; index: number }
+  | { type: 'folder'; folderId: string; index: number };
 
 /**
- * Card operations — selection, manipulation, creation, and cross-nugget copy/move.
+ * Card operations — selection, manipulation, creation, folder ops, and cross-nugget copy/move.
  * Extracted from App.tsx for domain separation (item 4.2).
  */
 export function useCardOperations() {
-  const { selectedNugget, updateNugget, updateNuggetCard, nuggets, addNugget } = useNuggetContext();
-  const { projects, addNuggetToProject } = useProjectContext();
+  const { selectedNugget, updateNugget, updateNuggetCard, nuggets } = useNuggetContext();
+  const { projects } = useProjectContext();
   const { activeCardId, setActiveCardId } = useSelectionContext();
 
   // ── Selection ──
@@ -21,7 +36,7 @@ export function useCardOperations() {
       if (!selectedNugget) return;
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: n.cards.map((c) => (c.id === cardId ? { ...c, selected: !c.selected } : c)),
+        cards: mapCards(n.cards, (c) => (c.id === cardId ? { ...c, selected: !c.selected } : c)),
         lastModifiedAt: Date.now(),
       }));
     },
@@ -30,12 +45,12 @@ export function useCardOperations() {
 
   const toggleSelectAllInsightsCards = useCallback(() => {
     if (!selectedNugget) return;
-    const cards = selectedNugget.cards || [];
-    const allSelected = cards.length > 0 && cards.every((c) => c.selected);
+    const flat = flattenCards(selectedNugget.cards);
+    const allSelected = flat.length > 0 && flat.every((c) => c.selected);
     const newSelected = !allSelected;
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.map((c) => ({ ...c, selected: newSelected })),
+      cards: mapCards(n.cards, (c) => ({ ...c, selected: newSelected })),
       lastModifiedAt: Date.now(),
     }));
   }, [selectedNugget, updateNugget]);
@@ -45,7 +60,7 @@ export function useCardOperations() {
       if (!selectedNugget) return;
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: n.cards.map((c) => ({ ...c, selected: c.id === cardId })),
+        cards: mapCards(n.cards, (c) => ({ ...c, selected: c.id === cardId })),
         lastModifiedAt: Date.now(),
       }));
     },
@@ -55,15 +70,17 @@ export function useCardOperations() {
   const selectInsightsCardRange = useCallback(
     (fromId: string, toId: string) => {
       if (!selectedNugget) return;
-      const cards = selectedNugget.cards || [];
-      const fromIdx = cards.findIndex((c) => c.id === fromId);
-      const toIdx = cards.findIndex((c) => c.id === toId);
+      // Use flattened list for index calculation, then apply via Set
+      const flat = flattenCards(selectedNugget.cards);
+      const fromIdx = flat.findIndex((c) => c.id === fromId);
+      const toIdx = flat.findIndex((c) => c.id === toId);
       if (fromIdx === -1 || toIdx === -1) return;
       const minIdx = Math.min(fromIdx, toIdx);
       const maxIdx = Math.max(fromIdx, toIdx);
+      const selectedIds = new Set(flat.slice(minIdx, maxIdx + 1).map((c) => c.id));
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: n.cards.map((c, i) => ({ ...c, selected: i >= minIdx && i <= maxIdx })),
+        cards: mapCards(n.cards, (c) => ({ ...c, selected: selectedIds.has(c.id) })),
         lastModifiedAt: Date.now(),
       }));
     },
@@ -74,13 +91,13 @@ export function useCardOperations() {
     if (!selectedNugget) return;
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.map((c) => ({ ...c, selected: false })),
+      cards: mapCards(n.cards, (c) => ({ ...c, selected: false })),
       lastModifiedAt: Date.now(),
     }));
   }, [selectedNugget, updateNugget]);
 
   const insightsSelectedCount = useMemo(() => {
-    return (selectedNugget?.cards ?? []).filter((c) => c.selected).length;
+    return flattenCards(selectedNugget?.cards ?? []).filter((c) => c.selected).length;
   }, [selectedNugget]);
 
   // ── Manipulation ──
@@ -88,8 +105,8 @@ export function useCardOperations() {
   const reorderInsightsCards = useCallback(
     (fromIndex: number, toIndex: number) => {
       if (!selectedNugget || fromIndex === toIndex) return;
-      const reorder = (cards: Card[]) => {
-        const next = [...cards];
+      const reorder = (items: CardItem[]) => {
+        const next = [...items];
         const [moved] = next.splice(fromIndex, 1);
         next.splice(toIndex, 0, moved);
         return next;
@@ -103,16 +120,79 @@ export function useCardOperations() {
     [selectedNugget, updateNugget],
   );
 
+  /**
+   * Reorder a card or folder across the card tree — supports root-to-root,
+   * root-to-folder, folder-to-root, folder-to-folder, and within-folder moves.
+   * Folders can only be placed at root level (no nesting).
+   */
+  const reorderCardItem = useCallback(
+    (from: DragLocation, to: DragLocation, itemType: 'card' | 'folder') => {
+      if (!selectedNugget) return;
+      // No-op when source and target are identical
+      if (from.type === to.type) {
+        if (from.type === 'root' && to.type === 'root' && from.index === to.index) return;
+        if (
+          from.type === 'folder' &&
+          to.type === 'folder' &&
+          from.folderId === to.folderId &&
+          from.index === to.index
+        ) return;
+      }
+      updateNugget(selectedNugget.id, (n) => {
+        const items = [...n.cards];
+
+        // 1. Extract the item from its source location
+        let movedItem: CardItem | Card | undefined;
+        if (from.type === 'root') {
+          [movedItem] = items.splice(from.index, 1);
+        } else {
+          const folderIdx = items.findIndex(
+            (i) => isCardFolder(i) && i.id === from.folderId,
+          );
+          if (folderIdx === -1) return n;
+          const folder = {
+            ...(items[folderIdx] as CardFolder),
+            cards: [...(items[folderIdx] as CardFolder).cards],
+          };
+          [movedItem] = folder.cards.splice(from.index, 1);
+          items[folderIdx] = folder;
+        }
+        if (!movedItem) return n;
+
+        // 2. Insert at target location
+        if (to.type === 'root') {
+          items.splice(to.index, 0, movedItem as CardItem);
+        } else {
+          const folderIdx = items.findIndex(
+            (i) => isCardFolder(i) && i.id === to.folderId,
+          );
+          if (folderIdx === -1) return n;
+          // Don't allow dropping a folder into another folder
+          if (isCardFolder(movedItem)) return n;
+          const folder = {
+            ...(items[folderIdx] as CardFolder),
+            cards: [...(items[folderIdx] as CardFolder).cards],
+          };
+          folder.cards.splice(to.index, 0, movedItem as Card);
+          items[folderIdx] = folder;
+        }
+
+        return { ...n, cards: items, lastModifiedAt: Date.now() };
+      });
+    },
+    [selectedNugget, updateNugget],
+  );
+
   const deleteInsightsCard = useCallback(
     (cardId: string) => {
       if (!selectedNugget) return;
-      const remaining = selectedNugget.cards.filter((c) => c.id !== cardId);
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: n.cards.filter((c) => c.id !== cardId),
+        cards: removeCard(n.cards, cardId),
         lastModifiedAt: Date.now(),
       }));
       // Fall back to first remaining card (or null)
+      const remaining = flattenCards(removeCard(selectedNugget.cards, cardId));
       setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
     },
     [selectedNugget, updateNugget, setActiveCardId],
@@ -120,15 +200,14 @@ export function useCardOperations() {
 
   const deleteSelectedInsightsCards = useCallback(() => {
     if (!selectedNugget) return;
-    const selectedIds = new Set(selectedNugget.cards.filter((c) => c.selected).map((c) => c.id));
+    const selectedIds = new Set(flattenCards(selectedNugget.cards).filter((c) => c.selected).map((c) => c.id));
     if (selectedIds.size === 0) return;
-    const remaining = selectedNugget.cards.filter((c) => !selectedIds.has(c.id));
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.filter((c) => !selectedIds.has(c.id)),
+      cards: removeCardsWhere(n.cards, (c) => selectedIds.has(c.id)),
       lastModifiedAt: Date.now(),
     }));
-    // Fall back to first remaining card (or null)
+    const remaining = flattenCards(removeCardsWhere(selectedNugget.cards, (c) => selectedIds.has(c.id)));
     setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
   }, [selectedNugget, updateNugget, setActiveCardId]);
 
@@ -176,7 +255,7 @@ export function useCardOperations() {
     (name: string) => {
       if (!selectedNugget) return;
       const newId = crypto.randomUUID();
-      const existingNames = selectedNugget.cards.map((c) => c.text);
+      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
       const newCard: Card = {
         id: newId,
         level: 1,
@@ -185,7 +264,7 @@ export function useCardOperations() {
         createdAt: Date.now(),
         lastEditedAt: Date.now(),
       };
-      // Add card to nugget
+      // Add card to nugget (root level)
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
         cards: [...n.cards, newCard],
@@ -196,15 +275,43 @@ export function useCardOperations() {
     [selectedNugget, updateNugget, setActiveCardId],
   );
 
+  const createCustomCardInFolder = useCallback(
+    (folderId: string, name: string) => {
+      if (!selectedNugget) return;
+      const newId = crypto.randomUUID();
+      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const now = Date.now();
+      const newCard: Card = {
+        id: newId,
+        level: 1,
+        text: getUniqueName(name, existingNames),
+        synthesisMap: { Standard: '' },
+        createdAt: now,
+        lastEditedAt: now,
+      };
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: n.cards.map((item) =>
+          isCardFolder(item) && item.id === folderId
+            ? { ...item, cards: [...item.cards, newCard], lastModifiedAt: now }
+            : item,
+        ),
+        lastModifiedAt: now,
+      }));
+      setActiveCardId(newId);
+    },
+    [selectedNugget, updateNugget, setActiveCardId],
+  );
+
   const handleSaveAsCard = useCallback(
-    (message: ChatMessage, editedContent: string) => {
+    (message: ChatMessage, editedContent: string, targetFolderId?: string) => {
       if (!selectedNugget || selectedNugget.type !== 'insights') return;
       const content = editedContent || message.content;
 
       // Extract title from first # heading line, auto-increment if duplicate
       const titleMatch = content.match(/^#\s+(.+)$/m);
       const rawTitle = titleMatch ? titleMatch[1].trim() : 'Untitled Card';
-      const existingCardNames = selectedNugget.cards.map((c) => c.text);
+      const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
       const title = getUniqueName(rawTitle, existingCardNames);
 
       // Remove the title line from content body
@@ -212,6 +319,7 @@ export function useCardOperations() {
 
       const cardId = `card-${Math.random().toString(36).substr(2, 9)}`;
       const level = message.detailLevel || 'Standard';
+      const now = Date.now();
 
       const activeDocNames = selectedNugget.documents
         .filter((d) => d.enabled !== false && d.content)
@@ -225,16 +333,22 @@ export function useCardOperations() {
         synthesisMap: { [level]: `# ${title}\n\n${bodyContent}` },
         isSynthesizingMap: {},
         detailLevel: level,
-        createdAt: Date.now(),
+        createdAt: now,
         sourceDocuments: activeDocNames,
       };
 
-      // Add card to nugget + mark message as saved
+      // Add card to folder or root + mark message as saved
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: [...n.cards, newCard],
+        cards: targetFolderId
+          ? n.cards.map((item) =>
+              isCardFolder(item) && item.id === targetFolderId
+                ? { ...item, cards: [...item.cards, newCard], lastModifiedAt: now }
+                : item,
+            )
+          : [...n.cards, newCard],
         messages: (n.messages || []).map((m) => (m.id === message.id ? { ...m, savedAsCardId: cardId } : m)),
-        lastModifiedAt: Date.now(),
+        lastModifiedAt: now,
       }));
 
       // Select the new card
@@ -243,16 +357,352 @@ export function useCardOperations() {
     [selectedNugget, updateNugget, setActiveCardId],
   );
 
+  // ── Placeholder lifecycle (used by all generation paths) ──
+
+  /**
+   * Insert placeholder cards into the current nugget (root level). Each card gets
+   * `isSynthesizingMap: { [level]: true }` so the card list shows a spinner.
+   * Returns `{ id, title }[]` so callers can map card IDs to AI calls.
+   */
+  const createPlaceholderCards = useCallback(
+    (
+      titles: string[],
+      detailLevel: DetailLevel,
+      options?: { sourceDocuments?: string[]; autoDeckSessionId?: string; targetFolderId?: string },
+    ): { id: string; title: string }[] => {
+      if (!selectedNugget || titles.length === 0) return [];
+
+      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const newCards: Card[] = [];
+      const result: { id: string; title: string }[] = [];
+
+      for (const rawTitle of titles) {
+        const uniqueName = getUniqueName(rawTitle, [
+          ...existingNames,
+          ...newCards.map((c) => c.text),
+        ]);
+        const cardId = `card-${Math.random().toString(36).substr(2, 9)}`;
+
+        newCards.push({
+          id: cardId,
+          text: uniqueName,
+          level: 1,
+          selected: false,
+          detailLevel,
+          synthesisMap: {},
+          isSynthesizingMap: { [detailLevel]: true },
+          createdAt: Date.now(),
+          sourceDocuments: options?.sourceDocuments,
+          autoDeckSessionId: options?.autoDeckSessionId,
+        });
+        result.push({ id: cardId, title: rawTitle });
+      }
+
+      const now = Date.now();
+      const targetFolderId = options?.targetFolderId;
+
+      if (targetFolderId) {
+        // Insert placeholders into the specified folder
+        updateNugget(selectedNugget.id, (n) => ({
+          ...n,
+          cards: n.cards.map((item) =>
+            isCardFolder(item) && item.id === targetFolderId
+              ? { ...item, cards: [...item.cards, ...newCards], lastModifiedAt: now }
+              : item,
+          ),
+          lastModifiedAt: now,
+        }));
+      } else {
+        // Add to root level (legacy / batch-handled-elsewhere path)
+        updateNugget(selectedNugget.id, (n) => ({
+          ...n,
+          cards: [...n.cards, ...newCards],
+          lastModifiedAt: now,
+        }));
+      }
+
+      if (result.length > 0) {
+        setActiveCardId(result[0].id);
+      }
+
+      return result;
+    },
+    [selectedNugget, updateNugget, setActiveCardId],
+  );
+
+  /**
+   * Create a folder with placeholder cards inside. Used by batch generation (2+ cards).
+   * The folder name defaults to the current nugget name with uniqueness suffix.
+   * Returns `{ folderId, cards: { id, title }[] }` so callers can map card IDs to AI calls.
+   */
+  const createPlaceholderCardsInFolder = useCallback(
+    (
+      titles: string[],
+      detailLevel: DetailLevel | DetailLevel[],
+      options?: { sourceDocuments?: string[]; autoDeckSessionId?: string; folderName?: string },
+    ): { folderId: string; cards: { id: string; title: string }[] } | null => {
+      if (!selectedNugget || titles.length < 2) return null;
+
+      const existingFolderNames = allFolderNames(selectedNugget.cards);
+      const folderName = getUniqueName(
+        options?.folderName || selectedNugget.name,
+        existingFolderNames,
+      );
+      const folderId = crypto.randomUUID();
+      const now = Date.now();
+
+      const newCards: Card[] = [];
+      const result: { id: string; title: string }[] = [];
+
+      const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      for (let i = 0; i < titles.length; i++) {
+        const rawTitle = titles[i];
+        const level = Array.isArray(detailLevel) ? detailLevel[i] : detailLevel;
+        const uniqueName = getUniqueName(rawTitle, [
+          ...existingCardNames,
+          ...newCards.map((c) => c.text),
+        ]);
+        const cardId = `card-${Math.random().toString(36).substr(2, 9)}`;
+
+        newCards.push({
+          id: cardId,
+          text: uniqueName,
+          level: 1,
+          selected: false,
+          detailLevel: level,
+          synthesisMap: {},
+          isSynthesizingMap: { [level]: true },
+          createdAt: now,
+          sourceDocuments: options?.sourceDocuments,
+          autoDeckSessionId: options?.autoDeckSessionId,
+        });
+        result.push({ id: cardId, title: rawTitle });
+      }
+
+      const folder: CardFolder = {
+        kind: 'folder',
+        id: folderId,
+        name: folderName,
+        cards: newCards,
+        collapsed: false,
+        createdAt: now,
+        lastModifiedAt: now,
+        autoDeckSessionId: options?.autoDeckSessionId,
+      };
+
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: [...n.cards, folder],
+        lastModifiedAt: now,
+      }));
+
+      if (result.length > 0) {
+        setActiveCardId(result[0].id);
+      }
+
+      return { folderId, cards: result };
+    },
+    [selectedNugget, updateNugget, setActiveCardId],
+  );
+
+  /**
+   * Fill a placeholder card with generated content.
+   * Turns off the synthesis spinner and populates synthesisMap.
+   */
+  const fillPlaceholderCard = useCallback(
+    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => {
+      updateNuggetCard(cardId, (c) => ({
+        ...c,
+        ...(newTitle ? { text: newTitle } : {}),
+        synthesisMap: { ...(c.synthesisMap || {}), [detailLevel]: content },
+        isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [detailLevel]: false },
+        lastEditedAt: Date.now(),
+      }));
+    },
+    [updateNuggetCard],
+  );
+
+  /**
+   * Remove a placeholder card on error (only if it still has no content).
+   * Searches inside folders too.
+   */
+  const removePlaceholderCard = useCallback(
+    (cardId: string, detailLevel: DetailLevel) => {
+      if (!selectedNugget) return;
+      const card = findCard(selectedNugget.cards, cardId);
+      if (!card || card.synthesisMap?.[detailLevel]) return;
+
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: removeCard(n.cards, cardId),
+        lastModifiedAt: Date.now(),
+      }));
+    },
+    [selectedNugget, updateNugget],
+  );
+
+  // ── Folder operations ──
+
+  const createEmptyFolder = useCallback(
+    (name: string): string | null => {
+      if (!selectedNugget) return null;
+      const now = Date.now();
+      const existingFolderNames = allFolderNames(selectedNugget.cards);
+      const uniqueName = getUniqueName(name, existingFolderNames);
+      const folderId = crypto.randomUUID();
+      const newFolder: CardFolder = {
+        kind: 'folder',
+        id: folderId,
+        name: uniqueName,
+        cards: [],
+        collapsed: false,
+        createdAt: now,
+        lastModifiedAt: now,
+      };
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: [newFolder, ...n.cards],
+        lastModifiedAt: now,
+      }));
+      return folderId;
+    },
+    [selectedNugget, updateNugget],
+  );
+
+  const renameFolder = useCallback(
+    (folderId: string, newName: string) => {
+      if (!selectedNugget) return;
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: n.cards.map((item) =>
+          isCardFolder(item) && item.id === folderId
+            ? { ...item, name: newName, lastModifiedAt: Date.now() }
+            : item,
+        ),
+        lastModifiedAt: Date.now(),
+      }));
+    },
+    [selectedNugget, updateNugget],
+  );
+
+  const deleteFolder = useCallback(
+    (folderId: string) => {
+      if (!selectedNugget) return;
+      // If active card is inside this folder, clear it
+      const folder = selectedNugget.cards.find(
+        (item): item is CardFolder => isCardFolder(item) && item.id === folderId,
+      );
+      const folderCardIds = folder ? new Set(folder.cards.map((c) => c.id)) : new Set<string>();
+
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: removeFolder(n.cards, folderId),
+        lastModifiedAt: Date.now(),
+      }));
+
+      if (activeCardId && folderCardIds.has(activeCardId)) {
+        const remaining = flattenCards(removeFolder(selectedNugget.cards, folderId));
+        setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
+      }
+    },
+    [selectedNugget, updateNugget, activeCardId, setActiveCardId],
+  );
+
+  const duplicateFolder = useCallback(
+    (folderId: string) => {
+      if (!selectedNugget) return;
+      const folder = selectedNugget.cards.find(
+        (item): item is CardFolder => isCardFolder(item) && item.id === folderId,
+      );
+      if (!folder) return;
+
+      const now = Date.now();
+      const existingFolderNames = allFolderNames(selectedNugget.cards);
+      // Check card name uniqueness against all cards in the nugget
+      const usedNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+
+      const newFolder: CardFolder = {
+        kind: 'folder',
+        id: crypto.randomUUID(),
+        name: getUniqueName(folder.name, existingFolderNames),
+        cards: folder.cards.map((c) => {
+          const uniqueName = getUniqueName(c.text, usedNames);
+          usedNames.push(uniqueName);
+          return {
+            ...c,
+            id: `card-${Math.random().toString(36).substr(2, 9)}`,
+            text: uniqueName,
+            selected: false,
+            createdAt: now,
+            lastEditedAt: now,
+          };
+        }),
+        collapsed: false,
+        createdAt: now,
+        lastModifiedAt: now,
+        autoDeckSessionId: folder.autoDeckSessionId,
+      };
+
+      updateNugget(selectedNugget.id, (n) => {
+        // Insert copy right after the original folder
+        const idx = n.cards.findIndex((item) => isCardFolder(item) && item.id === folderId);
+        const items = [...n.cards];
+        items.splice(idx + 1, 0, newFolder);
+        return { ...n, cards: items, lastModifiedAt: now };
+      });
+    },
+    [selectedNugget, updateNugget],
+  );
+
+  const toggleFolderCollapsed = useCallback(
+    (folderId: string) => {
+      if (!selectedNugget) return;
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: n.cards.map((item) =>
+          isCardFolder(item) && item.id === folderId
+            ? { ...item, collapsed: !item.collapsed }
+            : item,
+        ),
+      }));
+    },
+    [selectedNugget, updateNugget],
+  );
+
+  const toggleFolderSelection = useCallback(
+    (folderId: string) => {
+      if (!selectedNugget) return;
+      const folder = selectedNugget.cards.find(
+        (item): item is CardFolder => isCardFolder(item) && item.id === folderId,
+      );
+      if (!folder) return;
+      const allSelected = folder.cards.length > 0 && folder.cards.every((c) => c.selected);
+      const newSelected = !allSelected;
+
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        cards: n.cards.map((item) =>
+          isCardFolder(item) && item.id === folderId
+            ? { ...item, cards: item.cards.map((c) => ({ ...c, selected: newSelected })) }
+            : item,
+        ),
+        lastModifiedAt: Date.now(),
+      }));
+    },
+    [selectedNugget, updateNugget],
+  );
+
   // ── Cross-nugget copy/move ──
 
   const handleCopyMoveCard = useCallback(
     (cardId: string, targetNuggetId: string, mode: 'copy' | 'move') => {
       if (!selectedNugget) return;
-      const card = selectedNugget.cards.find((c) => c.id === cardId);
+      const card = findCard(selectedNugget.cards, cardId);
       if (!card) return;
       const targetNugget = nuggets.find((n) => n.id === targetNuggetId);
-      const targetCardNames = targetNugget ? targetNugget.cards.map((c) => c.text) : [];
-      const uniqueName = getUniqueName(card.text, targetCardNames);
+      // Check uniqueness against all cards in the target nugget
+      const targetAllNames = flattenCards(targetNugget?.cards ?? []).map((c) => c.text);
+      const uniqueName = getUniqueName(card.text, targetAllNames);
       const now = Date.now();
       const newCardId = `card-${Math.random().toString(36).substr(2, 9)}`;
       const copiedCard: Card = {
@@ -263,22 +713,46 @@ export function useCardOperations() {
         createdAt: now,
         lastEditedAt: now,
       };
-      // Add to target nugget
-      updateNugget(targetNuggetId, (n) => ({
-        ...n,
-        cards: [...n.cards, copiedCard],
-        lastModifiedAt: now,
-      }));
+      // Add to first folder in target nugget (or create "Imported" folder if none exist)
+      updateNugget(targetNuggetId, (n) => {
+        const firstFolder = n.cards.find((item): item is CardFolder => isCardFolder(item));
+        if (firstFolder) {
+          return {
+            ...n,
+            cards: n.cards.map((item) =>
+              isCardFolder(item) && item.id === firstFolder.id
+                ? { ...item, cards: [...item.cards, copiedCard], lastModifiedAt: now }
+                : item,
+            ),
+            lastModifiedAt: now,
+          };
+        }
+        // No folders — create an "Imported" folder
+        const newFolder: CardFolder = {
+          kind: 'folder',
+          id: crypto.randomUUID(),
+          name: 'Imported',
+          cards: [copiedCard],
+          collapsed: false,
+          createdAt: now,
+          lastModifiedAt: now,
+        };
+        return {
+          ...n,
+          cards: [...n.cards, newFolder],
+          lastModifiedAt: now,
+        };
+      });
       // If move, also remove from source nugget
       if (mode === 'move') {
-        const remaining = selectedNugget.cards.filter((c) => c.id !== cardId);
         updateNugget(selectedNugget.id, (n) => ({
           ...n,
-          cards: n.cards.filter((c) => c.id !== cardId),
+          cards: removeCard(n.cards, cardId),
           lastModifiedAt: now,
         }));
         // Fall back to first remaining card
         if (activeCardId === cardId) {
+          const remaining = flattenCards(removeCard(selectedNugget.cards, cardId));
           setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
         }
       }
@@ -286,41 +760,61 @@ export function useCardOperations() {
     [selectedNugget, nuggets, updateNugget, activeCardId, setActiveCardId],
   );
 
-  const handleCreateNuggetForCard = useCallback(
-    (nuggetName: string, cardId: string | null) => {
-      if (!selectedNugget || !cardId) return;
-      const card = selectedNugget.cards.find((c) => c.id === cardId);
-      if (!card) return;
-      const sourceProject = projects.find((p) => p.nuggetIds.includes(selectedNugget.id));
-      const projectNuggetNames = sourceProject
-        ? sourceProject.nuggetIds.map((nid) => nuggets.find((n) => n.id === nid)?.name || '').filter(Boolean)
-        : nuggets.map((n) => n.name);
-      const uniqueNuggetName = getUniqueName(nuggetName, projectNuggetNames);
+  const handleCopyMoveFolder = useCallback(
+    (folderId: string, targetNuggetId: string, mode: 'copy' | 'move') => {
+      if (!selectedNugget) return;
+      const folder = findFolder(selectedNugget.cards, folderId);
+      if (!folder) return;
+      const targetNugget = nuggets.find((n) => n.id === targetNuggetId);
+      const targetFolderNames = targetNugget ? allFolderNames(targetNugget.cards) : [];
       const now = Date.now();
-      const newCardId = `card-${Math.random().toString(36).substr(2, 9)}`;
-      const copiedCard: Card = {
-        ...card,
-        id: newCardId,
-        selected: false,
-        createdAt: now,
-        lastEditedAt: now,
-      };
-      const newNugget: Nugget = {
-        id: `nugget-${Math.random().toString(36).substr(2, 9)}`,
-        name: uniqueNuggetName,
-        type: 'insights',
-        documents: [],
-        cards: [copiedCard],
-        messages: [],
+      // Check card name uniqueness against all cards in target nugget
+      const usedNames = flattenCards(targetNugget?.cards ?? []).map((c) => c.text);
+
+      const newFolder: CardFolder = {
+        kind: 'folder',
+        id: crypto.randomUUID(),
+        name: getUniqueName(folder.name, targetFolderNames),
+        cards: folder.cards.map((c) => {
+          const uniqueName = getUniqueName(c.text, usedNames);
+          usedNames.push(uniqueName);
+          return {
+            ...c,
+            id: `card-${Math.random().toString(36).substr(2, 9)}`,
+            text: uniqueName,
+            selected: false,
+            createdAt: now,
+            lastEditedAt: now,
+          };
+        }),
+        collapsed: false,
         createdAt: now,
         lastModifiedAt: now,
+        autoDeckSessionId: folder.autoDeckSessionId,
       };
-      addNugget(newNugget);
-      if (sourceProject) {
-        addNuggetToProject(sourceProject.id, newNugget.id);
+
+      // Add folder to target nugget
+      updateNugget(targetNuggetId, (n) => ({
+        ...n,
+        cards: [...n.cards, newFolder],
+        lastModifiedAt: now,
+      }));
+
+      // If move, remove from source nugget
+      if (mode === 'move') {
+        updateNugget(selectedNugget.id, (n) => ({
+          ...n,
+          cards: removeFolder(n.cards, folderId),
+          lastModifiedAt: now,
+        }));
+        // If active card was inside the moved folder, clear selection
+        if (activeCardId && folder.cards.some((c) => c.id === activeCardId)) {
+          const remaining = flattenCards(removeFolder(selectedNugget.cards, folderId));
+          setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
+        }
       }
     },
-    [selectedNugget, projects, nuggets, addNugget, addNuggetToProject],
+    [selectedNugget, nuggets, updateNugget, activeCardId, setActiveCardId],
   );
 
   return {
@@ -333,6 +827,7 @@ export function useCardOperations() {
     insightsSelectedCount,
     // Manipulation
     reorderInsightsCards,
+    reorderCardItem,
     deleteInsightsCard,
     deleteSelectedInsightsCards,
     // Editing
@@ -340,9 +835,22 @@ export function useCardOperations() {
     handleSaveCardContent,
     // Creation
     handleCreateCustomCard,
+    createCustomCardInFolder,
     handleSaveAsCard,
     // Cross-nugget
     handleCopyMoveCard,
-    handleCreateNuggetForCard,
+    handleCopyMoveFolder,
+    // Placeholder lifecycle
+    createPlaceholderCards,
+    createPlaceholderCardsInFolder,
+    fillPlaceholderCard,
+    removePlaceholderCard,
+    // Folder operations
+    createEmptyFolder,
+    renameFolder,
+    deleteFolder,
+    duplicateFolder,
+    toggleFolderCollapsed,
+    toggleFolderSelection,
   };
 }

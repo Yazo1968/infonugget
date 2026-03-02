@@ -3,12 +3,6 @@ import {
   flattenBookmarks,
   headingsToBookmarks,
   buildTocSystemPrompt,
-  renameBookmark,
-  deleteBookmark,
-  addBookmark,
-  indentBookmark,
-  outdentBookmark,
-  reorderBookmark,
 } from '../../utils/pdfBookmarks';
 import type { BookmarkNode, Heading } from '../../types';
 
@@ -94,6 +88,23 @@ describe('headingsToBookmarks', () => {
     expect(flat.map((h) => h.text)).toEqual(['A', 'A.1', 'A.1.1', 'B']);
     expect(flat.map((h) => h.level)).toEqual([1, 2, 3, 1]);
   });
+
+  it('round-trips wordCount through headingsToBookmarks and flattenBookmarks', () => {
+    const headings: Heading[] = [
+      { level: 1, text: 'Intro', id: 'h1', page: 1, wordCount: 0 },
+      { level: 2, text: 'Background', id: 'h2', page: 2, wordCount: 523 },
+      { level: 2, text: 'Methods', id: 'h3', page: 5, wordCount: 1200 },
+      { level: 1, text: 'Conclusion', id: 'h4', page: 10, wordCount: 300 },
+    ];
+    const bookmarks = headingsToBookmarks(headings);
+    expect(bookmarks[0].wordCount).toBe(0);
+    expect(bookmarks[0].children[0].wordCount).toBe(523);
+    expect(bookmarks[0].children[1].wordCount).toBe(1200);
+    expect(bookmarks[1].wordCount).toBe(300);
+
+    const flat = flattenBookmarks(bookmarks);
+    expect(flat.map((h) => h.wordCount)).toEqual([0, 523, 1200, 300]);
+  });
 });
 
 describe('buildTocSystemPrompt', () => {
@@ -119,73 +130,3 @@ describe('buildTocSystemPrompt', () => {
   });
 });
 
-describe('tree manipulation', () => {
-  it('renameBookmark changes title immutably', () => {
-    const bm = makeBookmark({ id: 'x', title: 'Old Title' });
-    const result = renameBookmark([bm], 'x', 'New Title');
-    expect(result[0].title).toBe('New Title');
-    expect(bm.title).toBe('Old Title'); // original unchanged
-  });
-
-  it('deleteBookmark removes the node by id', () => {
-    const a = makeBookmark({ id: 'a', title: 'A' });
-    const b = makeBookmark({ id: 'b', title: 'B' });
-    const result = deleteBookmark([a, b], 'a');
-    expect(result).toHaveLength(1);
-    expect(result[0].title).toBe('B');
-  });
-
-  it('addBookmark appends to top level when parentId is null', () => {
-    const a = makeBookmark({ id: 'a', title: 'A' });
-    const result = addBookmark([a], null, 'New', 5, 1);
-    expect(result).toHaveLength(2);
-    expect(result[1].title).toBe('New');
-    expect(result[1].page).toBe(5);
-  });
-
-  it('addBookmark nests under parent when parentId is given', () => {
-    const parent = makeBookmark({ id: 'p', title: 'Parent', level: 1 });
-    const result = addBookmark([parent], 'p', 'Child', 3, 2);
-    expect(result[0].children).toHaveLength(1);
-    expect(result[0].children[0].title).toBe('Child');
-    expect(result[0].children[0].level).toBe(2);
-  });
-
-  it('reorderBookmark swaps siblings', () => {
-    const a = makeBookmark({ id: 'a', title: 'A' });
-    const b = makeBookmark({ id: 'b', title: 'B' });
-    const result = reorderBookmark([a, b], 'b', 'up');
-    expect(result[0].title).toBe('B');
-    expect(result[1].title).toBe('A');
-  });
-
-  it('indentBookmark makes node a child of previous sibling', () => {
-    const a = makeBookmark({ id: 'a', title: 'A', level: 1 });
-    const b = makeBookmark({ id: 'b', title: 'B', level: 1 });
-    const result = indentBookmark([a, b], 'b');
-    expect(result).toHaveLength(1);
-    expect(result[0].title).toBe('A');
-    expect(result[0].children).toHaveLength(1);
-    expect(result[0].children[0].title).toBe('B');
-    expect(result[0].children[0].level).toBe(2);
-  });
-
-  it('indentBookmark is no-op for the first sibling', () => {
-    const a = makeBookmark({ id: 'a', title: 'A', level: 1 });
-    const b = makeBookmark({ id: 'b', title: 'B', level: 1 });
-    const result = indentBookmark([a, b], 'a');
-    expect(result).toHaveLength(2);
-    expect(result[0].title).toBe('A');
-  });
-
-  it('outdentBookmark moves node to parent level', () => {
-    const child = makeBookmark({ id: 'c', title: 'Child', level: 2 });
-    const parent = makeBookmark({ id: 'p', title: 'Parent', level: 1, children: [child] });
-    const result = outdentBookmark([parent], 'c');
-    expect(result).toHaveLength(2);
-    expect(result[0].title).toBe('Parent');
-    expect(result[0].children).toHaveLength(0);
-    expect(result[1].title).toBe('Child');
-    expect(result[1].level).toBe(1);
-  });
-});

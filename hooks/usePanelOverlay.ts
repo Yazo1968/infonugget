@@ -10,6 +10,8 @@ export interface PanelOverlayConfig {
   defaultWidth: number;
   /** Minimum width during resize drag. Defaults to 300. */
   minWidth?: number;
+  /** External ref for overlay positioning. Falls back to stripRef if not provided. */
+  anchorRef?: React.RefObject<HTMLElement | null>;
 }
 
 /**
@@ -30,44 +32,34 @@ export interface PanelOverlayState {
   overlayStyle: React.CSSProperties;
 }
 
-const ANIMATION_DURATION = 400; // ms — matches panel-roll-in / panel-roll-out keyframes
-
 /**
  * Shared hook that manages the portal-based overlay panel pattern used by
  * ProjectsPanel, SourcesPanel, ChatPanel, and AutoDeckPanel.
  *
  * Encapsulates:
- * - Open/close animation state (shouldRender, isClosing, 400ms timeout)
+ * - Instant show/hide (no animation)
  * - Width state with reset-on-open
  * - Resize drag-handle logic (mouse listeners, cursor management)
  * - Overlay positioning via stripRef.getBoundingClientRect()
  */
-export function usePanelOverlay({ isOpen, defaultWidth, minWidth = 300 }: PanelOverlayConfig): PanelOverlayState {
+export function usePanelOverlay({ isOpen, defaultWidth, minWidth = 300, anchorRef }: PanelOverlayConfig): PanelOverlayState {
   const stripRef = useRef<HTMLButtonElement>(null);
-  const [shouldRender, setShouldRender] = useState(isOpen);
-  const [isClosing, setIsClosing] = useState(false);
   const [overlayWidth, setOverlayWidth] = useState(defaultWidth);
   const isDragging = useRef(false);
-
-  // ── Open/close animation ──
-  useEffect(() => {
-    if (isOpen) {
-      setShouldRender(true);
-      setIsClosing(false);
-    } else if (shouldRender) {
-      setIsClosing(true);
-      const t = setTimeout(() => {
-        setIsClosing(false);
-      }, ANIMATION_DURATION);
-      return () => clearTimeout(t);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- shouldRender is derived from isOpen; including it would break the open/close toggle
-  }, [isOpen]);
+  const [, setResizeTick] = useState(0);
 
   // ── Reset width on open ──
   useEffect(() => {
     if (isOpen) setOverlayWidth(defaultWidth);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only reset width when panel opens/closes, not when defaultWidth expression re-evaluates
+  }, [isOpen]);
+
+  // ── Re-compute overlay position on window resize ──
+  useEffect(() => {
+    if (!isOpen) return;
+    const onResize = () => setResizeTick((t) => t + 1);
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
   }, [isOpen]);
 
   // ── Resize drag handler ──
@@ -101,22 +93,21 @@ export function usePanelOverlay({ isOpen, defaultWidth, minWidth = 300 }: PanelO
   );
 
   // ── Overlay positioning style ──
-  const rect = stripRef.current?.getBoundingClientRect();
+  const anchor = anchorRef?.current ?? stripRef.current;
+  const rect = anchor?.getBoundingClientRect();
+  const overlayLeft = (rect?.right ?? 0) - 2;
   const overlayStyle: React.CSSProperties = {
-    transformOrigin: 'left',
-    ...(!isOpen && !isClosing
-      ? { display: 'none' }
-      : { animation: `${isClosing ? 'panel-roll-in' : 'panel-roll-out'} 0.4s ease-out forwards` }),
+    ...(!isOpen ? { display: 'none' } : undefined),
     top: rect?.top ?? 0,
-    left: rect?.right ?? 0,
+    left: overlayLeft,
     height: rect?.height ?? 0,
-    width: overlayWidth,
+    right: 0,
   };
 
   return {
     stripRef,
-    shouldRender,
-    isClosing,
+    shouldRender: isOpen,
+    isClosing: false,
     overlayWidth,
     handleResizeStart,
     overlayStyle,

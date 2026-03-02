@@ -278,85 +278,93 @@ export const DocumentChangeNotice: React.FC<DocumentChangeNoticeProps> = ({
   const grouped = docOrder.map((id) => docMap.get(id)!);
 
   return createPortal(
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 dark:bg-black/60 animate-in fade-in duration-300">
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 animate-in fade-in duration-300"
+      onClick={onCancel}
+    >
       <div
         ref={focusTrapRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="doc-change-title"
-        className="w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-[40px] p-10 shadow-2xl dark:shadow-black/30 border border-zinc-200 dark:border-zinc-600 animate-in zoom-in-95 duration-300"
+        className="w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 flex flex-col animate-in zoom-in-95 duration-300"
+        style={{ maxHeight: 'min(520px, 80vh)' }}
+        onClick={(e) => e.stopPropagation()}
       >
-        <div className="space-y-6 text-center">
-          <div className="w-16 h-16 bg-blue-50 dark:bg-blue-950 rounded-full flex items-center justify-center mx-auto">
-            <svg
-              width="24"
-              height="24"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              className="text-blue-500 dark:text-blue-400"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-              <polyline points="14 2 14 8 20 8" />
-              <path d="M12 18v-6" />
-              <path d="M9 15l3-3 3 3" />
-            </svg>
+        {/* Header */}
+        <div className="px-5 py-3.5 border-b border-zinc-200 dark:border-zinc-700 flex items-center gap-2.5">
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="shrink-0 text-zinc-400 dark:text-zinc-500"
+          >
+            <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+            <polyline points="14 2 14 8 20 8" />
+            <path d="M12 18v-6" />
+            <path d="M9 15l3-3 3 3" />
+          </svg>
+          <h3
+            id="doc-change-title"
+            className="text-[13px] font-semibold text-zinc-900 dark:text-zinc-100"
+          >
+            Sources changed
+          </h3>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
+            {grouped.length === 1 ? '1 document was' : `${grouped.length} documents were`} changed since the last
+            message:
+          </p>
+          <div
+            className="text-[11px] text-zinc-600 dark:text-zinc-400 space-y-2"
+            style={{ scrollbarWidth: 'none' }}
+          >
+            {grouped.map((g, i) => (
+              <div key={i}>
+                <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate" title={g.name}>
+                  {g.name}
+                </p>
+                <ul className="space-y-0.5 ml-2 mt-0.5">
+                  {g.events.map((ev, j) => (
+                    <li key={j} className="flex items-start gap-1.5">
+                      <span className="text-zinc-400 dark:text-zinc-500 mt-px shrink-0">•</span>
+                      <span>{ev}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
-          <div className="space-y-2">
-            <h3
-              id="doc-change-title"
-              className="text-[15px] font-black tracking-tight text-zinc-800 dark:text-zinc-200"
-            >
-              Sources changed
-            </h3>
-            <p className="text-xs text-zinc-500 dark:text-zinc-400 font-light leading-relaxed">
-              {grouped.length === 1 ? '1 document was' : `${grouped.length} documents were`} changed since the last
-              message:
-            </p>
-            <div
-              className="text-left text-[11px] text-zinc-600 dark:text-zinc-400 space-y-2 mt-2 max-h-48 overflow-y-auto px-2"
-              style={{ scrollbarWidth: 'none' }}
-            >
-              {grouped.map((g, i) => (
-                <div key={i}>
-                  <p className="font-semibold text-zinc-800 dark:text-zinc-200 truncate" title={g.name}>
-                    {g.name}
-                  </p>
-                  <ul className="space-y-0.5 ml-2 mt-0.5">
-                    {g.events.map((ev, j) => (
-                      <li key={j} className="flex items-start gap-1.5">
-                        <span className="text-zinc-400 dark:text-zinc-500 mt-px shrink-0">•</span>
-                        <span>{ev}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
-          <div className="flex flex-col space-y-3 pt-4">
-            <button
-              onClick={onContinue}
-              className="w-full py-4 rounded-full bg-accent-blue text-white text-[10px] font-black uppercase tracking-widest shadow-lg dark:shadow-black/30 shadow-[rgba(42,159,212,0.2)] hover:scale-[1.02] transition-all"
-            >
-              Continue Chat
-            </button>
-            <button
-              onClick={onStartFresh}
-              className="w-full py-4 rounded-full bg-zinc-50 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400 text-[10px] font-black uppercase tracking-widest hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-all"
-            >
-              Start Fresh
-            </button>
-            <button
-              onClick={onCancel}
-              className="w-full py-2 text-zinc-600 dark:text-zinc-400 text-[10px] font-bold uppercase tracking-widest hover:text-zinc-800 dark:hover:text-zinc-200 transition-all"
-            >
-              Cancel
-            </button>
-          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="px-5 py-3 border-t border-zinc-200 dark:border-zinc-700 flex items-center justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="px-4 py-1.5 rounded-md text-[11px] font-medium transition-colors text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-800"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onStartFresh}
+            className="px-4 py-1.5 rounded-md text-[11px] font-medium transition-colors text-zinc-600 dark:text-zinc-300 bg-zinc-100 dark:bg-zinc-800 hover:bg-zinc-200 dark:hover:bg-zinc-700"
+          >
+            Start Fresh
+          </button>
+          <button
+            onClick={onContinue}
+            className="px-4 py-1.5 rounded-md text-[11px] font-semibold transition-colors bg-[var(--accent-blue,#2a9fd4)] text-white hover:opacity-90"
+          >
+            Continue Chat
+          </button>
         </div>
       </div>
     </div>,

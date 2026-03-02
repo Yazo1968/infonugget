@@ -12,9 +12,6 @@ import { buildExpertPriming } from './promptUtils';
 export function buildContentPrompt(
   cardTitle: string,
   level: DetailLevel,
-  fullDocument: string,
-  sectionText: string,
-  excludeDocument = false,
   subject?: string,
 ): string {
   if (isCoverLevel(level)) {
@@ -54,8 +51,8 @@ export function buildContentPrompt(
   }
 
   const expertPriming = buildExpertPriming(subject);
-  const instructions = `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation — [${cardTitle}]
-Read the provided document in full for context. Then focus on [${cardTitle}] including all its sub-sections and nested content.
+  return `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation — [${cardTitle}]
+Using the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content. Understand the context of this section and how it relates to the document as a whole. Use this understanding to inform your synthesis, but only include content from the target section.
 
 **WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your output words before responding. If over, cut. If under, you may add — but NEVER exceed the upper bound.**
 
@@ -82,11 +79,6 @@ ${formattingGuidance}
 
 **Output:** Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
 `.trim();
-
-  if (excludeDocument) {
-    return `${instructions}\n\nFOCUS SECTION DATA:\n${sectionText}`;
-  }
-  return `${instructions}\n\nFULL DOCUMENT CONTEXT:\n${fullDocument}\n\nFOCUS SECTION DATA:\n${sectionText}`;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -182,70 +174,221 @@ What should grab the viewer's attention first, second, and third? Describe this 
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Native PDF Section Hint
+// Section Focus Builders
 // ─────────────────────────────────────────────────────────────────
-// When generating card content from a native (unconverted) PDF,
-// there is no markdown to regex-extract sections from. Instead,
-// we build a prompt hint that tells Claude the section name, its
-// page boundaries, and its sub-section structure so it can locate
-// and extract the right content from the full PDF.
+// Build structured section-focus blocks that tell Claude exactly
+// which section to read from documents uploaded via the Files API.
+// Two doc-type-specific builders (MD uses heading-name boundaries,
+// PDF uses explicit page ranges) unified by buildSectionFocus().
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Build a prompt hint that tells Claude where to find a specific section
- * in a native PDF document, using heading names and page boundaries.
- *
- * @param cardTitle — The heading text the user right-clicked on
- * @param enabledDocs — All enabled documents in the nugget
- * @returns A prompt string to append, or '' if no match found
+ * Section focus for a markdown document.
+ * Uses heading names as start/end boundaries.
  */
-export function buildNativePdfSectionHint(cardTitle: string, enabledDocs: UploadedFile[]): string {
-  for (const doc of enabledDocs) {
-    if (!doc.structure?.length) continue;
-    const headingIdx = doc.structure.findIndex((h) => h.text === cardTitle);
-    if (headingIdx === -1) continue;
+function buildMdSectionFocus(cardTitle: string, doc: UploadedFile): string {
+  const structure = doc.structure!;
+  const targetIdx = structure.findIndex((h) => h.text === cardTitle);
 
-    const targetHeading = doc.structure[headingIdx];
-
-    // Find the next sibling or higher-level heading (= section end boundary)
-    let nextSiblingIdx = -1;
-    for (let i = headingIdx + 1; i < doc.structure.length; i++) {
-      if (doc.structure[i].level <= targetHeading.level) {
-        nextSiblingIdx = i;
-        break;
-      }
-    }
-
-    // Collect descendant headings within this section
-    const sectionHeadings = [targetHeading];
-    for (let i = headingIdx + 1; i < doc.structure.length; i++) {
-      if (doc.structure[i].level <= targetHeading.level) break;
-      sectionHeadings.push(doc.structure[i]);
-    }
-
-    // Build page boundary info
-    const startPage = targetHeading.page;
-    const endPage = nextSiblingIdx !== -1 ? doc.structure[nextSiblingIdx].page : undefined;
-
-    // Build the TOC lines with page numbers
-    const tocLines = sectionHeadings
-      .map((h) => {
-        const indent = '  '.repeat(h.level - 1);
-        const pageLabel = h.page != null ? ` (page ${h.page})` : '';
-        return `${indent}- ${h.text}${pageLabel}`;
-      })
+  if (targetIdx === -1) {
+    // Whole-document: full TOC, no markers
+    const tocLines = structure
+      .map((h) => `${'  '.repeat(h.level - 1)}- ${h.text}`)
       .join('\n');
 
-    // Build page range instruction
-    let pageInstruction = '';
-    if (startPage != null && endPage != null) {
-      const lastContentPage = endPage > startPage ? endPage - 1 : endPage;
-      pageInstruction = `\n\nPAGE BOUNDARIES: This section starts on page ${startPage} and the next section "${doc.structure[nextSiblingIdx].text}" starts on page ${endPage}. Extract content ONLY from pages ${startPage}–${lastContentPage}.`;
-    } else if (startPage != null) {
-      pageInstruction = `\n\nPAGE BOUNDARY: This section starts on page ${startPage} and continues to the end of the document. Extract content from page ${startPage} onwards.`;
-    }
-
-    return `\n\nDOCUMENT SECTION STRUCTURE (from "${doc.name}"):\nThe target section "${cardTitle}" contains these sub-sections:\n${tocLines}${pageInstruction}\n\nExtract content from this entire section including all sub-sections listed above.`;
+    return [
+      `DOCUMENT STRUCTURE (from "${doc.name}"):`,
+      'Read the ENTIRE document.',
+      '',
+      tocLines,
+      '',
+      'READING INSTRUCTIONS:',
+      'Read the entire document from beginning to end. Synthesize content from all sections.',
+    ].join('\n');
   }
+
+  const target = structure[targetIdx];
+
+  // Parent: first heading with level < target.level, scanning backwards
+  let parentIdx = -1;
+  for (let i = targetIdx - 1; i >= 0; i--) {
+    if (structure[i].level < target.level) { parentIdx = i; break; }
+  }
+
+  // End boundary: next heading with level <= target.level
+  let endIdx = -1;
+  for (let i = targetIdx + 1; i < structure.length; i++) {
+    if (structure[i].level <= target.level) { endIdx = i; break; }
+  }
+
+  // Does the target have children listed in the TOC?
+  const hasChildren = targetIdx + 1 < structure.length && structure[targetIdx + 1].level > target.level;
+
+  // Build indented TOC with [TARGET] / [PARENT] markers
+  const tocLines = structure
+    .map((h, i) => {
+      const indent = '  '.repeat(h.level - 1);
+      let marker = '';
+      if (i === targetIdx) marker = hasChildren ? ' [TARGET]' : ' [TARGET] *';
+      else if (i === parentIdx) marker = ' [PARENT]';
+      return `${indent}- ${h.text}${marker}`;
+    })
+    .join('\n');
+
+  // Reading instructions
+  const endText = endIdx !== -1
+    ? `up to (but not including) heading "${structure[endIdx].text}"`
+    : 'to the end of the document';
+  const parentText = parentIdx !== -1
+    ? ` Read the [PARENT] section "${structure[parentIdx].text}" for broader context.`
+    : '';
+
+  const lines: string[] = [
+    `DOCUMENT STRUCTURE (from "${doc.name}"):`,
+    'Locate the section marked [TARGET] and read between the specified boundaries.',
+    '',
+    tocLines,
+  ];
+  if (!hasChildren) {
+    lines.push('');
+    lines.push('* This section may contain sub-headings (H4+) not listed in this outline.');
+  }
+  lines.push('');
+  lines.push('READING INSTRUCTIONS:');
+  lines.push(
+    `Read from heading "${target.text}" ${endText}.${parentText} Extract all content from the [TARGET] section including all sub-sections and any deeper headings within these boundaries.`,
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Section focus for a native PDF document.
+ * Uses explicit page ranges for every heading in the TOC.
+ */
+function buildPdfSectionFocus(cardTitle: string, doc: UploadedFile): string {
+  const structure = doc.structure!;
+  const targetIdx = structure.findIndex((h) => h.text === cardTitle);
+
+  // Pre-compute page ranges for every heading: "pp. X-Y" or "p. X" or "pp. X+"
+  const pageRanges = structure.map((h, i) => {
+    const start = h.page ?? 1;
+    if (i + 1 < structure.length) {
+      const nextStart = structure[i + 1].page ?? start;
+      const end = nextStart > start ? nextStart - 1 : start;
+      return start === end ? `p. ${start}` : `pp. ${start}-${end}`;
+    }
+    return `pp. ${start}+`;
+  });
+
+  if (targetIdx === -1) {
+    // Whole-document: full TOC with page ranges, no markers
+    const tocLines = structure
+      .map((h, i) => `${'  '.repeat(h.level - 1)}- ${h.text} (${pageRanges[i]})`)
+      .join('\n');
+
+    return [
+      `DOCUMENT STRUCTURE (from "${doc.name}"):`,
+      'Read the ENTIRE document.',
+      '',
+      tocLines,
+      '',
+      'READING INSTRUCTIONS:',
+      'Read the entire document from beginning to end. Synthesize content from all sections.',
+    ].join('\n');
+  }
+
+  const target = structure[targetIdx];
+
+  // Parent
+  let parentIdx = -1;
+  for (let i = targetIdx - 1; i >= 0; i--) {
+    if (structure[i].level < target.level) { parentIdx = i; break; }
+  }
+
+  // End boundary (next sibling-or-higher)
+  let endIdx = -1;
+  for (let i = targetIdx + 1; i < structure.length; i++) {
+    if (structure[i].level <= target.level) { endIdx = i; break; }
+  }
+
+  const hasChildren = targetIdx + 1 < structure.length && structure[targetIdx + 1].level > target.level;
+
+  // Target page range for reading instructions
+  const targetStart = target.page ?? 1;
+  let targetEndPage: number | undefined;
+  if (endIdx !== -1) {
+    const nextPage = structure[endIdx].page ?? targetStart;
+    targetEndPage = nextPage > targetStart ? nextPage - 1 : targetStart;
+  }
+
+  // Build TOC with markers and page ranges
+  const tocLines = structure
+    .map((h, i) => {
+      const indent = '  '.repeat(h.level - 1);
+      let marker = '';
+      if (i === targetIdx) marker = hasChildren ? ' [TARGET]' : ' [TARGET] *';
+      else if (i === parentIdx) marker = ' [PARENT]';
+      return `${indent}- ${h.text} (${pageRanges[i]})${marker}`;
+    })
+    .join('\n');
+
+  // Page range text for reading instructions
+  const pageRange = targetEndPage != null
+    ? (targetEndPage > targetStart ? `pages ${targetStart}-${targetEndPage}` : `page ${targetStart}`)
+    : `page ${targetStart} onwards`;
+  const endText = endIdx !== -1
+    ? `ending before "${structure[endIdx].text}" on page ${structure[endIdx].page}`
+    : 'continuing to the end of the document';
+  const parentText = parentIdx !== -1
+    ? ` Read the [PARENT] section "${structure[parentIdx].text}" for broader context.`
+    : '';
+
+  const lines: string[] = [
+    `DOCUMENT STRUCTURE (from "${doc.name}"):`,
+    'Locate the section marked [TARGET] and read the specified pages.',
+    '',
+    tocLines,
+  ];
+  if (!hasChildren) {
+    lines.push('');
+    lines.push('* This section may contain sub-headings (H4+) not listed in this outline.');
+  }
+  lines.push('');
+  lines.push('READING INSTRUCTIONS:');
+  lines.push(
+    `Read ${pageRange} of "${doc.name}" — section "${target.text}" starting on page ${targetStart}, ${endText}.${parentText} Extract all content from the [TARGET] section including all sub-sections and any deeper headings within these page boundaries.`,
+  );
+
+  return lines.join('\n');
+}
+
+/**
+ * Build a section focus block for card content synthesis.
+ * Routes to the appropriate builder based on the document's sourceType.
+ *
+ * @param cardTitle — The heading text to focus on
+ * @param enabledDocs — All enabled documents in the nugget
+ * @returns Section focus text to prepend to the content prompt, or '' if no docs have structure
+ */
+export function buildSectionFocus(cardTitle: string, enabledDocs: UploadedFile[]): string {
+  // First pass: find the doc containing the target heading
+  for (const doc of enabledDocs) {
+    if (!doc.structure?.length) continue;
+    if (doc.structure.some((h) => h.text === cardTitle)) {
+      return doc.sourceType === 'native-pdf'
+        ? buildPdfSectionFocus(cardTitle, doc)
+        : buildMdSectionFocus(cardTitle, doc);
+    }
+  }
+
+  // No heading match → whole-document fallback (uses first doc with structure)
+  for (const doc of enabledDocs) {
+    if (!doc.structure?.length) continue;
+    return doc.sourceType === 'native-pdf'
+      ? buildPdfSectionFocus(cardTitle, doc)
+      : buildMdSectionFocus(cardTitle, doc);
+  }
+
   return '';
 }

@@ -23,3 +23,11 @@ dist-ssr
 *.sln
 *.sw?
 nul
+
+# Claude Code working files
+.claude/
+memory/
+
+# Local audit & reference files
+audits/
+reference files (unused)/

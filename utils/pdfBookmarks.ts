@@ -68,6 +68,7 @@ export function flattenBookmarks(bookmarks: BookmarkNode[]): Heading[] {
         id: node.id,
         selected: false,
         page: node.page,
+        wordCount: node.wordCount,
       });
       if (node.children.length > 0) walk(node.children);
     }
@@ -95,6 +96,7 @@ export function headingsToBookmarks(headings: Heading[]): BookmarkNode[] {
       page: h.page ?? 1,
       level: h.level,
       children: [],
+      wordCount: h.wordCount,
     };
 
     // Pop stack until we find a parent with a lower level
@@ -147,9 +149,7 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i += CHUNK_SIZE) {
     const chunk = bytes.subarray(i, Math.min(i + CHUNK_SIZE, bytes.length));
-    for (let j = 0; j < chunk.length; j++) {
-      binary += String.fromCharCode(chunk[j]);
-    }
+    binary += String.fromCharCode.apply(null, chunk as unknown as number[]);
   }
   return btoa(binary);
 }
@@ -157,7 +157,7 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
 /**
  * Decode a base64 string to Uint8Array.
  */
-function base64ToUint8Array(base64: string): Uint8Array {
+export function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -271,172 +271,11 @@ export async function writeBookmarksToPdf(pdfBase64: string, bookmarks: Bookmark
   return uint8ArrayToBase64(new Uint8Array(savedBytes));
 }
 
-// ── Tree manipulation (immutable) ──
+// ── Tree counting ──
 
-/** Deep-clone a bookmark tree. */
-function cloneTree(nodes: BookmarkNode[]): BookmarkNode[] {
-  return nodes.map((n) => ({ ...n, children: cloneTree(n.children) }));
-}
-
-/** Find a node by id in a tree. Returns [node, parent-children-array, index] or null. */
-function findNode(
-  nodes: BookmarkNode[],
-  id: string,
-): { node: BookmarkNode; siblings: BookmarkNode[]; index: number } | null {
-  for (let i = 0; i < nodes.length; i++) {
-    if (nodes[i].id === id) return { node: nodes[i], siblings: nodes, index: i };
-    const found = findNode(nodes[i].children, id);
-    if (found) return found;
-  }
-  return null;
-}
-
-/** Find parent node of a given id. Returns null for top-level nodes. */
-function findParent(nodes: BookmarkNode[], id: string, parent: BookmarkNode | null = null): BookmarkNode | null {
-  for (const node of nodes) {
-    if (node.id === id) return parent;
-    const found = findParent(node.children, id, node);
-    if (found !== null) return found;
-  }
-  return null;
-}
-
-/**
- * Rename a bookmark by id.
- */
-export function renameBookmark(bookmarks: BookmarkNode[], id: string, newTitle: string): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const found = findNode(tree, id);
-  if (found) found.node.title = newTitle;
-  return tree;
-}
-
-/**
- * Delete a bookmark by id (children are removed with it).
- */
-export function deleteBookmark(bookmarks: BookmarkNode[], id: string): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const found = findNode(tree, id);
-  if (found) found.siblings.splice(found.index, 1);
-  return tree;
-}
-
-/**
- * Add a new bookmark. If parentId is null, appends to top level.
- * Otherwise appends as last child of the parent.
- */
-export function addBookmark(
-  bookmarks: BookmarkNode[],
-  parentId: string | null,
-  title: string,
-  page: number,
-  level: number,
-): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const newNode: BookmarkNode = {
-    id: crypto.randomUUID(),
-    title,
-    page,
-    level,
-    children: [],
-  };
-
-  if (parentId === null) {
-    tree.push(newNode);
-  } else {
-    const found = findNode(tree, parentId);
-    if (found) {
-      newNode.level = found.node.level + 1;
-      found.node.children.push(newNode);
-    } else {
-      tree.push(newNode);
-    }
-  }
-  return tree;
-}
-
-/**
- * Indent a bookmark (make it a child of the previous sibling).
- * No-op if the node is the first sibling.
- */
-export function indentBookmark(bookmarks: BookmarkNode[], id: string): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const found = findNode(tree, id);
-  if (!found || found.index === 0) return tree;
-
-  // Remove from current position
-  const [removed] = found.siblings.splice(found.index, 1);
-  // Make it the last child of the previous sibling
-  const prevSibling = found.siblings[found.index - 1];
-  removed.level = prevSibling.level + 1;
-  // Recursively update children levels
-  const updateLevels = (nodes: BookmarkNode[], parentLevel: number) => {
-    for (const n of nodes) {
-      n.level = parentLevel + 1;
-      updateLevels(n.children, n.level);
-    }
-  };
-  updateLevels(removed.children, removed.level);
-  prevSibling.children.push(removed);
-  return tree;
-}
-
-/**
- * Outdent a bookmark (move it to the parent's level, after the parent).
- * No-op if the node is already at the top level.
- */
-export function outdentBookmark(bookmarks: BookmarkNode[], id: string): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const parent = findParent(tree, id);
-  if (!parent) return tree; // Already at top level
-
-  const found = findNode(tree, id);
-  if (!found) return tree;
-
-  // Remove from parent's children
-  const [removed] = found.siblings.splice(found.index, 1);
-  removed.level = parent.level;
-
-  // Any siblings AFTER the removed node stay as children of parent (no change)
-  // But remaining siblings after removed should become children of removed
-  const trailingChildren = found.siblings.splice(found.index);
-  if (trailingChildren.length > 0) {
-    removed.children.push(...trailingChildren);
-  }
-
-  // Update levels recursively
-  const updateLevels = (nodes: BookmarkNode[], parentLevel: number) => {
-    for (const n of nodes) {
-      n.level = parentLevel + 1;
-      updateLevels(n.children, n.level);
-    }
-  };
-  updateLevels(removed.children, removed.level);
-
-  // Insert after parent in grandparent's children
-  const grandparentChildren = findNode(tree, parent.id);
-  if (grandparentChildren) {
-    grandparentChildren.siblings.splice(grandparentChildren.index + 1, 0, removed);
-  } else {
-    tree.push(removed);
-  }
-
-  return tree;
-}
-
-/**
- * Reorder a bookmark within its sibling list.
- */
-export function reorderBookmark(bookmarks: BookmarkNode[], id: string, direction: 'up' | 'down'): BookmarkNode[] {
-  const tree = cloneTree(bookmarks);
-  const found = findNode(tree, id);
-  if (!found) return tree;
-
-  const { siblings, index } = found;
-  const targetIndex = direction === 'up' ? index - 1 : index + 1;
-  if (targetIndex < 0 || targetIndex >= siblings.length) return tree;
-
-  // Swap
-  [siblings[index], siblings[targetIndex]] = [siblings[targetIndex], siblings[index]];
-  return tree;
+/** Count all bookmarks recursively. */
+export function countBookmarks(nodes: BookmarkNode[]): number {
+  let count = nodes.length;
+  for (const n of nodes) count += countBookmarks(n.children);
+  return count;
 }

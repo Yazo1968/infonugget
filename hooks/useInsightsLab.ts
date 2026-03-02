@@ -8,6 +8,7 @@ import { buildCoverContentInstruction } from '../utils/prompts/coverGeneration';
 import { computeDocumentHash } from '../utils/documentHash';
 import { computeMessageBudget, pruneMessages } from '../utils/tokenEstimation';
 import { buildTocSystemPrompt } from '../utils/pdfBookmarks';
+import { buildQualityWarningsBlock } from '../utils/prompts/qualityCheck';
 
 /**
  * Chat state management + Claude API integration for the Insights Lab workflow.
@@ -104,6 +105,12 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
             .join('\n\n');
           systemBlocks.push({ text: `Current documents:\n\n${docContext}`, cache: true });
         }
+        // Inject quality warnings (if dismissed red report exists)
+        const qualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
+        if (qualityWarnings) {
+          systemBlocks.push({ text: qualityWarnings, cache: false });
+        }
+
         if (isCardRequest && detailLevel) {
           if (isCoverLevel(detailLevel)) {
             systemBlocks.push({ text: buildCoverContentInstruction(detailLevel), cache: false });

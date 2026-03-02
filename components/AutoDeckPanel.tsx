@@ -31,6 +31,7 @@ interface AutoDeckPanelProps {
   onSetAllRecommended: () => void;
   onSetGeneralComment: (comment: string) => void;
   onRetryFromReview: () => void;
+  tabBarRef?: React.RefObject<HTMLElement | null>;
 }
 
 // ── Component ──
@@ -50,12 +51,14 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   onSetAllRecommended,
   onSetGeneralComment,
   onRetryFromReview,
+  tabBarRef,
 }) => {
   const { darkMode } = useThemeContext();
-  const { stripRef, shouldRender, handleResizeStart, overlayStyle } = usePanelOverlay({
+  const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
     isOpen,
     defaultWidth: Math.min(window.innerWidth * 0.5, 700),
     minWidth: 300,
+    anchorRef: tabBarRef,
   });
 
   // ── Configuration state ──
@@ -73,33 +76,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   const [includeSectionTitles, setIncludeSectionTitles] = useState(false);
   const [includeClosing, setIncludeClosing] = useState(false);
 
-  // Document selection + ordering
+  // Available documents (have content)
   const availableDocs = documents.filter((d) => d.content || d.fileId || d.pdfBase64);
-  const [docOrder, setDocOrder] = useState<string[]>(() => availableDocs.map((d) => d.id));
-  const [docIncluded, setDocIncluded] = useState<Record<string, boolean>>(() => {
-    const map: Record<string, boolean> = {};
-    availableDocs.forEach((d) => {
-      map[d.id] = d.enabled !== false;
-    });
-    return map;
-  });
-
-  // Sync when documents change
-  useEffect(() => {
-    setDocOrder((prev) => {
-      const currentIds = new Set(availableDocs.map((d) => d.id));
-      const kept = prev.filter((id) => currentIds.has(id));
-      const newIds = availableDocs.filter((d) => !prev.includes(d.id)).map((d) => d.id);
-      return [...kept, ...newIds];
-    });
-    setDocIncluded((prev) => {
-      const next: Record<string, boolean> = {};
-      availableDocs.forEach((d) => {
-        next[d.id] = prev[d.id] !== undefined ? prev[d.id] : d.enabled !== false;
-      });
-      return next;
-    });
-  }, [documents.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Reset config when session resets
   useEffect(() => {
@@ -114,28 +92,6 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     }
   }, [session]);
 
-  // ── Document dropdown state (matches ChatPanel pattern) ──
-  const [adDocListOpen, setAdDocListOpen] = useState(false);
-  const [adDocListMode, setAdDocListMode] = useState<'hover' | 'locked'>('hover');
-  const adDocToggleRef = useRef<HTMLDivElement>(null);
-  const adDocListRef = useRef<HTMLDivElement>(null);
-
-  // Close doc list popup on outside click (only when locked)
-  useEffect(() => {
-    if (!adDocListOpen || adDocListMode !== 'locked') return;
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (adDocToggleRef.current && adDocToggleRef.current.contains(target)) return;
-      if (adDocListRef.current && adDocListRef.current.contains(target)) return;
-      setAdDocListOpen(false);
-    };
-    window.addEventListener('mousedown', handleClick);
-    return () => window.removeEventListener('mousedown', handleClick);
-  }, [adDocListOpen, adDocListMode]);
-
-  const handleDocToggle = useCallback((docId: string) => {
-    setDocIncluded((prev) => ({ ...prev, [docId]: !prev[docId] }));
-  }, []);
 
   // ── Briefing field handler ──
   const updateBriefing = useCallback((field: keyof AutoDeckBriefing, value: string) => {
@@ -144,8 +100,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   }, []);
 
   // ── Derived values ──
-  const orderedDocs = docOrder.map((id) => availableDocs.find((d) => d.id === id)).filter(Boolean) as UploadedFile[];
-  const selectedDocs = orderedDocs.filter((d) => docIncluded[d.id]);
+  const selectedDocs = availableDocs.filter((d) => d.enabled !== false);
   const totalWordCount = selectedDocs.reduce((sum, d) => sum + (d.content ? countWords(d.content) : 0), 0);
   const estimate = selectedLod ? estimateCardCount(totalWordCount, selectedLod) : null;
 
@@ -197,7 +152,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   ]);
 
   // ── Colors ──
-  const stripBg = darkMode ? 'rgb(60,45,75)' : 'rgb(120,80,160)';
+  const stripBg = 'rgb(84,148,218)';
   const borderColor = stripBg;
   const inputBg = darkMode ? 'rgba(255,255,255,0.05)' : 'white';
   const inputBorder = darkMode ? 'rgba(255,255,255,0.15)' : 'rgba(0,0,0,0.15)';
@@ -316,11 +271,11 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                   flex: 1,
                   padding: '10px 8px',
                   borderRadius: '8px',
-                  border: `2px solid ${isSelected ? (darkMode ? '#a78bfa' : '#7c3aed') : darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+                  border: `2px solid ${isSelected ? (darkMode ? '#4db8e0' : '#2289b5') : darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
                   backgroundColor: isSelected
                     ? darkMode
-                      ? 'rgba(167,139,250,0.15)'
-                      : 'rgba(124,58,237,0.08)'
+                      ? 'rgba(42,159,212,0.15)'
+                      : 'rgba(42,159,212,0.08)'
                     : darkMode
                       ? 'rgba(255,255,255,0.03)'
                       : 'white',
@@ -347,11 +302,11 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           style={{
             padding: '10px 16px',
             borderRadius: '8px',
-            backgroundColor: darkMode ? 'rgba(167,139,250,0.1)' : 'rgba(124,58,237,0.06)',
-            border: `1px solid ${darkMode ? 'rgba(167,139,250,0.2)' : 'rgba(124,58,237,0.15)'}`,
+            backgroundColor: darkMode ? 'rgba(42,159,212,0.1)' : 'rgba(42,159,212,0.06)',
+            border: `1px solid ${darkMode ? 'rgba(42,159,212,0.2)' : 'rgba(42,159,212,0.15)'}`,
             marginBottom: '20px',
             fontSize: '13px',
-            color: darkMode ? '#c4b5fd' : '#6d28d9',
+            color: darkMode ? '#5abdd9' : '#1a7aaa',
             textAlign: 'center',
           }}
         >
@@ -520,8 +475,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                 borderRadius: '6px',
                 backgroundColor: opt.checked
                   ? darkMode
-                    ? 'rgba(167,139,250,0.1)'
-                    : 'rgba(124,58,237,0.05)'
+                    ? 'rgba(42,159,212,0.1)'
+                    : 'rgba(42,159,212,0.05)'
                   : 'transparent',
                 transition: 'background-color 0.15s',
               }}
@@ -530,7 +485,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                 type="checkbox"
                 checked={opt.checked}
                 onChange={(e) => opt.onChange(e.target.checked)}
-                style={{ accentColor: darkMode ? '#a78bfa' : '#7c3aed', cursor: 'pointer' }}
+                style={{ accentColor: darkMode ? '#4db8e0' : '#2289b5', cursor: 'pointer' }}
               />
               <div>
                 <div style={{ fontSize: '13px', fontWeight: 500, color: inputColor }}>{opt.label}</div>
@@ -552,8 +507,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           border: 'none',
           backgroundColor: canGenerate
             ? darkMode
-              ? '#7c3aed'
-              : '#6d28d9'
+              ? '#2289b5'
+              : '#1a7aaa'
             : darkMode
               ? 'rgba(255,255,255,0.08)'
               : 'rgba(0,0,0,0.08)',
@@ -590,7 +545,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
               width: '10px',
               height: '10px',
               borderRadius: '50%',
-              backgroundColor: darkMode ? '#a78bfa' : '#7c3aed',
+              backgroundColor: darkMode ? '#4db8e0' : '#2289b5',
               animation: `autodeck-pulse 1.2s ease-in-out ${i * 0.2}s infinite`,
             }}
           />
@@ -757,8 +712,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
             style={{
               padding: '3px 10px',
               borderRadius: '10px',
-              backgroundColor: darkMode ? 'rgba(167,139,250,0.15)' : 'rgba(124,58,237,0.08)',
-              color: darkMode ? '#c4b5fd' : '#6d28d9',
+              backgroundColor: darkMode ? 'rgba(42,159,212,0.15)' : 'rgba(42,159,212,0.08)',
+              color: darkMode ? '#5abdd9' : '#1a7aaa',
               fontWeight: 600,
             }}
           >
@@ -841,7 +796,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                       type="checkbox"
                       checked={isIncluded}
                       onChange={() => onToggleCardIncluded(card.number)}
-                      style={{ marginTop: '2px', accentColor: darkMode ? '#a78bfa' : '#7c3aed', cursor: 'pointer' }}
+                      style={{ marginTop: '2px', accentColor: darkMode ? '#4db8e0' : '#2289b5', cursor: 'pointer' }}
                     />
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: '12px', fontWeight: 600, color: darkMode ? '#e2e8f0' : '#1e293b' }}>
@@ -888,7 +843,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                   onClick={onSetAllRecommended}
                   style={{
                     fontSize: '11px',
-                    color: darkMode ? '#a78bfa' : '#7c3aed',
+                    color: darkMode ? '#4db8e0' : '#2289b5',
                     background: 'none',
                     border: 'none',
                     cursor: 'pointer',
@@ -956,14 +911,14 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                               cursor: 'pointer',
                               backgroundColor: isSelected
                                 ? darkMode
-                                  ? 'rgba(167,139,250,0.12)'
-                                  : 'rgba(124,58,237,0.06)'
+                                  ? 'rgba(42,159,212,0.12)'
+                                  : 'rgba(42,159,212,0.06)'
                                 : 'transparent',
                               border: `1px solid ${
                                 isSelected
                                   ? darkMode
-                                    ? 'rgba(167,139,250,0.3)'
-                                    : 'rgba(124,58,237,0.2)'
+                                    ? 'rgba(42,159,212,0.3)'
+                                    : 'rgba(42,159,212,0.2)'
                                   : 'transparent'
                               }`,
                               transition: 'all 0.15s',
@@ -976,7 +931,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                               onChange={() => onSetQuestionAnswer(q.id, opt.key)}
                               style={{
                                 marginTop: '2px',
-                                accentColor: darkMode ? '#a78bfa' : '#7c3aed',
+                                accentColor: darkMode ? '#4db8e0' : '#2289b5',
                                 cursor: 'pointer',
                               }}
                             />
@@ -1085,8 +1040,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
               backgroundColor:
                 includedCount > 0
                   ? darkMode
-                    ? '#7c3aed'
-                    : '#6d28d9'
+                    ? '#2289b5'
+                    : '#1a7aaa'
                   : darkMode
                     ? 'rgba(255,255,255,0.08)'
                     : 'rgba(0,0,0,0.08)',
@@ -1228,7 +1183,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
               padding: '8px 20px',
               borderRadius: '6px',
               border: 'none',
-              backgroundColor: darkMode ? '#7c3aed' : '#6d28d9',
+              backgroundColor: darkMode ? '#2289b5' : '#1a7aaa',
               color: 'white',
               fontSize: '13px',
               fontWeight: 600,
@@ -1284,191 +1239,22 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
 
   return (
     <>
-      {/* Strip button */}
-      <button
-        ref={stripRef}
-        data-panel-strip
-        onClick={onToggle}
-        className="flex flex-col items-center pt-2 pb-1 overflow-hidden rounded-l-lg shadow-[5px_0_10px_rgba(0,0,0,0.35)] shrink-0 w-10 cursor-pointer -ml-2.5 z-[1] relative"
-        style={{ backgroundColor: stripBg }}
-      >
-        <div className="w-8 shrink-0 flex items-center justify-center">
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            className="shrink-0 text-white"
-          >
-            <rect x="2" y="3" width="20" height="18" rx="2" />
-            <line x1="8" y1="7" x2="16" y2="7" />
-            <line x1="8" y1="11" x2="16" y2="11" />
-            <line x1="8" y1="15" x2="12" y2="15" />
-          </svg>
-        </div>
-        <span
-          className="text-[13px] font-bold uppercase tracking-wider text-white mt-2"
-          style={{ writingMode: 'vertical-lr', transform: 'rotate(180deg)' } as React.CSSProperties}
-        >
-          Auto-Deck
-        </span>
-      </button>
-
       {/* Portal overlay */}
       {shouldRender &&
         createPortal(
+          <>
           <div
             data-panel-overlay
-            className="fixed z-[104] flex flex-col bg-white dark:bg-zinc-900 border-4 rounded-r-lg shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
+            className="fixed z-[104] flex flex-col bg-white dark:bg-zinc-900 border-4 shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
             style={{
               borderColor,
               ...overlayStyle,
             }}
           >
-            {/* Resize handle */}
-            <div
-              onMouseDown={handleResizeStart}
-              className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize z-10 hover:bg-black/10 transition-colors"
-            />
-
-            {/* Document list bar — hover opens, click locks (matches ChatPanel) */}
-            {availableDocs.length > 0 && (
-              <>
-                <div className="shrink-0 border-y border-zinc-100 dark:border-zinc-700 flex items-center justify-between">
-                  <div
-                    ref={adDocToggleRef}
-                    className="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer"
-                    onMouseEnter={() => {
-                      if (adDocListOpen && adDocListMode === 'locked') return;
-                      setAdDocListMode('hover');
-                      setAdDocListOpen(true);
-                    }}
-                    onMouseLeave={(e) => {
-                      if (adDocListMode === 'locked') return;
-                      const related = e.relatedTarget as Node | null;
-                      if (adDocListRef.current && related && adDocListRef.current.contains(related)) return;
-                      setAdDocListOpen(false);
-                    }}
-                    onClick={() => {
-                      if (adDocListOpen && adDocListMode === 'locked') {
-                        setAdDocListOpen(false);
-                      } else {
-                        setAdDocListMode('locked');
-                        setAdDocListOpen(true);
-                      }
-                    }}
-                  >
-                    <span
-                      className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400"
-                      style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}
-                    >
-                      Select Active Documents
-                    </span>
-                    <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-light">
-                      {selectedDocs.length}
-                    </span>
-                    <div className="shrink-0 w-5 h-5 rounded flex items-center justify-center transition-all text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200">
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        <polyline points={adDocListOpen ? '18 15 12 9 6 15' : '6 9 12 15 18 9'} />
-                      </svg>
-                    </div>
-                  </div>
-                  {session && status !== 'configuring' && (
-                    <button
-                      onClick={onReset}
-                      className="text-[11px] text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 underline px-3 py-1.5 shrink-0"
-                    >
-                      Reset
-                    </button>
-                  )}
-                </div>
-
-                {/* Document list popup — portaled to body */}
-                {adDocListOpen &&
-                  createPortal(
-                    <div
-                      ref={adDocListRef}
-                      className="fixed z-[120]"
-                      style={{
-                        ...(adDocToggleRef.current
-                          ? (() => {
-                              const r = adDocToggleRef.current.getBoundingClientRect();
-                              return { top: r.bottom, left: r.left };
-                            })()
-                          : {}),
-                      }}
-                      onMouseLeave={(e) => {
-                        if (adDocListMode === 'locked') return;
-                        const related = e.relatedTarget as Node | null;
-                        if (adDocToggleRef.current && related && adDocToggleRef.current.contains(related)) return;
-                        setAdDocListOpen(false);
-                      }}
-                    >
-                      <div
-                        className="bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 py-2 px-1 max-h-[50vh] overflow-y-auto mt-1"
-                        style={{ scrollbarWidth: 'thin' as const }}
-                      >
-                        {orderedDocs.map((doc) => {
-                          const isIncluded = docIncluded[doc.id];
-                          return (
-                            <div
-                              key={doc.id}
-                              className={`flex items-center gap-1.5 px-3 py-1.5 cursor-pointer select-none transition-colors rounded-lg ${isIncluded ? 'text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400'} hover:bg-zinc-100 dark:hover:bg-zinc-700`}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                handleDocToggle(doc.id);
-                              }}
-                            >
-                              <button
-                                className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${
-                                  isIncluded
-                                    ? 'border-zinc-300 dark:border-zinc-600 bg-zinc-900'
-                                    : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-zinc-300 dark:hover:border-zinc-600'
-                                }`}
-                                aria-label={isIncluded ? `Exclude ${doc.name}` : `Include ${doc.name}`}
-                              >
-                                {isIncluded && (
-                                  <svg
-                                    width="12"
-                                    height="12"
-                                    viewBox="0 0 24 24"
-                                    fill="none"
-                                    stroke="white"
-                                    strokeWidth="2.5"
-                                    strokeLinecap="round"
-                                    strokeLinejoin="round"
-                                  >
-                                    <polyline points="20 6 9 17 4 12" />
-                                  </svg>
-                                )}
-                              </button>
-                              <span className="text-[11px] truncate block flex-1 min-w-0">{doc.name}</span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>,
-                    document.body,
-                  )}
-              </>
-            )}
-
             {/* View content */}
             {renderContent()}
-          </div>,
+          </div>
+          </>,
           document.body,
         )}
 

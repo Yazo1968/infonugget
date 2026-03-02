@@ -1,7 +1,9 @@
 import { useState, useCallback } from 'react';
+import JSZip from 'jszip';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage } from '../types';
+import { findCard, findParentFolder, mapCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
 
 export interface UseImageOperationsParams {
@@ -87,19 +89,16 @@ export function useImageOperations({
   const handleInsightsImageModified = useCallback(
     (cardId: string, newImageUrl: string, history: any[]) => {
       if (!selectedNugget) return;
-      const card = selectedNugget.cards.find((c) => c.id === cardId);
+      const card = findCard(selectedNugget.cards, cardId);
       const level = card?.detailLevel || activeLogicTab;
 
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        cards: n.cards.map((c) => {
-          if (c.id !== cardId) return c;
-          return {
-            ...c,
-            cardUrlMap: { ...(c.cardUrlMap || {}), [level]: newImageUrl },
-            imageHistoryMap: { ...(c.imageHistoryMap || {}), [level]: history },
-          };
-        }),
+        cards: mapCardById(n.cards, cardId, (c) => ({
+          ...c,
+          cardUrlMap: { ...(c.cardUrlMap || {}), [level]: newImageUrl },
+          imageHistoryMap: { ...(c.imageHistoryMap || {}), [level]: history },
+        })),
         lastModifiedAt: Date.now(),
       }));
     },
@@ -110,7 +109,6 @@ export function useImageOperations({
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
     const cardUpdater = (c: Card) => {
-      if (c.id !== activeCardId) return c;
       const newUrlMap = { ...(c.cardUrlMap || {}) };
       delete newUrlMap[level];
       const newHistoryMap = { ...(c.imageHistoryMap || {}) };
@@ -132,7 +130,7 @@ export function useImageOperations({
     };
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.map(cardUpdater),
+      cards: mapCardById(n.cards, activeCardId, cardUpdater),
       lastModifiedAt: Date.now(),
     }));
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
@@ -141,7 +139,6 @@ export function useImageOperations({
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
     const cardUpdater = (c: Card) => {
-      if (c.id !== activeCardId) return c;
       const newUrlMap = { ...(c.cardUrlMap || {}) };
       delete newUrlMap[level];
       const newHistoryMap = { ...(c.imageHistoryMap || {}) };
@@ -163,7 +160,7 @@ export function useImageOperations({
     };
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.map(cardUpdater),
+      cards: mapCardById(n.cards, activeCardId, cardUpdater),
       lastModifiedAt: Date.now(),
     }));
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
@@ -173,7 +170,7 @@ export function useImageOperations({
     const level = activeLogicTab;
     updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: n.cards.map((c) => {
+      cards: mapCards(n.cards, (c) => {
         const newUrlMap = { ...(c.cardUrlMap || {}) };
         delete newUrlMap[level];
         const newHistoryMap = { ...(c.imageHistoryMap || {}) };
@@ -217,19 +214,48 @@ export function useImageOperations({
     downloadDataUrl(url, `${slug}-${activeLogicTab.toLowerCase()}.png`);
   }, [activeCard, activeLogicTab, downloadDataUrl]);
 
-  const handleDownloadAllImages = useCallback(() => {
-    if (!selectedNugget) return;
-    for (const card of selectedNugget.cards) {
-      const url = card.cardUrlMap?.[activeLogicTab];
-      if (!url) continue;
-      const slug = card.text
+  const handleDownloadSelectedImages = useCallback(async () => {
+    if (!selectedNugget || !activeCardId) return;
+
+    // Find the folder containing the active card
+    const parentFolder = findParentFolder(selectedNugget.cards, activeCardId);
+    if (!parentFolder) {
+      // Card is at root level — fall back to single card download
+      handleDownloadImage();
+      return;
+    }
+
+    // Collect all cards in the folder that have an image at the current detail level
+    const cardsWithImages = parentFolder.cards.filter(
+      (c) => c.cardUrlMap?.[activeLogicTab],
+    );
+    if (cardsWithImages.length === 0) return;
+
+    const slugify = (text: string) =>
+      text
         .replace(/[^a-zA-Z0-9]+/g, '-')
         .replace(/^-|-$/g, '')
         .toLowerCase()
         .slice(0, 40);
-      downloadDataUrl(url, `${slug}-${activeLogicTab.toLowerCase()}.png`);
+
+    // Build zip
+    const zip = new JSZip();
+    for (const card of cardsWithImages) {
+      const dataUrl = card.cardUrlMap![activeLogicTab]!;
+      // Strip "data:image/png;base64," prefix to get raw base64
+      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
+      const filename = `${slugify(card.text)}-${activeLogicTab.toLowerCase()}.png`;
+      zip.file(filename, base64, { base64: true });
     }
-  }, [selectedNugget, activeLogicTab, downloadDataUrl]);
+
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `${slugify(parentFolder.name)}.zip`;
+    a.click();
+    URL.revokeObjectURL(blobUrl);
+  }, [selectedNugget, activeCardId, activeLogicTab, handleDownloadImage]);
 
   // ── Generation wrappers (mismatch detection) ──
 
@@ -285,7 +311,7 @@ export function useImageOperations({
     handleDeleteAllCardImages,
     // Downloads
     handleDownloadImage,
-    handleDownloadAllImages,
+    handleDownloadSelectedImages,
     // Generation wrappers
     wrappedGenerateCard,
     wrappedExecuteBatch,

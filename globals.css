@@ -42,6 +42,13 @@
   }
 }
 
+/* ─── Upload guide blink animation ─── */
+
+@keyframes upload-guide-blink {
+  0%, 100% { background-color: transparent; }
+  50% { background-color: rgb(59 130 246 / 0.15); }
+}
+
 /* ─── Base body styles ─── */
 
 body {
@@ -99,10 +106,15 @@ body {
   caret-color: #fff;
 }
 
+/* Grabbing cursor override for drag-and-drop */
+.cursor-grabbing-override,
+.cursor-grabbing-override * {
+  cursor: grabbing !important;
+}
+
 /* High-End Canvas Focus */
 .document-prose:focus {
-  outline: 2px solid var(--accent-blue);
-  outline-offset: -2px;
+  outline: none;
 }
 
 .document-prose h1,
@@ -313,6 +325,13 @@ body {
 .chat-prose strong {
   color: #27272a;
 }
+.chat-prose .qn {
+  color: #ef4444;
+  font-style: italic;
+}
+.dark .chat-prose .qn {
+  color: #f87171;
+}
 .dark .chat-prose h2 {
   color: #e4e4e7;
 }
@@ -394,12 +413,20 @@ body {
 /* ─── Active Sidebar Indicator ─── */
 
 .sidebar-node-active {
-  background-color: rgba(160, 200, 220, 0.4);
+  background-color: rgba(140, 190, 220, 0.55);
   transform: translateX(4px);
   border-radius: 4px;
 }
 .dark .sidebar-node-active {
-  background-color: rgba(42, 159, 212, 0.2);
+  background-color: rgba(42, 159, 212, 0.3);
+}
+.sidebar-node-active-dim {
+  background-color: rgba(160, 200, 220, 0.2);
+  transform: translateX(4px);
+  border-radius: 4px;
+}
+.dark .sidebar-node-active-dim {
+  background-color: rgba(42, 159, 212, 0.1);
 }
 .sidebar-node-active::before {
   content: '';

@@ -25,6 +25,49 @@ function extractJson(raw: string): string {
   return text;
 }
 
+/**
+ * Repair common LLM JSON issues: escape literal control characters inside string values.
+ * Walks the JSON character-by-character, tracking string boundaries, and escapes
+ * literal newlines/tabs/etc. that the LLM forgot to escape.
+ */
+function repairJsonControlChars(raw: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      continue;
+    }
+
+    if (inString) {
+      if (ch === '\n') { result += '\\n'; continue; }
+      if (ch === '\r') { result += '\\r'; continue; }
+      if (ch === '\t') { result += '\\t'; continue; }
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
 // ── Planner response parser ──
 
 type PlannerResult =
@@ -167,25 +210,42 @@ export interface ProducedCard {
 type ProducerResult = { status: 'ok'; cards: ProducedCard[] } | { status: 'error'; error: string };
 
 export function parseProducerResponse(raw: string): ProducerResult {
-  try {
-    const json = JSON.parse(extractJson(raw));
+  const extracted = extractJson(raw);
 
-    // Handle both wrapped { status, cards } and bare array formats
-    const cardsArray = Array.isArray(json) ? json : json.cards;
+  // Step 1: Try strict JSON parse
+  // Step 2: Repair unescaped control characters (common LLM issue — literal newlines in content strings)
+  const attempts: { label: string; text: string }[] = [
+    { label: 'strict', text: extracted },
+    { label: 'repaired', text: repairJsonControlChars(extracted) },
+  ];
 
-    if (!Array.isArray(cardsArray) || cardsArray.length === 0) {
-      return { status: 'error', error: 'Producer response missing cards array.' };
+  let lastError = '';
+  for (const attempt of attempts) {
+    try {
+      const json = JSON.parse(attempt.text);
+      const cardsArray = Array.isArray(json) ? json : json.cards;
+
+      if (!Array.isArray(cardsArray) || cardsArray.length === 0) {
+        lastError = 'Producer response missing cards array.';
+        continue;
+      }
+
+      const cards: ProducedCard[] = cardsArray.map((c: any) => ({
+        number: Number(c.number || 0),
+        title: String(c.title || ''),
+        content: String(c.content || ''),
+        wordCount: Number(c.wordCount || c.word_count || 0),
+      }));
+
+      if (attempt.label !== 'strict') {
+        console.warn(`[AutoDeck] Producer JSON recovered via ${attempt.label} parse (${cards.length} cards)`);
+      }
+
+      return { status: 'ok', cards };
+    } catch (err: any) {
+      lastError = err.message;
     }
-
-    const cards: ProducedCard[] = cardsArray.map((c: any) => ({
-      number: Number(c.number || 0),
-      title: String(c.title || ''),
-      content: String(c.content || ''),
-      wordCount: Number(c.wordCount || c.word_count || 0),
-    }));
-
-    return { status: 'ok', cards };
-  } catch (err: any) {
-    return { status: 'error', error: `Failed to parse producer response: ${err.message}` };
   }
+
+  return { status: 'error', error: `Failed to parse producer response: ${lastError}` };
 }

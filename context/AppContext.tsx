@@ -8,7 +8,10 @@ import {
   ChatMessage,
   DocChangeEvent,
   CustomStyle,
+  CardItem,
 } from '../types';
+import { findCard, flattenCards, mapCardById, mapCards } from '../utils/cardUtils';
+import { deleteFromFilesAPI } from '../utils/ai';
 import { ThemeContext, useThemeContext } from './ThemeContext';
 import { NuggetContext, useNuggetContext } from './NuggetContext';
 import { ProjectContext, useProjectContext } from './ProjectContext';
@@ -91,12 +94,18 @@ interface AppContextValue {
   // Dark mode
   darkMode: boolean;
   toggleDarkMode: () => void;
+
+  // Landing ↔ Workspace navigation
+  openProjectId: string | null;
+  setOpenProjectId: React.Dispatch<React.SetStateAction<string | null>>;
 }
 
 // Minimal context for members not covered by any focused context
 interface AppContextRemainder {
   isProjectsPanelOpen: boolean;
   setIsProjectsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
+  openProjectId: string | null;
+  setOpenProjectId: React.Dispatch<React.SetStateAction<string | null>>;
   initialTokenUsageTotals?: Record<string, number>;
 }
 
@@ -121,6 +130,7 @@ export const AppProvider: React.FC<{
 }> = ({ children, initialState }) => {
   // Core state
   const [isProjectsPanelOpen, setIsProjectsPanelOpen] = useState(true);
+  const [openProjectId, setOpenProjectId] = useState<string | null>(initialState?.openProjectId ?? null);
   const [activeCardId, setActiveCardId] = useState<string | null>(initialState?.activeCardId ?? null);
 
   // Nugget state (documents are now owned per-nugget, no global library)
@@ -253,11 +263,24 @@ export const AppProvider: React.FC<{
     setSelectedDocumentId(firstDoc?.id ?? null);
   }, [selectedNuggetId, nuggets]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Derived: currently active card
-  const activeCard = useMemo(() => {
-    const cards = selectedNugget?.cards ?? [];
-    if (cards.length === 0) return null;
-    return cards.find((c) => c.id === activeCardId) || cards[0];
+  // ── Guard effect: clear openProjectId if the project was deleted ──
+  useEffect(() => {
+    if (openProjectId && !projects.some((p) => p.id === openProjectId)) {
+      setOpenProjectId(null);
+    }
+  }, [openProjectId, projects]);
+
+  // Derived: currently active card (always a Card, never a CardFolder)
+  const activeCard = useMemo((): Card | null => {
+    const items = selectedNugget?.cards ?? [];
+    if (items.length === 0) return null;
+    if (activeCardId) {
+      const found = findCard(items, activeCardId);
+      if (found) return found;
+    }
+    // Fallback: first card in the tree
+    const allCards = flattenCards(items);
+    return allCards[0] || null;
   }, [selectedNugget, activeCardId]);
 
   // Nugget helpers
@@ -267,7 +290,16 @@ export const AppProvider: React.FC<{
 
   const deleteNugget = useCallback(
     (nuggetId: string) => {
-      setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
+      // Clean up Files API files for all documents in this nugget
+      setNuggets((prev) => {
+        const nugget = prev.find((n) => n.id === nuggetId);
+        if (nugget) {
+          for (const doc of nugget.documents) {
+            if (doc.fileId) deleteFromFilesAPI(doc.fileId);
+          }
+        }
+        return prev.filter((n) => n.id !== nuggetId);
+      });
       // Also remove from whichever project contains it
       setProjects((prev) =>
         prev.map((p) =>
@@ -293,11 +325,10 @@ export const AppProvider: React.FC<{
   const updateNuggetCard = useCallback(
     (cardId: string, updater: (c: Card) => Card) => {
       if (!selectedNuggetId) return;
-      const mapFn = (c: Card) => (c.id === cardId ? updater(c) : c);
 
       setNuggets((prev) =>
         prev.map((n) =>
-          n.id === selectedNuggetId ? { ...n, cards: n.cards.map(mapFn), lastModifiedAt: Date.now() } : n,
+          n.id === selectedNuggetId ? { ...n, cards: mapCardById(n.cards, cardId, updater), lastModifiedAt: Date.now() } : n,
         ),
       );
     },
@@ -310,7 +341,7 @@ export const AppProvider: React.FC<{
 
       setNuggets((prev) =>
         prev.map((n) =>
-          n.id === selectedNuggetId ? { ...n, cards: n.cards.map(updater), lastModifiedAt: Date.now() } : n,
+          n.id === selectedNuggetId ? { ...n, cards: mapCards(n.cards, updater), lastModifiedAt: Date.now() } : n,
         ),
       );
     },
@@ -318,7 +349,7 @@ export const AppProvider: React.FC<{
   );
 
   const updateNuggetContentAndCards = useCallback(
-    (content: string, cards: Card[]) => {
+    (content: string, cards: CardItem[]) => {
       if (!selectedNuggetId) return;
       setNuggets((prev) =>
         prev.map((n) => (n.id === selectedNuggetId ? { ...n, cards, lastModifiedAt: Date.now() } : n)),
@@ -486,9 +517,17 @@ export const AppProvider: React.FC<{
     (projectId: string) => {
       const project = projects.find((p) => p.id === projectId);
       if (project) {
-        // Cascade: delete all nuggets in this project
+        // Cascade: delete all nuggets and clean up their Files API files
         for (const nuggetId of project.nuggetIds) {
-          setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
+          setNuggets((prev) => {
+            const nugget = prev.find((n) => n.id === nuggetId);
+            if (nugget) {
+              for (const doc of nugget.documents) {
+                if (doc.fileId) deleteFromFilesAPI(doc.fileId);
+              }
+            }
+            return prev.filter((n) => n.id !== nuggetId);
+          });
           if (selectedNuggetId === nuggetId) {
             setSelectedNuggetId(null);
             setSelectionLevel(null);
@@ -598,9 +637,11 @@ export const AppProvider: React.FC<{
     () => ({
       isProjectsPanelOpen,
       setIsProjectsPanelOpen,
+      openProjectId,
+      setOpenProjectId,
       initialTokenUsageTotals: initialState?.tokenUsageTotals,
     }),
-    [isProjectsPanelOpen, initialState?.tokenUsageTotals],
+    [isProjectsPanelOpen, openProjectId, initialState?.tokenUsageTotals],
   );
 
   return (

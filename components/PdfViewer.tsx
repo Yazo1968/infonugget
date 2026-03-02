@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperat
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { TextLayer } from 'pdfjs-dist';
 import { loadPdfjs } from '../utils/pdfLoader';
+import { base64ToUint8Array } from '../utils/pdfBookmarks';
 
 export interface PdfViewerHandle {
   scrollToPage: (pageNum: number) => void;
@@ -26,7 +27,6 @@ interface PageInfo {
   pageNum: number;
   width: number;
   height: number;
-  rendered: boolean;
 }
 
 const RENDER_BUFFER = 2; // render pages within +/- 2 of visible
@@ -42,6 +42,9 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
     const [pages, setPages] = useState<PageInfo[]>([]);
     const [visiblePage, setVisiblePage] = useState(1);
     const observerRef = useRef<IntersectionObserver | null>(null);
+    const renderedStateRef = useRef<Map<number, { scale: number; rotation: number }>>(new Map());
+    const renderTimeoutRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+    const prevRenderParamsRef = useRef({ scale: 0, rotation: 0 });
 
     // Track selected text for imperative handle
     const selectedTextRef = useRef<{ text: string; page: number } | null>(null);
@@ -162,9 +165,10 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
       let cancelled = false;
 
       const loadPdf = async () => {
-        // Cancel any existing render tasks
+        // Cancel any existing render tasks and clear cache
         renderTasksRef.current.forEach((task) => task.cancel());
         renderTasksRef.current.clear();
+        renderedStateRef.current.clear();
 
         // Cancel any existing text layers
         textLayerInstancesRef.current.forEach((tl) => tl.cancel());
@@ -176,11 +180,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
           pdfDocRef.current = null;
         }
 
-        const binaryStr = atob(pdfBase64);
-        const bytes = new Uint8Array(binaryStr.length);
-        for (let i = 0; i < binaryStr.length; i++) {
-          bytes[i] = binaryStr.charCodeAt(i);
-        }
+        const bytes = base64ToUint8Array(pdfBase64);
 
         const pdf = await pdfjsRef.current!.getDocument({ data: bytes }).promise;
         if (cancelled) {
@@ -199,7 +199,6 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
             pageNum: i,
             width: viewport.width,
             height: viewport.height,
-            rendered: false,
           });
         }
         if (cancelled) return;
@@ -235,7 +234,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
         const page = await pdf.getPage(pageNum);
         const viewport = page.getViewport({ scale, rotation });
 
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         canvas.width = viewport.width * dpr;
         canvas.height = viewport.height * dpr;
         canvas.style.width = `${viewport.width}px`;
@@ -256,6 +255,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
         try {
           await renderTask.promise;
           renderTasksRef.current.delete(pageNum);
+          renderedStateRef.current.set(pageNum, { scale, rotation });
         } catch (e: any) {
           if (e?.name !== 'RenderingCancelledException') {
             console.error(`Error rendering page ${pageNum}:`, e);
@@ -330,16 +330,44 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
       // eslint-disable-next-line react-hooks/exhaustive-deps -- visiblePage is set by this effect's observer; including it would cause infinite re-observation
     }, [pages, onPageChange]);
 
-    // Render visible pages and nearby pages
+    // Render visible pages and nearby pages (debounced for scroll, immediate for zoom/rotate)
     useEffect(() => {
       if (pages.length === 0) return;
 
-      const start = Math.max(1, visiblePage - RENDER_BUFFER);
-      const end = Math.min(pages.length, visiblePage + RENDER_BUFFER);
+      const paramsChanged = scale !== prevRenderParamsRef.current.scale
+        || rotation !== prevRenderParamsRef.current.rotation;
+      prevRenderParamsRef.current = { scale, rotation };
 
-      for (let i = start; i <= end; i++) {
-        renderPage(i);
+      const doRender = () => {
+        const start = Math.max(1, visiblePage - RENDER_BUFFER);
+        const end = Math.min(pages.length, visiblePage + RENDER_BUFFER);
+
+        // Cancel renders that fell out of range
+        renderTasksRef.current.forEach((task, pageNum) => {
+          if (pageNum < start || pageNum > end) {
+            task.cancel();
+            renderTasksRef.current.delete(pageNum);
+          }
+        });
+
+        for (let i = start; i <= end; i++) {
+          const cached = renderedStateRef.current.get(i);
+          if (cached && cached.scale === scale && cached.rotation === rotation) continue;
+          renderPage(i);
+        }
+      };
+
+      if (paramsChanged) {
+        // Immediate render on zoom/rotate — invalidate cache
+        renderedStateRef.current.clear();
+        doRender();
+      } else {
+        // Debounce scroll-triggered renders to avoid pileup
+        clearTimeout(renderTimeoutRef.current);
+        renderTimeoutRef.current = setTimeout(doRender, 80);
       }
+      return () => clearTimeout(renderTimeoutRef.current);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- prevRenderParamsRef is a ref used for change detection, not a reactive dependency
     }, [visiblePage, pages, scale, rotation, renderPage]);
 
     // Handle text selection via mouseup on the container

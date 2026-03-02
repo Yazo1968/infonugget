@@ -5,6 +5,9 @@ import {
   StylingOptions,
   ReferenceImage,
   Nugget,
+  DetailLevel,
+  ChatMessage,
+  isCardFolder,
 } from './types';
 import {
   DEFAULT_STYLING,
@@ -12,17 +15,17 @@ import {
   uploadToFilesAPI,
   deleteFromFilesAPI,
 } from './utils/ai';
-import ProjectsPanel from './components/ProjectsPanel';
 import { LandingPage } from './components/LandingPage';
 import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
 import AutoDeckPanel from './components/AutoDeckPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
+import PanelTabBar from './components/PanelTabBar';
+import QualityPanel from './components/QualityPanel';
+import NuggetTabBar from './components/NuggetTabBar';
 
 import { UnsavedChangesDialog } from './components/Dialogs';
-import { NuggetCreationModal } from './components/NuggetCreationModal';
-import { ProjectCreationModal } from './components/ProjectCreationModal';
 import { useAppContext } from './context/AppContext';
 import { useNuggetContext } from './context/NuggetContext';
 import { useProjectContext } from './context/ProjectContext';
@@ -32,22 +35,24 @@ import { useThemeContext } from './context/ThemeContext';
 import { useCardGeneration } from './hooks/useCardGeneration';
 import { useCardOperations } from './hooks/useCardOperations';
 import { useImageOperations } from './hooks/useImageOperations';
-import { useProjectOperations } from './hooks/useProjectOperations';
+import { useProjectOperations, AskPdfProcessorFn } from './hooks/useProjectOperations';
 import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
+import { useDocumentQualityCheck } from './hooks/useDocumentQualityCheck';
 import { useAutoDeck } from './hooks/useAutoDeck';
 import { useTokenUsage, formatTokens, formatCost, TokenUsageTotals } from './hooks/useTokenUsage';
 import { storage } from './components/StorageProvider';
 import {
-  extractHeadingsWithGemini,
   base64ToBlob,
 } from './utils/fileProcessing';
-import { flattenBookmarks, headingsToBookmarks } from './utils/pdfBookmarks';
+import { flattenCards } from './utils/cardUtils';
 import { useToast } from './components/ToastNotification';
 import PdfUploadChoiceDialog from './components/PdfUploadChoiceDialog';
+import PdfProcessorModal from './components/PdfProcessorModal';
 import PanelRequirements from './components/PanelRequirements';
 import StyleStudioModal from './components/StyleStudioModal';
 import { SubjectEditModal } from './components/SubjectEditModal';
+import FolderPickerDialog from './components/FolderPickerDialog';
 
 const App: React.FC = () => {
   // ── Focused context hooks ──
@@ -57,11 +62,11 @@ const App: React.FC = () => {
     deleteNugget, updateNugget,
     updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
   } = useNuggetContext();
-  const { projects, deleteProject, updateProject } = useProjectContext();
+  const { projects, deleteProject, updateProject, addNuggetToProject } = useProjectContext();
   const { activeCardId, setActiveCardId, activeCard, selectedProjectId, selectionLevel, selectEntity } = useSelectionContext();
   const { customStyles, addCustomStyle: _addCustomStyle, updateCustomStyle: _updateCustomStyle, deleteCustomStyle: _deleteCustomStyle, replaceCustomStyles } = useStyleContext();
   const { darkMode, toggleDarkMode } = useThemeContext();
-  const { initialTokenUsageTotals, isProjectsPanelOpen, setIsProjectsPanelOpen } = useAppContext();
+  const { initialTokenUsageTotals, openProjectId, setOpenProjectId } = useAppContext();
 
   // ── Token / cost tracking (persisted to IndexedDB) ──
   const {
@@ -109,6 +114,47 @@ const App: React.FC = () => {
     handleDocChangeStartFresh,
   } = useInsightsLab(recordUsage);
 
+  // ── Document quality check ──
+  const {
+    qualityReport,
+    effectiveStatus: qualityStatus,
+    isChecking: qualityIsChecking,
+    checkError: qualityCheckError,
+    runQualityCheck,
+    dismissReport: dismissQualityReport,
+  } = useDocumentQualityCheck(selectedNugget, updateNugget, recordUsage);
+
+  // ── Card operations (selection, manipulation, creation, cross-nugget, placeholders) ──
+  const {
+    toggleInsightsCardSelection,
+    toggleSelectAllInsightsCards,
+    selectInsightsCardExclusive,
+    selectInsightsCardRange,
+    deselectAllInsightsCards,
+    insightsSelectedCount,
+    reorderInsightsCards,
+    reorderCardItem,
+    deleteInsightsCard,
+    deleteSelectedInsightsCards,
+    renameInsightsCard,
+    handleSaveCardContent,
+    handleCreateCustomCard,
+    handleSaveAsCard,
+    handleCopyMoveCard,
+    handleCopyMoveFolder,
+    createPlaceholderCards,
+    createPlaceholderCardsInFolder,
+    fillPlaceholderCard,
+    removePlaceholderCard,
+    createEmptyFolder,
+    createCustomCardInFolder,
+    renameFolder,
+    deleteFolder,
+    duplicateFolder,
+    toggleFolderCollapsed,
+    toggleFolderSelection,
+  } = useCardOperations();
+
   // ── Auto-Deck workflow hook ──
   const {
     session: autoDeckSession,
@@ -122,66 +168,152 @@ const App: React.FC = () => {
     setQuestionAnswer: autoDeckSetQuestionAnswer,
     setAllRecommended: autoDeckSetAllRecommended,
     setGeneralComment: autoDeckSetGeneralComment,
-  } = useAutoDeck(recordUsage);
+  } = useAutoDeck(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
 
-  // ── Card operations (selection, manipulation, creation, cross-nugget) ──
-  const {
-    toggleInsightsCardSelection,
-    toggleSelectAllInsightsCards,
-    selectInsightsCardExclusive,
-    selectInsightsCardRange,
-    deselectAllInsightsCards,
-    insightsSelectedCount,
-    reorderInsightsCards,
-    deleteInsightsCard,
-    deleteSelectedInsightsCards,
-    renameInsightsCard,
-    handleSaveCardContent,
-    handleCreateCustomCard,
-    handleSaveAsCard,
-    handleCopyMoveCard,
-    handleCreateNuggetForCard,
-  } = useCardOperations();
+  // ── Ref bridge: askPdfProcessor (from useDocumentOperations) → useProjectOperations ──
+  const askPdfProcessorRef = useRef<AskPdfProcessorFn | null>(null);
 
   // ── Project & nugget operations (creation, duplication, copy/move, subject) ──
   const {
-    showNuggetCreation,
-    setShowNuggetCreation,
-    nuggetCreationProjectId,
     setNuggetCreationProjectId,
-    showProjectCreation,
-    setShowProjectCreation,
-    projectCreationChainToNugget,
-    setProjectCreationChainToNugget,
     subjectEditNuggetId,
     setSubjectEditNuggetId,
     isRegeneratingSubject,
     handleCreateNugget,
     handleCreateProject,
     handleCopyNuggetToProject,
-    handleDuplicateProject,
-    handleMoveNuggetToProject,
-    handleCreateProjectForNugget,
     handleSaveSubject,
     handleRegenerateSubject,
     setSubjectGenPending,
-  } = useProjectOperations({ recordUsage });
+  } = useProjectOperations({ recordUsage, askPdfProcessorRef });
 
   // ── Document operations (save, TOC, copy/move, upload, content generation) ──
   const {
     pdfChoiceDialog,
     pdfChoiceResolverRef,
     setPdfChoiceDialog,
+    pdfProcessorDialog,
+    pdfProcessorResolverRef,
+    setPdfProcessorDialog,
     generatingSourceIds,
     tocLockActive,
     setTocLockActive,
     handleGenerateCardContent,
     handleSaveDocument,
     handleSaveToc,
-    handleCopyMoveDocument,
-    handleCreateNuggetWithDoc,
     handleUploadDocuments,
-  } = useDocumentOperations({ recordUsage, onSubjectGenPending: setSubjectGenPending });
+    askPdfProcessor,
+  } = useDocumentOperations({
+    recordUsage,
+    onSubjectGenPending: setSubjectGenPending,
+    createPlaceholderCards,
+    fillPlaceholderCard,
+    removePlaceholderCard,
+  });
+
+  // Wire the ref bridge (synchronous assignment — safe for async consumers)
+  askPdfProcessorRef.current = askPdfProcessor;
+
+  // ── Chat placeholder wrappers ──
+  const handleChatCreatePlaceholder = useCallback(
+    (promptText: string, detailLevel: DetailLevel): string | null => {
+      const placeholderTitle = promptText.length > 50 ? promptText.substring(0, 50) + '...' : promptText;
+      const placeholders = createPlaceholderCards([placeholderTitle], detailLevel);
+      return placeholders[0]?.id ?? null;
+    },
+    [createPlaceholderCards],
+  );
+
+  const handleChatFillPlaceholder = useCallback(
+    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => {
+      fillPlaceholderCard(cardId, detailLevel, content, newTitle);
+    },
+    [fillPlaceholderCard],
+  );
+
+  // ── Batch folder creation for Sources panel batch generation ──
+  const handleCreateBatchFolder = useCallback(
+    (titles: string[], detailLevel: DetailLevel | DetailLevel[], sourceDocName: string): string[] | null => {
+      const folderResult = createPlaceholderCardsInFolder(titles, detailLevel, {
+        sourceDocuments: [sourceDocName],
+      });
+      if (!folderResult) return null;
+      return folderResult.cards.map((c) => c.id);
+    },
+    [createPlaceholderCardsInFolder],
+  );
+
+  // ── Folder picker for single-card generation (no loose cards policy) ──
+  type PendingFolderSelection =
+    | { type: 'sourceGeneration'; headingId: string; detailLevel: DetailLevel; cardTitle: string; sourceDocName: string }
+    | { type: 'chatSaveAsCard'; message: ChatMessage; editedContent: string };
+
+  const [pendingFolderSelection, setPendingFolderSelection] = useState<PendingFolderSelection | null>(null);
+
+  const handleGenerateCardContentWrapped = useCallback(
+    (headingId: string, detailLevel: DetailLevel, cardTitle: string, sourceDocName?: string, existingCardId?: string) => {
+      if (existingCardId) {
+        // Batch path — folder already created, proceed directly
+        handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
+      } else {
+        // Single card — need folder selection
+        setPendingFolderSelection({
+          type: 'sourceGeneration',
+          headingId,
+          detailLevel,
+          cardTitle,
+          sourceDocName: sourceDocName || '',
+        });
+      }
+    },
+    [handleGenerateCardContent],
+  );
+
+  const handleSaveAsCardWrapped = useCallback(
+    (message: ChatMessage, editedContent: string) => {
+      setPendingFolderSelection({
+        type: 'chatSaveAsCard',
+        message,
+        editedContent,
+      });
+    },
+    [],
+  );
+
+  const handleFolderSelectedForPending = useCallback(
+    (folderId: string) => {
+      const pending = pendingFolderSelection;
+      if (!pending) return;
+
+      if (pending.type === 'sourceGeneration') {
+        const cardSourceDocs = pending.sourceDocName ? [pending.sourceDocName] : [];
+        const placeholders = createPlaceholderCards(
+          [pending.cardTitle], pending.detailLevel,
+          { sourceDocuments: cardSourceDocs, targetFolderId: folderId },
+        );
+        const placeholderId = placeholders[0]?.id;
+        if (placeholderId) {
+          handleGenerateCardContent(
+            pending.headingId, pending.detailLevel, pending.cardTitle,
+            pending.sourceDocName, placeholderId,
+          );
+        }
+      } else if (pending.type === 'chatSaveAsCard') {
+        handleSaveAsCard(pending.message, pending.editedContent, folderId);
+      }
+
+      setPendingFolderSelection(null);
+    },
+    [pendingFolderSelection, createPlaceholderCards, handleGenerateCardContent, handleSaveAsCard],
+  );
+
+  const handleCreateFolderForPending = useCallback(
+    (folderName: string) => {
+      const folderId = createEmptyFolder(folderName);
+      if (folderId) handleFolderSelectedForPending(folderId);
+    },
+    [createEmptyFolder, handleFolderSelectedForPending],
+  );
 
   // ── Style Studio modal state ──
   const [showStyleStudio, setShowStyleStudio] = useState(false);
@@ -191,14 +323,15 @@ const App: React.FC = () => {
     registerCustomStyles(customStyles);
   }, [customStyles]);
 
-  // ── Panel accordion state (only one of Projects/Sources/Chat/Auto-Deck can be open at a time) ──
+  // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'projects' | 'sources' | 'chat' | 'auto-deck' | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null>(null);
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
   // ── Unsaved-changes gating for panel/nugget switching ──
   const cardsPanelRef = useRef<PanelEditorHandle>(null);
   const sourcesPanelRef = useRef<PanelEditorHandle>(null);
+  const tabBarRef = useRef<HTMLDivElement>(null);
   const [appPendingAction, setAppPendingAction] = useState<(() => void) | null>(null);
   const [appPendingDirtyPanel, setAppPendingDirtyPanel] = useState<'cards' | 'sources' | null>(null);
 
@@ -223,18 +356,6 @@ const App: React.FC = () => {
         setReferenceImage(null);
         setUseReferenceImage(false);
         selectEntity({ projectId });
-      });
-      setBreadcrumbDropdown(null);
-    },
-    [appGatedAction, selectEntity],
-  );
-
-  const handleBreadcrumbNuggetSelect = useCallback(
-    (nuggetId: string) => {
-      appGatedAction(() => {
-        setReferenceImage(null);
-        setUseReferenceImage(false);
-        selectEntity({ nuggetId });
       });
       setBreadcrumbDropdown(null);
     },
@@ -315,10 +436,129 @@ const App: React.FC = () => {
   }, [nuggets, projects, selectedNugget]);
 
 
-  const [showLanding, setShowLanding] = useState(true);
-  const handleLaunch = useCallback(() => setShowLanding(false), []);
+  // ── Landing ↔ Workspace navigation ──
+  const handleOpenProject = useCallback((projectId: string) => {
+    setOpenProjectId(projectId);
+    selectEntity({ projectId });
+  }, [setOpenProjectId, selectEntity]);
+
+  const handleReturnToLanding = useCallback(() => {
+    setOpenProjectId(null);
+  }, [setOpenProjectId]);
+
+  // ── Nugget tab bar: ordered nuggets for the open project ──
+  const openProject = useMemo(
+    () => projects.find((p) => p.id === openProjectId) ?? null,
+    [projects, openProjectId],
+  );
+  const allProjectNuggets = useMemo(
+    () =>
+      (openProject?.nuggetIds ?? [])
+        .map((nid) => nuggets.find((n) => n.id === nid))
+        .filter((n): n is Nugget => !!n),
+    [openProject?.nuggetIds, nuggets],
+  );
+  const [openTabIds, setOpenTabIds] = useState<Set<string>>(new Set());
+
+  // Reset open tabs when project changes — open all nuggets by default
+  useEffect(() => {
+    setOpenTabIds(new Set(allProjectNuggets.map((n) => n.id)));
+  }, [openProjectId]); // eslint-disable-line react-hooks/exhaustive-deps -- reset on project switch only
+
+  // Auto-add newly created nuggets to open tabs
+  useEffect(() => {
+    const allIds = new Set(allProjectNuggets.map((n) => n.id));
+    setOpenTabIds((prev) => {
+      const next = new Set(prev);
+      let changed = false;
+      // Add any new nugget IDs not in the set
+      for (const id of allIds) {
+        if (!next.has(id)) { next.add(id); changed = true; }
+      }
+      // Remove IDs that no longer exist in the project
+      for (const id of next) {
+        if (!allIds.has(id)) { next.delete(id); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [allProjectNuggets]);
+
+  const projectNuggetsForTabs = useMemo(
+    () => allProjectNuggets.filter((n) => openTabIds.has(n.id)),
+    [allProjectNuggets, openTabIds],
+  );
+
+  const handleOpenTab = useCallback(
+    (nuggetId: string) => {
+      setOpenTabIds((prev) => {
+        const next = new Set(prev);
+        next.add(nuggetId);
+        return next;
+      });
+      selectEntity({ nuggetId });
+    },
+    [selectEntity],
+  );
+
+  const handleCloseTab = useCallback(
+    (nuggetId: string) => {
+      setOpenTabIds((prev) => {
+        const next = new Set(prev);
+        next.delete(nuggetId);
+        return next;
+      });
+      // If closing the selected tab, select another open tab
+      if (nuggetId === selectedNuggetId) {
+        const remaining = allProjectNuggets.filter((n) => n.id !== nuggetId && openTabIds.has(n.id));
+        if (remaining.length > 0) {
+          selectEntity({ nuggetId: remaining[0].id });
+        }
+      }
+    },
+    [selectedNuggetId, allProjectNuggets, openTabIds, selectEntity],
+  );
+  const handleTabCreateNugget = useCallback(
+    (name: string, files: File[]) => {
+      if (!openProjectId) return;
+      const now = Date.now();
+      const nugget: Nugget = {
+        id: `nugget-${now}-${Math.random().toString(36).substr(2, 9)}`,
+        name,
+        type: 'insights',
+        documents: [],
+        cards: [],
+        createdAt: now,
+        lastModifiedAt: now,
+      };
+      handleCreateNugget(nugget);
+      addNuggetToProject(openProjectId, nugget.id);
+      selectEntity({ nuggetId: nugget.id });
+      // Upload files after nugget is selected (handleUploadDocuments uses selectedNuggetId)
+      if (files.length > 0) {
+        const dt = new DataTransfer();
+        files.forEach((f) => dt.items.add(f));
+        setTimeout(() => handleUploadDocuments(dt.files), 50);
+      }
+    },
+    [openProjectId, handleCreateNugget, addNuggetToProject, selectEntity, handleUploadDocuments],
+  );
+  const handleTabRenameNugget = useCallback(
+    (id: string, newName: string) => {
+      updateNugget(id, (n) => ({ ...n, name: newName, lastModifiedAt: Date.now() }));
+    },
+    [updateNugget],
+  );
+  const handleTabDuplicateNugget = useCallback(
+    async (nuggetId: string) => {
+      if (!openProjectId) return;
+      await handleCopyNuggetToProject(nuggetId, openProjectId);
+    },
+    [openProjectId, handleCopyNuggetToProject],
+  );
+
   const [_copied, _setCopied] = useState(false);
   const [emptyDragging, setEmptyDragging] = useState(false);
+
   const [showUsageDropdown, setShowUsageDropdown] = useState(false);
   const usageDropdownRef = useRef<HTMLDivElement>(null);
   const [breadcrumbDropdown, setBreadcrumbDropdown] = useState<'project' | 'nugget' | 'document' | null>(null);
@@ -342,7 +582,7 @@ const App: React.FC = () => {
     handleDeleteCardVersions,
     handleDeleteAllCardImages,
     handleDownloadImage,
-    handleDownloadAllImages,
+    handleDownloadSelectedImages,
     wrappedGenerateCard,
     wrappedExecuteBatch,
     mismatchDialog,
@@ -363,8 +603,9 @@ const App: React.FC = () => {
   // Auto-select first card when cards exist but none is active
   const nuggetCards = useMemo(() => selectedNugget?.cards ?? [], [selectedNugget?.cards]);
   useEffect(() => {
-    if (nuggetCards.length > 0 && (!activeCardId || !nuggetCards.find((c) => c.id === activeCardId))) {
-      setActiveCardId(nuggetCards[0].id);
+    const allCards = flattenCards(nuggetCards);
+    if (allCards.length > 0 && (!activeCardId || !allCards.find((c) => c.id === activeCardId))) {
+      setActiveCardId(allCards[0].id);
     }
   }, [nuggetCards, activeCardId, setActiveCardId]);
 
@@ -427,9 +668,13 @@ const App: React.FC = () => {
       if (target.closest('[data-panel-overlay]')) return;
       if (target.closest('[data-panel-strip]')) return;
       if (target.closest('[data-breadcrumb-dropdown]')) return;
-      // Don't close when clicking portal-rendered menus, modals, dialogs (z-index ≥ 100)
-      const fixed = target.closest('.fixed');
-      if (fixed && fixed.parentElement === document.body) return;
+      // Don't close when clicking portal-rendered menus, modals, dialogs
+      // Walk up through nested .fixed elements (e.g. backdrop → menu) to find one portaled to body
+      let fixed: Element | null = target.closest('.fixed');
+      while (fixed) {
+        if (fixed.parentElement === document.body) return;
+        fixed = fixed.parentElement?.closest('.fixed') ?? null;
+      }
       appGatedAction(() => setExpandedPanel(null));
     };
     document.addEventListener('mousedown', handler);
@@ -492,49 +737,37 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-white">
-      {showLanding ? (
-        <LandingPage onLaunch={handleLaunch} />
+      {!openProjectId ? (
+        <LandingPage
+          projects={projects}
+          nuggets={nuggets}
+          onOpenProject={handleOpenProject}
+          onCreateProject={(name: string) => {
+            const projectId = handleCreateProject(name, '');
+            handleOpenProject(projectId);
+          }}
+          onRenameProject={(id, newName) => {
+            updateProject(id, (p) => ({ ...p, name: newName, lastModifiedAt: Date.now() }));
+          }}
+          onDeleteProject={(id) => {
+            deleteProject(id);
+          }}
+          darkMode={darkMode}
+          toggleDarkMode={toggleDarkMode}
+        />
       ) : (
         <>
-          {/* Nugget modals */}
-          {showNuggetCreation && (
-            <NuggetCreationModal
-              onCreateNugget={handleCreateNugget}
-              onClose={() => setShowNuggetCreation(false)}
-            />
-          )}
-
-          {showProjectCreation && (
-            <ProjectCreationModal
-              projects={projects}
-              onCreateProject={(name, desc) => {
-                const projectId = handleCreateProject(name, desc);
-                if (projectCreationChainToNugget) {
-                  setNuggetCreationProjectId(projectId);
-                  setShowProjectCreation(false);
-                  setShowNuggetCreation(true);
-                  setProjectCreationChainToNugget(false);
-                }
-              }}
-              onClose={() => {
-                setShowProjectCreation(false);
-                setProjectCreationChainToNugget(false);
-              }}
-            />
-          )}
-
-          {/* PDF upload choice dialog */}
+          {/* PDF Upload Choice dialog (convert to MD or keep as PDF) */}
           {pdfChoiceDialog && (
             <PdfUploadChoiceDialog
               fileName={pdfChoiceDialog.fileName}
-              pdfCount={pdfChoiceDialog.pdfCount}
               onConvertToMarkdown={() => {
                 pdfChoiceResolverRef.current?.('markdown');
                 pdfChoiceResolverRef.current = null;
                 setPdfChoiceDialog(null);
               }}
               onKeepAsPdf={() => {
-                pdfChoiceResolverRef.current?.('native-pdf');
+                pdfChoiceResolverRef.current?.('keep-pdf');
                 pdfChoiceResolverRef.current = null;
                 setPdfChoiceDialog(null);
               }}
@@ -542,6 +775,34 @@ const App: React.FC = () => {
                 pdfChoiceResolverRef.current?.('cancel');
                 pdfChoiceResolverRef.current = null;
                 setPdfChoiceDialog(null);
+              }}
+            />
+          )}
+
+          {/* PDF Processor modal (bookmark editing after choosing "keep as PDF") */}
+          {pdfProcessorDialog && (
+            <PdfProcessorModal
+              pdfBase64Input={pdfProcessorDialog.pdfBase64}
+              fileName={pdfProcessorDialog.fileName}
+              onAccept={(result) => {
+                pdfProcessorResolverRef.current?.(result);
+                pdfProcessorResolverRef.current = null;
+                setPdfProcessorDialog(null);
+              }}
+              onCancel={() => {
+                pdfProcessorResolverRef.current?.('cancel');
+                pdfProcessorResolverRef.current = null;
+                setPdfProcessorDialog(null);
+              }}
+              onDiscard={() => {
+                pdfProcessorResolverRef.current?.('discard');
+                pdfProcessorResolverRef.current = null;
+                setPdfProcessorDialog(null);
+              }}
+              onConvertToMarkdown={() => {
+                pdfProcessorResolverRef.current?.('convert-to-markdown');
+                pdfProcessorResolverRef.current = null;
+                setPdfProcessorDialog(null);
               }}
             />
           )}
@@ -597,213 +858,22 @@ const App: React.FC = () => {
                 ? projects.find((p) => p.nuggetIds.includes(selectedNugget.id))
                 : null;
               return (
-                <header className="shrink-0 h-9 flex items-center justify-between px-5 border-b border-zinc-100 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-[0_1px_3px_rgba(0,0,0,0.04)] dark:shadow-none relative z-[110]">
-                  {/* Left spacer — matches right-side width for centering */}
-                  <div className="w-48 shrink-0" />
-
-                  {/* Center: interactive breadcrumb navigation */}
-                  {selectedNugget ? (
-                    <nav
-                      ref={breadcrumbRef}
-                      aria-label="Breadcrumb"
-                      data-breadcrumb-dropdown
-                      className="flex items-center gap-0 min-w-0 text-[15px] text-zinc-900 dark:text-zinc-100"
+                <header className="shrink-0 flex flex-col pt-2 border-b border-zinc-100 dark:border-zinc-700 relative z-[110]">
+                  {/* Top row: logo + controls */}
+                  <div className="h-9 flex items-center justify-between px-5">
+                    <button
+                      onClick={handleReturnToLanding}
+                      className="flex items-center gap-2 hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-none p-0"
+                      title="Return to projects"
                     >
-                      {/* ── Project segment ── */}
-                      {parentProject && (
-                        <>
-                          <span className="font-light italic text-[13px] text-zinc-400 select-none">project</span>
-                          <span className="mx-2.5" />
-                          <div className="relative">
-                            <button
-                              onClick={() => setBreadcrumbDropdown((prev) => (prev === 'project' ? null : 'project'))}
-                              className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
-                              title={parentProject.name}
-                              aria-expanded={breadcrumbDropdown === 'project'}
-                            >
-                              {parentProject.name}
-                              <svg
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                className="ml-0.5 opacity-40 shrink-0"
-                              >
-                                <polyline points="6 9 12 15 18 9" />
-                              </svg>
-                            </button>
-                            {breadcrumbDropdown === 'project' && (
-                              <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
-                                {projects.map((proj) => (
-                                  <button
-                                    key={proj.id}
-                                    onClick={() => handleBreadcrumbProjectSelect(proj.id)}
-                                    disabled={proj.nuggetIds.length === 0}
-                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${proj.id === parentProject.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} ${proj.nuggetIds.length === 0 ? 'opacity-40 cursor-default' : ''}`}
-                                  >
-                                    {proj.name}
-                                    {proj.nuggetIds.length === 0 && (
-                                      <span className="text-zinc-400 text-[10px] ml-1">(empty)</span>
-                                    )}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                          <span className="mx-5 text-zinc-200 dark:text-zinc-600 font-light select-none">|</span>
-                        </>
-                      )}
-
-                      {/* ── Nugget segment ── */}
-                      <span className="font-light italic text-[13px] text-zinc-400 select-none">nugget</span>
-                      <span className="mx-2.5" />
-                      <div className="relative">
-                        <button
-                          onClick={() => setBreadcrumbDropdown((prev) => (prev === 'nugget' ? null : 'nugget'))}
-                          className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
-                          title={selectedNugget.name}
-                          aria-expanded={breadcrumbDropdown === 'nugget'}
-                        >
-                          {selectedNugget.name}
-                          <svg
-                            width="10"
-                            height="10"
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2.5"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
-                            className="ml-0.5 opacity-40 shrink-0"
-                          >
-                            <polyline points="6 9 12 15 18 9" />
-                          </svg>
-                        </button>
-                        {breadcrumbDropdown === 'nugget' && (
-                          <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
-                            {/* Nuggets in current project */}
-                            {nuggetDropdownItems.parent && nuggetDropdownItems.inProject.length > 0 && (
-                              <>
-                                <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
-                                  {nuggetDropdownItems.parent.name}
-                                </div>
-                                {nuggetDropdownItems.inProject.map((n) => (
-                                  <button
-                                    key={n.id}
-                                    onClick={() => handleBreadcrumbNuggetSelect(n.id)}
-                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                                  >
-                                    {n.name}
-                                  </button>
-                                ))}
-                              </>
-                            )}
-                            {/* Ungrouped nuggets */}
-                            {nuggetDropdownItems.ungrouped.length > 0 && (
-                              <>
-                                {nuggetDropdownItems.parent && nuggetDropdownItems.inProject.length > 0 && (
-                                  <div className="border-t border-zinc-100 dark:border-zinc-700 my-1" />
-                                )}
-                                <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
-                                  Ungrouped
-                                </div>
-                                {nuggetDropdownItems.ungrouped.map((n) => (
-                                  <button
-                                    key={n.id}
-                                    onClick={() => handleBreadcrumbNuggetSelect(n.id)}
-                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                                  >
-                                    {n.name}
-                                  </button>
-                                ))}
-                              </>
-                            )}
-                            {/* Other projects' nuggets */}
-                            {projects
-                              .filter((p) => p.id !== nuggetDropdownItems.parent?.id && p.nuggetIds.length > 0)
-                              .map((proj) => (
-                                <React.Fragment key={proj.id}>
-                                  <div className="border-t border-zinc-100 dark:border-zinc-700 my-1" />
-                                  <div className="px-3 py-1 text-[10px] text-zinc-400 dark:text-zinc-500 uppercase tracking-wider font-medium">
-                                    {proj.name}
-                                  </div>
-                                  {proj.nuggetIds.map((nid) => {
-                                    const n = nuggets.find((ng) => ng.id === nid);
-                                    if (!n) return null;
-                                    return (
-                                      <button
-                                        key={n.id}
-                                        onClick={() => handleBreadcrumbNuggetSelect(n.id)}
-                                        className={`w-full text-left px-3 py-1.5 truncate transition-colors ${n.id === selectedNuggetId ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                                      >
-                                        {n.name}
-                                      </button>
-                                    );
-                                  })}
-                                </React.Fragment>
-                              ))}
-                          </div>
-                        )}
+                      <div className="w-7 h-7 bg-accent-blue rounded-full flex items-center justify-center shrink-0">
+                        <div className="w-[9px] h-[9px] bg-white rounded-[2px] rotate-45" />
                       </div>
-
-                      {/* ── Document segment ── */}
-                      {activeDocForBreadcrumb && (
-                        <>
-                          <span className="mx-5 text-zinc-200 dark:text-zinc-600 font-light select-none">|</span>
-                          <span className="font-light italic text-[13px] text-zinc-400 select-none">doc</span>
-                          <span className="mx-2.5" />
-                          <div className="relative">
-                            <button
-                              onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
-                              className="font-semibold not-italic truncate max-w-[200px] px-2.5 py-1 -my-1 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-1.5"
-                              title={activeDocForBreadcrumb.name}
-                              aria-expanded={breadcrumbDropdown === 'document'}
-                            >
-                              {activeDocForBreadcrumb.name}
-                              <svg
-                                width="10"
-                                height="10"
-                                viewBox="0 0 24 24"
-                                fill="none"
-                                stroke="currentColor"
-                                strokeWidth="2.5"
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                className="ml-0.5 opacity-40 shrink-0"
-                              >
-                                <polyline points="6 9 12 15 18 9" />
-                              </svg>
-                            </button>
-                            {breadcrumbDropdown === 'document' && (
-                              <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
-                                {nuggetDocs.map((doc) => (
-                                  <button
-                                    key={doc.id}
-                                    onClick={() => handleBreadcrumbDocSelect(doc.id)}
-                                    className={`w-full text-left px-3 py-1.5 truncate transition-colors flex items-center gap-2 ${doc.id === activeDocForBreadcrumb.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                                  >
-                                    <span className="truncate">{doc.name}</span>
-                                    <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
-                                      {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        </>
-                      )}
-                    </nav>
-                  ) : (
-                    <div className="text-[15px] tracking-tight text-zinc-900 dark:text-zinc-100">
-                      <span className="font-light italic">info</span>
-                      <span className="font-semibold not-italic">nugget</span>
-                    </div>
-                  )}
+                      <span className="text-[17px] tracking-tight text-zinc-900 dark:text-zinc-100">
+                        <span className="font-light italic">info</span>
+                        <span className="font-semibold not-italic">nugget</span>
+                      </span>
+                    </button>
 
                   {/* Right: dark mode toggle + token/cost counter */}
                   <div className="w-48 shrink-0 flex items-center justify-end gap-1 relative" ref={usageDropdownRef}>
@@ -910,100 +980,184 @@ const App: React.FC = () => {
                       </div>
                     )}
                   </div>
+                  </div>
+
+                  {/* Bottom row: breadcrumb navigation */}
+                  <div className="h-7 flex items-center gap-0 min-w-0 px-2 text-[13px] text-zinc-900 dark:text-zinc-100">
+                  {selectedNugget && (
+                    <nav
+                      ref={breadcrumbRef}
+                      aria-label="Breadcrumb"
+                      data-breadcrumb-dropdown
+                      className="flex items-center gap-0 min-w-0 flex-1"
+                    >
+                      {/* ── Project segment (static label — scoped by landing page) ── */}
+                      {parentProject && (
+                        <>
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Project">
+                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                          </svg>
+                          <span className="ml-1 font-semibold not-italic px-1 py-0.5 whitespace-nowrap text-zinc-900 dark:text-zinc-100" title={parentProject.name}>
+                            {parentProject.name}
+                          </span>
+                          <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
+                        </>
+                      )}
+
+                      {/* ── Document segment ── */}
+                      {(expandedPanel === null || expandedPanel === 'sources' || expandedPanel === 'chat' || expandedPanel === 'auto-deck' || expandedPanel === 'quality') ? (
+                        /* Default / Sources / Chat / Auto-Deck: "Active Documents" with check/uncheck dropdown */
+                        nuggetDocs.length > 0 && (
+                          <>
+                            <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Active Documents">
+                              <path d="M16 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z" />
+                              <path d="M8 2h10a2 2 0 0 1 2 2v12" />
+                            </svg>
+                            <div className="relative ml-1">
+                              <button
+                                onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
+                                className="font-semibold not-italic px-1 py-0.5 -my-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-0.5"
+                                aria-expanded={breadcrumbDropdown === 'document'}
+                              >
+                                Active Documents
+                                <span className="text-[10px] font-normal text-zinc-400 ml-0.5">
+                                  ({nuggetDocs.filter((d) => d.enabled !== false).length}/{nuggetDocs.length})
+                                </span>
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ml-0.5 opacity-40 shrink-0">
+                                  <polyline points="6 9 12 15 18 9" />
+                                </svg>
+                              </button>
+                              {breadcrumbDropdown === 'document' && (
+                                <div className="absolute top-full left-0 mt-1 min-w-[200px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
+                                  {(() => { const enabledCount = nuggetDocs.filter((d) => d.enabled !== false).length; return nuggetDocs.map((doc) => {
+                                    const isEnabled = doc.enabled !== false;
+                                    const isLastEnabled = isEnabled && enabledCount <= 1;
+                                    const isActive = doc.id === selectedDocumentId;
+                                    return (
+                                      <div
+                                        key={doc.id}
+                                        className="flex items-center gap-2 px-3 py-1.5 select-none transition-colors rounded text-zinc-800 dark:text-zinc-200"
+                                      >
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); if (!isLastEnabled) toggleNuggetDocument(doc.id); }}
+                                          className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${isLastEnabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isEnabled ? 'border-zinc-300 dark:border-zinc-600 bg-zinc-900' : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-zinc-400 dark:hover:border-zinc-500'}`}
+                                          aria-label={isLastEnabled ? 'At least one document must be active' : isEnabled ? `Disable ${doc.name}` : `Enable ${doc.name}`}
+                                        >
+                                          {isEnabled && (
+                                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                              <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                          )}
+                                        </button>
+                                        <span
+                                          className={`truncate flex-1 min-w-0 cursor-pointer rounded px-1 -mx-1 transition-colors ${isActive ? 'bg-zinc-200 dark:bg-zinc-700 font-medium' : 'hover:underline'}`}
+                                          onClick={() => handleBreadcrumbDocSelect(doc.id)}
+                                        >
+                                          {doc.name}
+                                        </span>
+                                        <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
+                                          {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
+                                        </span>
+                                      </div>
+                                    );
+                                  }); })()}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )
+                      ) : (
+                        /* Default: single active doc with dropdown */
+                        activeDocForBreadcrumb && (
+                          <>
+                            <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Document">
+                              <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+                              <path d="M14 2v4a2 2 0 0 0 2 2h4" />
+                            </svg>
+                            <div className="relative ml-1">
+                              <button
+                                onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
+                                className="font-semibold not-italic px-1 py-0.5 -my-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-0.5 whitespace-nowrap"
+                                title={activeDocForBreadcrumb.name}
+                                aria-expanded={breadcrumbDropdown === 'document'}
+                              >
+                                {activeDocForBreadcrumb.name}
+                                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ml-0.5 opacity-40 shrink-0">
+                                  <polyline points="6 9 12 15 18 9" />
+                                </svg>
+                              </button>
+                              {breadcrumbDropdown === 'document' && (
+                                <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
+                                  {nuggetDocs.map((doc) => (
+                                    <button
+                                      key={doc.id}
+                                      onClick={() => handleBreadcrumbDocSelect(doc.id)}
+                                      className={`w-full text-left px-3 py-1.5 truncate transition-colors flex items-center gap-2 ${doc.id === activeDocForBreadcrumb.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                                    >
+                                      <span className="truncate">{doc.name}</span>
+                                      <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
+                                        {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
+                                      </span>
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )
+                      )}
+                    </nav>
+                  )}
+                  </div>
                 </header>
               );
             })()}
 
-            {/* 6-panel row: Projects | Sources | Chat | Auto-Deck | Cards | Assets */}
+            {/* Nugget tab bar */}
+            <NuggetTabBar
+              projectNuggets={projectNuggetsForTabs}
+              allProjectNuggets={allProjectNuggets}
+              selectedNuggetId={selectedNuggetId}
+              onSelectNugget={(id) =>
+                appGatedAction(() => {
+                  setReferenceImage(null);
+                  setUseReferenceImage(false);
+                  selectEntity({ nuggetId: id });
+                })
+              }
+              onCreateNugget={handleTabCreateNugget}
+              onRenameNugget={handleTabRenameNugget}
+              onDeleteNugget={deleteNugget}
+              onDuplicateNugget={handleTabDuplicateNugget}
+              onCloseTab={handleCloseTab}
+              onOpenTab={handleOpenTab}
+
+              darkMode={darkMode}
+            />
+
+            {/* 5-panel row: Tab Bar | Sources | Chat | Auto-Deck | Cards | Assets */}
             <main className="flex flex-1 overflow-hidden gap-[4px] p-[4px]">
-              {/* Panel 1: Projects */}
-              <ErrorBoundary name="Projects">
-                <ProjectsPanel
-                  isOpen={expandedPanel === 'projects'}
-                  onToggle={() =>
-                    appGatedAction(() => setExpandedPanel((prev) => (prev === 'projects' ? null : 'projects')))
-                  }
-                  onSelectProject={(projectId) =>
-                    appGatedAction(() => {
-                      setReferenceImage(null);
-                      setUseReferenceImage(false);
-                      selectEntity({ projectId });
-                    })
-                  }
-                  onSelectNugget={(id) =>
-                    appGatedAction(() => {
-                      setReferenceImage(null);
-                      setUseReferenceImage(false);
-                      selectEntity({ nuggetId: id });
-                    })
-                  }
-                  onCreateProject={() => {
-                    setProjectCreationChainToNugget(true);
-                    setShowProjectCreation(true);
-                  }}
-                  onRenameProject={(id, newName) => {
-                    updateProject(id, (p) => ({ ...p, name: newName, lastModifiedAt: Date.now() }));
-                  }}
-                  onToggleProjectCollapse={(id) => {
-                    updateProject(id, (p) => ({ ...p, isCollapsed: !p.isCollapsed }));
-                  }}
-                  onCreateNuggetInProject={(projectId) => {
-                    setNuggetCreationProjectId(projectId);
-                    setShowNuggetCreation(true);
-                  }}
-                  onRenameNugget={(id, newName) => {
-                    updateNugget(id, (n) => ({ ...n, name: newName, lastModifiedAt: Date.now() }));
-                  }}
-                  onCopyNuggetToProject={handleCopyNuggetToProject}
-                  onMoveNuggetToProject={handleMoveNuggetToProject}
-                  onCreateProjectForNugget={handleCreateProjectForNugget}
-                  onDuplicateProject={handleDuplicateProject}
-                  onRenameDocument={async (docId, newName) => {
-                    // Re-upload to Files API with the new filename
-                    const doc = selectedNugget?.documents.find((d) => d.id === docId);
-                    if (doc?.fileId) {
-                      try {
-                        deleteFromFilesAPI(doc.fileId);
-                        // Native PDFs: re-upload binary; Markdown docs: re-upload text content
-                        const newFileId =
-                          doc.sourceType === 'native-pdf' && doc.pdfBase64
-                            ? await uploadToFilesAPI(
-                                base64ToBlob(doc.pdfBase64, 'application/pdf'),
-                                newName,
-                                'application/pdf',
-                              )
-                            : doc.content
-                              ? await uploadToFilesAPI(doc.content, newName, 'text/plain')
-                              : undefined;
-                        if (newFileId)
-                          updateNuggetDocument(docId, {
-                            ...doc,
-                            name: newName,
-                            fileId: newFileId,
-                            lastRenamedAt: Date.now(),
-                            version: (doc.version ?? 1) + 1,
-                          });
-                      } catch (err) {
-                        console.warn('[App] Files API re-upload on rename failed:', err);
-                      }
+              {/* Vertical tab bar for expandable panels */}
+              <PanelTabBar
+                ref={tabBarRef}
+                expandedPanel={expandedPanel}
+                onTogglePanel={(panel) =>
+                  appGatedAction(() => setExpandedPanel((prev) => {
+                    if (prev === panel) return null;
+                    if (prev !== null) {
+                      // Collapse first, then expand after animation
+                      setTimeout(() => setExpandedPanel(panel), 420);
+                      return null;
                     }
-                    renameNuggetDocument(docId, newName);
-                  }}
-                  onRemoveDocument={(docId) => {
-                    const doc = selectedNugget?.documents.find((d) => d.id === docId);
-                    if (doc?.fileId) deleteFromFilesAPI(doc.fileId);
-                    removeNuggetDocument(docId);
-                  }}
-                  onCopyMoveDocument={handleCopyMoveDocument}
-                  onCreateNuggetWithDoc={handleCreateNuggetWithDoc}
-                  onUploadDocuments={handleUploadDocuments}
-                  onEditSubject={(nuggetId) => setSubjectEditNuggetId(nuggetId)}
-                  onOpenCardsPanel={() => appGatedAction(() => setExpandedPanel(null))}
-                  onOpenSourcesPanel={() => appGatedAction(() => setExpandedPanel('sources'))}
-                  otherNuggets={otherNuggetsList}
-                  projectNuggets={projectNuggetsList}
-                />
-              </ErrorBoundary>
+                    return panel;
+                  }))
+                }
+                hasSelectedNugget={!!selectedNugget}
+                darkMode={darkMode}
+                qualityStatus={qualityStatus}
+              />
 
               {selectedNugget ? (
                 <>
@@ -1012,63 +1166,47 @@ const App: React.FC = () => {
                     <div className="fixed inset-0 z-[106] bg-black/20 cursor-not-allowed" />
                   )}
 
+                  {/* Quality Check Panel */}
+                  <ErrorBoundary name="Quality">
+                    <QualityPanel
+                      isOpen={expandedPanel === 'quality'}
+                      tabBarRef={tabBarRef}
+                      onToggle={() =>
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'quality' ? null : 'quality')))
+                      }
+                      qualityReport={qualityReport}
+                      effectiveStatus={qualityStatus}
+                      isChecking={qualityIsChecking}
+                      checkError={qualityCheckError}
+                      onRunCheck={runQualityCheck}
+                      onDismiss={() => {
+                        dismissQualityReport();
+                        setExpandedPanel('sources');
+                      }}
+                      onFixDocuments={() => {
+                        setExpandedPanel('sources');
+                      }}
+                      documents={nuggetDocs}
+                    />
+                  </ErrorBoundary>
+
                   {/* Panel 2: Sources */}
                   <ErrorBoundary name="Sources">
                     <SourcesPanel
                       ref={sourcesPanelRef}
                       isOpen={expandedPanel === 'sources'}
+                      tabBarRef={tabBarRef}
                       onToggle={() =>
                         appGatedAction(() => setExpandedPanel((prev) => (prev === 'sources' ? null : 'sources')))
                       }
                       documents={nuggetDocs}
                       onSaveDocument={handleSaveDocument}
-                      onGenerateCardContent={handleGenerateCardContent}
+                      onGenerateCardContent={handleGenerateCardContentWrapped}
+                      onCreateBatchFolder={handleCreateBatchFolder}
                       generatingSourceIds={generatingSourceIds}
-                      onUpdateDocumentStructure={(docId, newStructure) => {
-                        const doc = nuggetDocs.find((d) => d.id === docId);
-                        if (doc) updateNuggetDocument(docId, { ...doc, structure: newStructure });
-                      }}
                       onSaveToc={handleSaveToc}
-                      onSaveBookmarks={(docId, newBookmarks) => {
-                        if (!selectedNugget) return;
-                        const doc = selectedNugget.documents.find((d) => d.id === docId);
-                        if (!doc) return;
-                        const newStructure = flattenBookmarks(newBookmarks);
-                        handleSaveToc(docId, newStructure);
-                        // Also update bookmarks directly on the document
-                        updateNuggetDocument(docId, {
-                          ...doc,
-                          bookmarks: newBookmarks,
-                          structure: newStructure,
-                          bookmarkSource: 'manual',
-                        });
-                      }}
-                      onRegenerateBookmarks={async (docId) => {
-                        if (!selectedNugget) return;
-                        const doc = selectedNugget.documents.find((d) => d.id === docId);
-                        if (!doc || !doc.pdfBase64) return;
-                        // Re-extract via Gemini from the PDF file
-                        const blob = base64ToBlob(doc.pdfBase64, 'application/pdf');
-                        const file = new File([blob], doc.name, { type: 'application/pdf' });
-                        const headings = await extractHeadingsWithGemini(file);
-                        if (headings.length > 0) {
-                          const bookmarks = headingsToBookmarks(headings);
-                          updateNuggetDocument(docId, {
-                            ...doc,
-                            bookmarks,
-                            bookmarkSource: 'ai_generated',
-                            structure: headings,
-                          });
-                          addToast({
-                            type: 'info',
-                            message: `Regenerated ${headings.length} bookmarks via AI`,
-                            duration: 5000,
-                          });
-                        } else {
-                          addToast({ type: 'warning', message: 'AI extraction returned no bookmarks', duration: 5000 });
-                        }
-                      }}
                       onDirtyChange={setTocLockActive}
+                      onUpload={handleUploadDocuments}
                     />
                   </ErrorBoundary>
 
@@ -1076,13 +1214,14 @@ const App: React.FC = () => {
                   <ErrorBoundary name="Chat">
                     <ChatPanel
                       isOpen={expandedPanel === 'chat'}
+                      tabBarRef={tabBarRef}
                       onToggle={() =>
                         appGatedAction(() => setExpandedPanel((prev) => (prev === 'chat' ? null : 'chat')))
                       }
                       messages={insightsMessages}
                       isLoading={insightsLabLoading}
                       onSendMessage={sendInsightsMessage}
-                      onSaveAsCard={handleSaveAsCard}
+                      onSaveAsCard={handleSaveAsCardWrapped}
                       onClearChat={() => {
                         clearInsightsMessages();
                       }}
@@ -1092,6 +1231,9 @@ const App: React.FC = () => {
                       hasConversation={insightsHasConversation}
                       onDocChangeContinue={handleDocChangeContinue}
                       onDocChangeStartFresh={handleDocChangeStartFresh}
+                      onCreatePlaceholder={handleChatCreatePlaceholder}
+                      onFillPlaceholderCard={handleChatFillPlaceholder}
+                      onRemovePlaceholderCard={removePlaceholderCard}
                     />
                   </ErrorBoundary>
 
@@ -1099,6 +1241,7 @@ const App: React.FC = () => {
                   <ErrorBoundary name="Auto-Deck">
                     <AutoDeckPanel
                       isOpen={expandedPanel === 'auto-deck'}
+                      tabBarRef={tabBarRef}
                       onToggle={() =>
                         appGatedAction(() => setExpandedPanel((prev) => (prev === 'auto-deck' ? null : 'auto-deck')))
                       }
@@ -1117,10 +1260,15 @@ const App: React.FC = () => {
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 5: Cards */}
+                  {/* Panel 5: Cards & Assets (portal overlay) */}
                   <ErrorBoundary name="Cards">
                     <CardsPanel
                       ref={cardsPanelRef}
+                      isOpen={expandedPanel === 'cards'}
+                      tabBarRef={tabBarRef}
+                      onToggle={() =>
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'cards' ? null : 'cards')))
+                      }
                       cards={nuggetCards}
                       hasSelectedNugget={!!selectedNugget}
                       onToggleSelection={toggleInsightsCardSelection}
@@ -1134,59 +1282,83 @@ const App: React.FC = () => {
                       onCopyMoveCard={handleCopyMoveCard}
                       otherNuggets={otherNuggetsList}
                       projectNuggets={projectNuggetsList}
-                      onCreateNuggetForCard={handleCreateNuggetForCard}
-                      onCreateCustomCard={handleCreateCustomCard}
                       onSaveCardContent={handleSaveCardContent}
                       detailLevel={activeLogicTab}
                       onGenerateCardImage={wrappedGenerateCard}
                       onReorderCards={reorderInsightsCards}
+                      onReorderCardItem={reorderCardItem}
+                      onToggleFolderCollapsed={toggleFolderCollapsed}
+                      onToggleFolderSelection={toggleFolderSelection}
+                      onRenameFolder={renameFolder}
+                      onDeleteFolder={deleteFolder}
+                      onDuplicateFolder={duplicateFolder}
+                      onCopyMoveFolder={handleCopyMoveFolder}
+                      onCreateEmptyFolder={createEmptyFolder}
+                      onCreateCustomCardInFolder={createCustomCardInFolder}
+                      assetsSlot={
+                        selectedNugget.documents.length > 0 ? (
+                          <AssetsPanel
+                            committedSettings={committedSettings}
+                            menuDraftOptions={menuDraftOptions}
+                            setMenuDraftOptions={setMenuDraftOptions}
+                            activeLogicTab={activeLogicTab}
+                            setActiveLogicTab={setActiveLogicTab}
+                            genStatus={genStatus}
+                            onGenerateCard={wrappedGenerateCard}
+                            onGenerateAll={() => {
+                              const cards = flattenCards(selectedNugget?.cards || []);
+                              const selected = cards.filter((c) => c.selected);
+                              if (selected.length === 0) {
+                                alert('Please select cards first.');
+                                return;
+                              }
+                              setManifestCards(selected);
+                            }}
+                            selectedCount={insightsSelectedCount}
+                            onZoomImage={openZoom}
+                            onImageModified={handleInsightsImageModified}
+                            contentDirty={false}
+                            currentContent={activeCard?.synthesisMap?.[activeCard?.detailLevel || activeLogicTab] || ''}
+                            onDownloadImage={handleDownloadImage}
+                            onDownloadSelectedImages={handleDownloadSelectedImages}
+                            referenceImage={referenceImage}
+                            onStampReference={handleStampReference}
+                            useReferenceImage={useReferenceImage}
+                            onToggleUseReference={() => setUseReferenceImage((prev) => !prev)}
+                            onReferenceImageModified={handleReferenceImageModified}
+                            onDeleteReference={handleDeleteReference}
+                            mismatchDialog={mismatchDialog}
+                            onDismissMismatch={() => setMismatchDialog(null)}
+                            manifestCards={manifestCards}
+                            onExecuteBatch={wrappedExecuteBatch}
+                            onCloseManifest={() => setManifestCards(null)}
+                            onDeleteCardImage={handleDeleteCardImage}
+                            onDeleteCardVersions={handleDeleteCardVersions}
+                            onDeleteAllCardImages={handleDeleteAllCardImages}
+                            onUsage={recordUsage}
+                            onOpenStyleStudio={() => setShowStyleStudio(true)}
+                          />
+                        ) : undefined
+                      }
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 5: Assets */}
-                  <ErrorBoundary name="Assets">
-                    <AssetsPanel
-                      committedSettings={committedSettings}
-                      menuDraftOptions={menuDraftOptions}
-                      setMenuDraftOptions={setMenuDraftOptions}
-                      activeLogicTab={activeLogicTab}
-                      setActiveLogicTab={setActiveLogicTab}
-                      genStatus={genStatus}
-                      onGenerateCard={wrappedGenerateCard}
-                      onGenerateAll={() => {
-                        const cards = selectedNugget?.cards || [];
-                        const selected = cards.filter((c) => c.selected);
-                        if (selected.length === 0) {
-                          alert('Please select cards first.');
-                          return;
-                        }
-                        setManifestCards(selected);
+                  {/* Main content area — branded empty state */}
+                  <div className="flex-1 flex flex-col items-center justify-center text-center px-8 transition-colors duration-200">
+                    <div className="w-12 h-12 bg-accent-blue rounded-full flex items-center justify-center shadow-lg shadow-[rgba(42,159,212,0.2)] mb-5">
+                      <div className="w-4 h-4 bg-white rounded-sm rotate-45" />
+                    </div>
+                    <h2 className="text-xl tracking-tight mb-1">
+                      <span className="font-light italic">info</span>
+                      <span className="font-semibold not-italic">nugget</span>
+                    </h2>
+                    <PanelRequirements
+                      level="sources"
+                      onRequirementClick={(req) => {
+                        if (req === 'Document') setExpandedPanel('sources');
                       }}
-                      selectedCount={insightsSelectedCount}
-                      onZoomImage={openZoom}
-                      onImageModified={handleInsightsImageModified}
-                      contentDirty={false}
-                      currentContent={activeCard?.synthesisMap?.[activeCard?.detailLevel || activeLogicTab] || ''}
-                      onDownloadImage={handleDownloadImage}
-                      onDownloadAllImages={handleDownloadAllImages}
-                      referenceImage={referenceImage}
-                      onStampReference={handleStampReference}
-                      useReferenceImage={useReferenceImage}
-                      onToggleUseReference={() => setUseReferenceImage((prev) => !prev)}
-                      onReferenceImageModified={handleReferenceImageModified}
-                      onDeleteReference={handleDeleteReference}
-                      mismatchDialog={mismatchDialog}
-                      onDismissMismatch={() => setMismatchDialog(null)}
-                      manifestCards={manifestCards}
-                      onExecuteBatch={wrappedExecuteBatch}
-                      onCloseManifest={() => setManifestCards(null)}
-                      onDeleteCardImage={handleDeleteCardImage}
-                      onDeleteCardVersions={handleDeleteCardVersions}
-                      onDeleteAllCardImages={handleDeleteAllCardImages}
-                      onUsage={recordUsage}
-                      onOpenStyleStudio={() => setShowStyleStudio(true)}
                     />
-                  </ErrorBoundary>
+                  </div>
                 </>
               ) : (
                 <div
@@ -1215,27 +1387,12 @@ const App: React.FC = () => {
                     <p className="text-zinc-400 text-sm font-light mb-6 max-w-xs">Drop to upload</p>
                   ) : (
                     <>
-                      <div className="mb-4">
-                        <PanelRequirements level="sources" />
-                      </div>
-                      {nuggets.length === 0 ? (
-                        <button
-                          onClick={() => {
-                            setProjectCreationChainToNugget(true);
-                            setShowProjectCreation(true);
-                          }}
-                          className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
-                        >
-                          Create Project
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => setShowNuggetCreation(true)}
-                          className="px-5 py-2.5 rounded-xl bg-black text-white text-sm font-medium hover:shadow-lg hover:scale-105 active:scale-95 transition-all duration-200"
-                        >
-                          Create New Nugget
-                        </button>
-                      )}
+                      <PanelRequirements
+                        level="sources"
+                        onRequirementClick={(req) => {
+                          if (req === 'Document') setExpandedPanel('sources');
+                        }}
+                      />
                     </>
                   )}
                 </div>
@@ -1254,6 +1411,15 @@ const App: React.FC = () => {
             </footer>
           </div>
         </>
+      )}
+      {/* Folder picker dialog for single-card generation (no loose cards) */}
+      {pendingFolderSelection && selectedNugget && (
+        <FolderPickerDialog
+          folders={selectedNugget.cards.filter(isCardFolder)}
+          onSelect={handleFolderSelectedForPending}
+          onCreateAndSelect={handleCreateFolderForPending}
+          onCancel={() => setPendingFolderSelection(null)}
+        />
       )}
     </div>
   );

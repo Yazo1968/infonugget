@@ -9,10 +9,12 @@ import {
   ParsedPlan,
   ReviewCardState,
 } from '../types';
+import { flattenCards } from '../utils/cardUtils';
 import { callClaude, callClaudeWithFileApiDocs } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
 import { buildPlannerPrompt, buildFinalizerPrompt } from '../utils/prompts/autoDeckPlanner';
 import { buildProducerPrompt, batchPlan } from '../utils/prompts/autoDeckProducer';
+import { buildQualityWarningsBlock } from '../utils/prompts/qualityCheck';
 import {
   parsePlannerResponse,
   parseFinalizerResponse,
@@ -35,7 +37,15 @@ import { useToast } from '../components/ToastNotification';
  *
  * State machine: CONFIGURING → PLANNING → CONFLICT/REVIEWING → REVISING/PRODUCING → COMPLETE
  */
-export function useAutoDeck(recordUsage?: RecordUsageFn) {
+export function useAutoDeck(
+  recordUsage?: RecordUsageFn,
+  placeholderFns?: {
+    createPlaceholderCards: (titles: string[], detailLevel: import('../types').DetailLevel, options?: { sourceDocuments?: string[]; autoDeckSessionId?: string }) => { id: string; title: string }[];
+    createPlaceholderCardsInFolder?: (titles: string[], detailLevel: import('../types').DetailLevel, options?: { sourceDocuments?: string[]; autoDeckSessionId?: string; folderName?: string }) => { folderId: string; cards: { id: string; title: string }[] } | null;
+    fillPlaceholderCard: (cardId: string, detailLevel: import('../types').DetailLevel, content: string, newTitle?: string) => void;
+    removePlaceholderCard: (cardId: string, detailLevel: import('../types').DetailLevel) => void;
+  },
+) {
   const { selectedNugget, updateNugget } = useNuggetContext();
 
   const { addToast } = useToast();
@@ -111,7 +121,7 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
       const fileApiDocsMeta = fileApiDocs.map((d) => ({
         id: d.id,
         name: d.name,
-        wordCount: 0, // word count unknown for Files API docs
+        wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
         content: '', // content sent via Files API document blocks, not inline
       }));
       const allDocsMeta = orderedDocIds
@@ -150,6 +160,12 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
           documents: allDocsMeta,
           totalWordCount,
         });
+
+        // Inject quality warnings (if dismissed red report exists)
+        const plannerQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
+        if (plannerQualityWarnings) {
+          systemBlocks.push({ text: plannerQualityWarnings, cache: false });
+        }
 
         const { text: rawResponse } = await callClaudeWithFileApiDocs({
           fileApiDocs: fileApiDocs.map((d) => ({ fileId: d.fileId!, name: d.name })),
@@ -256,7 +272,7 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
     const fileApiDocsMeta = fileApiDocs.map((d) => ({
       id: d.id,
       name: d.name,
-      wordCount: 0,
+      wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
       content: '',
     }));
     const allDocsMeta = session.orderedDocIds
@@ -293,6 +309,12 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
           questionAnswers: session.reviewState.questionAnswers,
         },
       });
+
+      // Inject quality warnings (if dismissed red report exists)
+      const revisionQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
+      if (revisionQualityWarnings) {
+        systemBlocks.push({ text: revisionQualityWarnings, cache: false });
+      }
 
       const { text: rawResponse } = await callClaudeWithFileApiDocs({
         fileApiDocs: fileApiDocs.map((d) => ({ fileId: d.fileId!, name: d.name })),
@@ -396,7 +418,7 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
     const fileApiDocsMeta = fileApiDocs.map((d) => ({
       id: d.id,
       name: d.name,
-      wordCount: 0,
+      wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
       content: '',
     }));
     const allDocsMetaWithWordCount = session.orderedDocIds
@@ -422,6 +444,9 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
 
     const abortController = new AbortController();
     abortRef.current = abortController;
+
+    // Hoist so catch block can access for cleanup
+    const placeholderMap = new Map<string, string>(); // title → cardId
 
     try {
       // ── Phase 1: Finalize ──
@@ -501,6 +526,34 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
       const finalCards = finalizedPlan.cards;
       const batches = finalCards.length > 15 ? batchPlan(finalCards, 12) : [finalCards];
 
+      const enabledDocNames = orderedSelectedDocs.map((d) => d.name);
+      const detailLevel = AUTO_DECK_LOD_LEVELS[session.lod].detailLevel;
+
+      // Create placeholder cards from the plan so they appear instantly with spinners
+      if (placeholderFns) {
+        const titles = finalCards.map((c) => c.title);
+        if (placeholderFns.createPlaceholderCardsInFolder && titles.length >= 2) {
+          const folderResult = placeholderFns.createPlaceholderCardsInFolder(titles, detailLevel, {
+            sourceDocuments: enabledDocNames,
+            autoDeckSessionId: session.id,
+          });
+          if (folderResult) {
+            for (const p of folderResult.cards) {
+              placeholderMap.set(p.title, p.id);
+            }
+          }
+        } else {
+          // Fallback for single card
+          const placeholders = placeholderFns.createPlaceholderCards(titles, detailLevel, {
+            sourceDocuments: enabledDocNames,
+            autoDeckSessionId: session.id,
+          });
+          for (const p of placeholders) {
+            placeholderMap.set(p.title, p.id);
+          }
+        }
+      }
+
       const allProducedCards: ProducedCard[] = [];
 
       for (const batch of batches) {
@@ -523,6 +576,12 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
           batchContext,
         });
 
+        // Inject quality warnings (if dismissed red report exists)
+        const producerQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
+        if (producerQualityWarnings) {
+          systemBlocks.push({ text: producerQualityWarnings, cache: false });
+        }
+
         // Scale maxTokens based on batch size and LOD
         const lodConfig = AUTO_DECK_LOD_LEVELS[session.lod];
         const tokensPerCard = Math.ceil(lodConfig.wordCountMax * 1.5 * 1.3); // words→tokens with overhead
@@ -540,41 +599,49 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
         const result = parseProducerResponse(rawResponse);
         if (result.status === 'ok') {
           allProducedCards.push(...result.cards);
+          // Fill placeholders for this batch as content arrives
+          if (placeholderFns) {
+            for (const pc of result.cards) {
+              const cardId = placeholderMap.get(pc.title);
+              if (cardId) {
+                placeholderFns.fillPlaceholderCard(cardId, detailLevel, `# ${pc.title}\n\n${pc.content}`);
+                placeholderMap.delete(pc.title); // Remove filled entries so cleanup only targets unfilled
+              }
+            }
+          }
         } else {
           throw new Error(result.error);
         }
       }
 
-      // Create Card objects and add to nugget
-      const enabledDocNames = orderedSelectedDocs.map((d) => d.name);
-      const existingCardNames = selectedNugget.cards.map((c) => c.text);
-      const detailLevel = AUTO_DECK_LOD_LEVELS[session.lod].detailLevel;
+      // If placeholders were NOT used, create cards the legacy way
+      if (!placeholderFns || placeholderMap.size === 0) {
+        const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+        const newCards: Card[] = allProducedCards.map((pc) => {
+          const uniqueName = getUniqueName(pc.title, [
+            ...existingCardNames,
+            ...allProducedCards.filter((p) => p !== pc).map((p) => p.title),
+          ]);
+          existingCardNames.push(uniqueName);
+          return {
+            id: `card-${Math.random().toString(36).substr(2, 9)}`,
+            level: 1,
+            text: uniqueName,
+            detailLevel,
+            synthesisMap: { [detailLevel]: `# ${pc.title}\n\n${pc.content}` },
+            createdAt: Date.now(),
+            lastEditedAt: Date.now(),
+            sourceDocuments: enabledDocNames,
+            autoDeckSessionId: session.id,
+          };
+        });
 
-      const newCards: Card[] = allProducedCards.map((pc) => {
-        const uniqueName = getUniqueName(pc.title, [
-          ...existingCardNames,
-          ...allProducedCards.filter((p) => p !== pc).map((p) => p.title),
-        ]);
-        existingCardNames.push(uniqueName);
-        return {
-          id: `card-${Math.random().toString(36).substr(2, 9)}`,
-          level: 1,
-          text: uniqueName,
-          detailLevel,
-          synthesisMap: { [detailLevel]: `# ${pc.title}\n\n${pc.content}` },
-          createdAt: Date.now(),
-          lastEditedAt: Date.now(),
-          sourceDocuments: enabledDocNames,
-          autoDeckSessionId: session.id,
-        };
-      });
-
-      // Append to nugget cards
-      updateNugget(selectedNugget.id, (n) => ({
-        ...n,
-        cards: [...n.cards, ...newCards],
-        lastModifiedAt: Date.now(),
-      }));
+        updateNugget(selectedNugget.id, (n) => ({
+          ...n,
+          cards: [...n.cards, ...newCards],
+          lastModifiedAt: Date.now(),
+        }));
+      }
 
       setSession((prev) =>
         prev
@@ -586,9 +653,20 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
           : prev,
       );
 
-      addToast({ message: `${newCards.length} cards generated successfully.`, type: 'success' });
+      addToast({ message: `${allProducedCards.length} cards generated successfully.`, type: 'success' });
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
+      // Remove unfilled placeholders on any error
+      if (placeholderFns && placeholderMap.size > 0) {
+        const dl = session ? AUTO_DECK_LOD_LEVELS[session.lod].detailLevel : 'Standard' as any;
+        for (const [, cardId] of placeholderMap) {
+          placeholderFns.removePlaceholderCard(cardId, dl);
+        }
+      }
+
+      if (err.name === 'AbortError') {
+        return;
+      }
+
       console.error('[useAutoDeck] Submit failed:', err);
       setSession((prev) =>
         prev
@@ -602,7 +680,7 @@ export function useAutoDeck(recordUsage?: RecordUsageFn) {
     } finally {
       abortRef.current = null;
     }
-  }, [session, selectedNugget, recordUsage, updateNugget, setStatus, addToast]);
+  }, [session, selectedNugget, recordUsage, updateNugget, setStatus, addToast, placeholderFns]);
 
   // ── Review state helpers ──
 
