@@ -426,6 +426,9 @@ export function useCardGeneration(
           throw new Error(`No image data received from the AI model. ${detail}`);
         }
         const img = imageResponse.images[0];
+        if (!img.data || typeof img.data !== 'string' || img.data.length < 100) {
+          throw new Error('Image data is empty or corrupted. The AI model returned an invalid image.');
+        }
         cardUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
 
         if (cardUrl) {
