@@ -1,5 +1,5 @@
 import { DetailLevel, StylingOptions } from '../../types';
-import { buildExpertPriming, buildNarrativeStyleBlock, sanitizePlannerOutput } from './promptUtils';
+import { buildExpertPriming, buildNarrativeStyleBlock, sanitizePlannerOutput, describeCanvas } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Cover Card Generation — Prompts
@@ -168,10 +168,7 @@ export function buildCoverPlannerPrompt(
   aspectRatio: string = '16:9',
   coverType: DetailLevel,
 ): string {
-  let canvasDescription = 'landscape — wider than tall';
-  if (aspectRatio === '9:16') canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '1:1') canvasDescription = 'square — equal width and height';
-  else if (aspectRatio === '4:5') canvasDescription = 'near-square portrait';
+  const canvasDescription = describeCanvas(aspectRatio);
 
   const coverKind = coverType === 'TitleCard' ? 'Title Card' : 'Takeaway Card';
 

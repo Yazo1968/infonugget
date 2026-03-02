@@ -7,18 +7,16 @@ InfoNugget v6.0 — client-side React SPA for AI-powered content card generation
 - **Stack**: React 19 + TypeScript 5.8 + Vite 6, no backend
 - **AI**: Claude Sonnet 4.6 (text/chat via browser fetch) + Gemini Flash/Pro Image (`@google/genai` SDK)
 - **Persistence**: IndexedDB (`infonugget-db`), auto-save with debounce
-- **State**: React Context (split contexts under `context/`), no Redux/Zustand
-- **Entry**: `index.tsx` → `StorageProvider` → `ToastProvider` → `App`
+- **State**: React Context (5 focused contexts under `context/` + composition hook `useAppContext`), no Redux/Zustand
+- **Entry**: `index.tsx` → `StorageProvider` → `ToastProvider` → `AppProvider` → `App`
 
 ## Build & Run
 
 ```bash
 npm run dev       # Dev server, port 3000
 npm run build     # Production build
-npx tsc --noEmit  # Type-check only
+npx tsc --noEmit  # Type-check only (should be zero errors)
 ```
-
-**Ignore pre-existing TS errors** in `AutoDeckPanel.tsx` and `reference files (unused)/contentGeneration.backup.ts`.
 
 ## Environment Variables (`.env.local`, never commit)
 
@@ -40,6 +38,30 @@ Flex row: Projects | Sources | Chat | Auto-Deck | Cards | Assets. First 4 panels
 
 ### Prompt Anti-Leakage
 Content converted via `transformContentToTags()` — markdown to bracketed tags, font names to descriptors, hex to color names. See `utils/prompts/promptUtils.ts`.
+
+## Shared Utilities & Constants
+
+### `utils/constants.ts` — Centralized configuration
+- **Model names**: `CLAUDE_MODEL`, `GEMINI_IMAGE_MODEL`, `GEMINI_FLASH_MODEL` — single source of truth for all AI model identifiers. Always import from here; never hardcode model strings.
+- **Retry config**: `API_MAX_RETRIES`, `RETRY_BACKOFF_BASE_MS`, `RETRY_JITTER_MAX_MS`, `RETRY_DELAY_CAP_MS`
+- **Token budgets**: `CARD_TOKEN_LIMITS` (keyed by detail level), `COVER_TOKEN_LIMIT`, `CHAT_MAX_TOKENS`
+
+### `utils/logger.ts` — Environment-aware logging
+`createLogger('ModuleName')` returns `{ debug, log, info, warn, error }`. Debug/log/info are suppressed in production builds. All modules use this instead of raw `console.*`.
+
+### `utils/documentResolution.ts` — Document filtering
+`resolveEnabledDocs(docs)` — filters to enabled documents with content available (content, fileId, or pdfBase64). Use for AI-consumption filtering. Do NOT use for display-only counting (HeaderBar, PanelRequirements, SourcesManagerSidebar) where processing-in-progress documents should still appear.
+
+### `hooks/useAbortController.ts` — Abort lifecycle management
+Shared `useAbortController()` hook used by `useCardGeneration`, `useInsightsLab`, and `useAutoDeck`. Provides `create`, `createFresh`, `abort`, `clear`, and `isAbortError`.
+
+## App.tsx Structure (~974 lines)
+
+App.tsx is the main orchestrator. Several concerns are extracted into dedicated hooks and components:
+
+- **`components/HeaderBar.tsx`** — Breadcrumb navigation, dark mode toggle, usage dropdown. Contains its own local state (dropdown visibility, refs, click-outside effects).
+- **`hooks/useTabManagement.ts`** — Tab bar state, sync with project nuggets, tab CRUD handlers.
+- **`hooks/useStylingSync.ts`** — Bidirectional toolbar ↔ nugget styling sync. Uses `skipStylingWritebackRef` to prevent feedback loops.
 
 ## Code Modification Safety
 

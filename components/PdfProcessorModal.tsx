@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { createLogger } from '../utils/logger';
 import { BookmarkNode, BookmarkSource } from '../types';
+
+const log = createLogger('PdfProcessor');
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useResizeDrag } from '../hooks/useResizeDrag';
 import { headingsToBookmarks, writeBookmarksToPdf, countBookmarks } from '../utils/pdfBookmarks';
@@ -127,7 +130,7 @@ const PdfProcessorModal: React.FC<PdfProcessorModalProps> = ({
         if (!cancelled) {
           setPdfError('Failed to read PDF file.');
           setLoadingPdf(false);
-          console.error('[PdfProcessorModal] Base64 encoding failed:', err);
+          log.error('Base64 encoding failed:', err);
         }
       });
     return () => { cancelled = true; };
@@ -156,7 +159,7 @@ const PdfProcessorModal: React.FC<PdfProcessorModalProps> = ({
         }
       } catch (err) {
         if (!cancelled) {
-          console.error('[PdfProcessorModal] Gemini analysis failed:', err);
+          log.error('Gemini analysis failed:', err);
           setBookmarkError('Document analysis failed. You can convert to markdown instead.');
           setAnalysisComplete(true);
         }
@@ -190,7 +193,7 @@ const PdfProcessorModal: React.FC<PdfProcessorModalProps> = ({
       try {
         finalBase64 = await writeBookmarksToPdf(pdfBase64, bookmarks);
       } catch (err) {
-        console.error('[PdfProcessorModal] Failed to bake bookmarks, using original PDF:', err);
+        log.error('Failed to bake bookmarks, using original PDF:', err);
       }
       onAccept({ pdfBase64: finalBase64, bookmarks, bookmarkSource });
     } finally {

@@ -260,12 +260,6 @@ export interface ImageVersion {
   label: string; // "Original", "Modification 1", etc.
 }
 
-enum _FileType {
-  MD = 'text/markdown',
-  PDF = 'application/pdf',
-  PLAIN = 'text/plain',
-}
-
 // ─────────────────────────────────────────────────────────────────
 // Insights Workflow Types
 // ─────────────────────────────────────────────────────────────────

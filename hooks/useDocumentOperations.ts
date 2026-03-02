@@ -2,6 +2,7 @@ import { useState, useCallback, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
+import { CLAUDE_MODEL } from '../utils/constants';
 import { BookmarkNode, Card, DetailLevel, Heading, UploadedFile, Nugget, isCoverLevel } from '../types';
 import { flattenCards } from '../utils/cardUtils';
 import { getUniqueName } from '../utils/naming';
@@ -20,8 +21,12 @@ import type { PdfProcessorResult } from '../components/PdfProcessorModal';
 import { headingsToBookmarks, flattenBookmarks, writeBookmarksToPdf } from '../utils/pdfBookmarks';
 import { buildContentPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
 import { buildCoverContentPrompt } from '../utils/prompts/coverGeneration';
+import { resolveEnabledDocs } from '../utils/documentResolution';
 import { useToast } from '../components/ToastNotification';
 import { RecordUsageFn } from './useTokenUsage';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('DocOps');
 
 export interface UseDocumentOperationsParams {
   recordUsage: RecordUsageFn;
@@ -74,7 +79,7 @@ export function useDocumentOperations({
         return next;
       });
 
-      const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false);
+      const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
       const docsWithFileId = enabledDocs.filter((d) => d.fileId);
 
       // ── Direct Content (Snapshot): use raw section text as-is, no AI synthesis ──
@@ -252,7 +257,7 @@ export function useDocumentOperations({
 
         recordUsage({
           provider: 'claude',
-          model: 'claude-sonnet-4-6',
+          model: CLAUDE_MODEL,
           inputTokens: claudeUsage.input_tokens,
           outputTokens: claudeUsage.output_tokens,
           cacheReadTokens: claudeUsage.cache_read_input_tokens,
@@ -270,7 +275,7 @@ export function useDocumentOperations({
         fillPlaceholderCard(placeholderId, detailLevel, synthesizedText);
         setActiveCardId(placeholderId);
       } catch (err) {
-        console.error('Generate card content failed:', err);
+        log.error('Generate card content failed:', err);
         removePlaceholderCard(placeholderId, detailLevel);
       } finally {
         setGeneratingSourceIds((prev) => {
@@ -296,7 +301,7 @@ export function useDocumentOperations({
         if (doc.fileId) deleteFromFilesAPI(doc.fileId);
         fileId = await uploadToFilesAPI(newContent, doc.name, 'text/plain');
       } catch (err) {
-        console.warn('[App] Files API re-upload failed (will use inline fallback):', err);
+        log.warn('Files API re-upload failed (will use inline fallback):', err);
       }
       updateNuggetDocument(docId, {
         ...doc,
@@ -326,7 +331,7 @@ export function useDocumentOperations({
         try {
           newPdfBase64 = await writeBookmarksToPdf(doc.pdfBase64, newBookmarks);
         } catch (err) {
-          console.warn('[App] Failed to write bookmarks into PDF:', err);
+          log.warn('Failed to write bookmarks into PDF:', err);
         }
       }
 
@@ -384,7 +389,7 @@ export function useDocumentOperations({
           copyFileId = await uploadToFilesAPI(doc.content, uniqueDocName, 'text/plain');
         }
       } catch (err) {
-        console.warn('[App] Files API upload for document copy failed:', err);
+        log.warn('Files API upload for document copy failed:', err);
       }
       // Derive source project name for origin tracking
       const sourceProject = projects.find((p) => p.nuggetIds.includes(selectedNugget.id));
@@ -449,7 +454,7 @@ export function useDocumentOperations({
           copyFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
         }
       } catch (err) {
-        console.warn('[App] Files API upload for new nugget doc copy failed:', err);
+        log.warn('Files API upload for new nugget doc copy failed:', err);
       }
       const docCopy: UploadedFile = {
         ...doc,
@@ -522,7 +527,7 @@ export function useDocumentOperations({
             try {
               fileId = await uploadToFilesAPI(processed.content, uniqueName, 'text/plain');
             } catch (err) {
-              console.warn('[App] Files API upload failed (will use inline fallback):', err);
+              log.warn('Files API upload failed (will use inline fallback):', err);
             }
           }
           updateNuggetDocument(placeholder.id, { ...processed, name: uniqueName, fileId });
@@ -620,7 +625,7 @@ export function useDocumentOperations({
                 'application/pdf',
               );
             } catch (err) {
-              console.warn('[App] Native PDF Files API upload failed:', err);
+              log.warn('Native PDF Files API upload failed:', err);
             }
 
             const structure = bookmarks.length > 0

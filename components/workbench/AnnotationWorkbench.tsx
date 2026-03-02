@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { createLogger } from '../../utils/logger';
 import {
   ZoomViewState,
   AnnotationTool,
@@ -10,6 +11,8 @@ import {
   ImageVersion,
   Palette,
 } from '../../types';
+
+const log = createLogger('Workbench');
 import AnnotationToolbar from './AnnotationToolbar';
 import { useAnnotations, createAnnotationId } from '../../hooks/useAnnotations';
 import {
@@ -577,7 +580,7 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
         onImageModified(cardId, result.newImageUrl, updatedVersions);
       }
     } catch (err: any) {
-      console.error('Modification failed:', err);
+      log.error('Modification failed:', err);
       setModifyError(err.message || 'Modification failed. Please try again.');
     } finally {
       setIsModifying(false);

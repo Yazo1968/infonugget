@@ -1,3 +1,4 @@
+import { GEMINI_IMAGE_MODEL } from './constants';
 import { withGeminiRetry, PRO_IMAGE_CONFIG, getGeminiAI } from './ai';
 import { buildModificationPrompt, buildContentModificationPrompt } from './prompts/imageGeneration';
 
@@ -79,7 +80,7 @@ export async function executeModification(
   const response = await withGeminiRetry(async () => {
     const ai = await getGeminiAI();
     return await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
+      model: GEMINI_IMAGE_MODEL,
       contents: [
         {
           parts,
@@ -96,7 +97,7 @@ export async function executeModification(
   if (response.usageMetadata) {
     onUsage?.({
       provider: 'gemini',
-      model: 'gemini-3-pro-image-preview',
+      model: GEMINI_IMAGE_MODEL,
       inputTokens: response.usageMetadata.promptTokenCount ?? 0,
       outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
     });
@@ -155,7 +156,7 @@ export async function executeContentModification(
   const response = await withGeminiRetry(async () => {
     const ai = await getGeminiAI();
     return await ai.models.generateContent({
-      model: 'gemini-3-pro-image-preview',
+      model: GEMINI_IMAGE_MODEL,
       contents: [
         {
           parts: [
@@ -180,7 +181,7 @@ export async function executeContentModification(
   if (response.usageMetadata) {
     onUsage?.({
       provider: 'gemini',
-      model: 'gemini-3-pro-image-preview',
+      model: GEMINI_IMAGE_MODEL,
       inputTokens: response.usageMetadata.promptTokenCount ?? 0,
       outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
     });

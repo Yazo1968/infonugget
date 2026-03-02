@@ -9,6 +9,9 @@ import {
   extractImages,
 } from '../utils/storage/serialize';
 import { flattenCards } from '../utils/cardUtils';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Persistence');
 
 const APP_STATE_DEBOUNCE_MS = 300;
 const DATA_DEBOUNCE_MS = 1500;
@@ -64,7 +67,7 @@ export function usePersistence({
     appStateTimer.current = setTimeout(() => {
       storage
         .saveAppState({ selectedNuggetId, selectedDocumentId, selectedProjectId, activeCardId, openProjectId })
-        .catch((err) => console.warn('[Persistence] Failed to save app state:', err));
+        .catch((err) => log.warn('Failed to save app state:', err));
     }, APP_STATE_DEBOUNCE_MS);
     return () => {
       if (appStateTimer.current) clearTimeout(appStateTimer.current);
@@ -147,8 +150,8 @@ export function usePersistence({
     nuggetsTimer.current = setTimeout(() => {
       const total = latestRef.current.nuggets.length;
       saveAllNuggets()
-        .then((saved) => console.log(`[Persistence] Nuggets saved: ${saved}/${total} dirty`))
-        .catch((err) => console.warn('[Persistence] Failed to save nuggets:', err));
+        .then((saved) => log.log(`Nuggets saved: ${saved}/${total} dirty`))
+        .catch((err) => log.warn('Failed to save nuggets:', err));
     }, DATA_DEBOUNCE_MS);
     return () => {
       if (nuggetsTimer.current) clearTimeout(nuggetsTimer.current);
@@ -177,10 +180,10 @@ export function usePersistence({
     if (!storage.isReady() || !hydrationDone.current) return;
     if (projectsTimer.current) clearTimeout(projectsTimer.current);
     projectsTimer.current = setTimeout(() => {
-      console.log('[Persistence] Saving projects...', latestRef.current.projects.length);
+      log.log('Saving projects...', latestRef.current.projects.length);
       saveAllProjects()
-        .then(() => console.log('[Persistence] Projects saved successfully'))
-        .catch((err) => console.warn('[Persistence] Failed to save projects:', err));
+        .then(() => log.log('Projects saved successfully'))
+        .catch((err) => log.warn('Failed to save projects:', err));
     }, DATA_DEBOUNCE_MS);
     return () => {
       if (projectsTimer.current) clearTimeout(projectsTimer.current);
@@ -194,8 +197,8 @@ export function usePersistence({
     customStylesTimer.current = setTimeout(() => {
       storage
         .saveCustomStyles(latestRef.current.customStyles)
-        .then(() => console.log('[Persistence] Custom styles saved:', latestRef.current.customStyles.length))
-        .catch((err) => console.warn('[Persistence] Failed to save custom styles:', err));
+        .then(() => log.log('Custom styles saved:', latestRef.current.customStyles.length))
+        .catch((err) => log.warn('Failed to save custom styles:', err));
     }, APP_STATE_DEBOUNCE_MS);
     return () => {
       if (customStylesTimer.current) clearTimeout(customStylesTimer.current);

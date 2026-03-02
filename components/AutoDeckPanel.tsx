@@ -94,7 +94,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
 
 
   // ── Briefing field handler ──
-  const updateBriefing = useCallback((field: keyof AutoDeckBriefing, value: string) => {
+  const updateBriefing = useCallback((field: keyof typeof BRIEFING_LIMITS, value: string) => {
     const limit = BRIEFING_LIMITS[field];
     setBriefing((prev) => ({ ...prev, [field]: value.slice(0, limit) }));
   }, []);
@@ -161,7 +161,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   const labelColor = darkMode ? '#94a3b8' : '#64748b';
 
   // ── Briefing field renderer ──
-  const renderBriefingField = (field: keyof AutoDeckBriefing, label: string, hint: string, required: boolean) => {
+  const renderBriefingField = (field: keyof typeof BRIEFING_LIMITS, label: string, hint: string, required: boolean) => {
     const value = briefing[field] || '';
     const limit = BRIEFING_LIMITS[field];
     const charCount = value.length;

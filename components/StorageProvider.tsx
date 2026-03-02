@@ -1,5 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { createLogger } from '../utils/logger';
 import { UploadedFile, InsightsSession, Nugget, Project, InitialPersistedState, CustomStyle } from '../types';
+
+const log = createLogger('Storage');
 import { AppProvider, useAppContext } from '../context/AppContext';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
@@ -60,7 +63,7 @@ async function cleanupOrphanedData(storageBackend: StorageBackend, hydratedNugge
     let orphanCount = 0;
     for (const id of storedNuggetIds) {
       if (!hydratedNuggetIds.has(id)) {
-        console.warn(`[Storage] Cleaning up orphaned nugget: ${id}`);
+        log.warn('Cleaning up orphaned nugget:', id);
         await storageBackend.deleteNugget(id);
         await storageBackend.deleteNuggetDocuments(id);
         await storageBackend.deleteNuggetHeadings(id);
@@ -69,14 +72,14 @@ async function cleanupOrphanedData(storageBackend: StorageBackend, hydratedNugge
       }
     }
     if (orphanCount > 0) {
-      console.log(`[Storage] Cleaned up ${orphanCount} orphaned nugget(s)`);
+      log.log(`Cleaned up ${orphanCount} orphaned nugget(s)`);
     }
 
     // Belt and suspenders: clear any remaining legacy store data
     await storageBackend.clearLegacyStores();
   } catch (err) {
     // Non-fatal — log and continue, don't block app startup
-    console.warn('[Storage] Orphan cleanup failed (non-fatal):', err);
+    log.warn('Orphan cleanup failed (non-fatal):', err);
   }
 }
 
@@ -110,7 +113,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     storage.loadCustomStyles(),
   ]);
 
-  console.log('[Storage] Raw stores:', {
+  log.log('Raw stores:', {
     storedNuggets: storedNuggets.length,
     storedProjects: storedProjects.length,
     storedFiles: storedFiles.length,
@@ -147,7 +150,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
   if (nuggetsNeedDocMigration) {
     const oldDocuments = await storage.loadDocuments();
     if (oldDocuments.length > 0) {
-      console.log(`[Storage] Migrating v2→v3: ${oldDocuments.length} documents to embed in nuggets`);
+      log.log(`Migrating v2→v3: ${oldDocuments.length} documents to embed in nuggets`);
       const docMap = new Map(oldDocuments.map((sd) => [sd.id, deserializeFile(sd)]));
 
       for (const nugget of nuggets) {
@@ -161,7 +164,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
           await storage.saveNugget(serializeNugget(nugget));
         }
       }
-      console.log(`[Storage] v2→v3 migration complete`);
+      log.log(`v2→v3 migration complete`);
     }
   }
 
@@ -244,7 +247,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
       }
     }
 
-    console.log(`[Storage] Migrated v1→v3: ${nuggets.length} nuggets created`);
+    log.log(`Migrated v1→v3: ${nuggets.length} nuggets created`);
   }
 
   // ── Migration: convert any remaining synthesis-type nuggets to insights ──
@@ -271,7 +274,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     };
     projects = [defaultProject];
     await storage.saveProject(serializeProject(defaultProject));
-    console.log(`[Storage] Migrated nuggets→project: created default "My Project" with ${nuggets.length} nuggets`);
+    log.log(`Migrated nuggets→project: created default "My Project" with ${nuggets.length} nuggets`);
   }
 
   // ── Startup integrity check: clean up orphaned data ──
@@ -306,14 +309,14 @@ export const StorageProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     hydrateFromStorage()
       .then((state) => {
-        console.log(
-          '[Storage] Hydration result:',
+        log.log(
+          'Hydration result:',
           state ? `${state.nuggets.length} nuggets, ${state.projects.length} projects` : 'null (no data)',
         );
         if (!cancelled) setInitialState(state);
       })
       .catch((err) => {
-        console.error('[Storage] Hydration failed, starting fresh:', err);
+        log.error('Hydration failed, starting fresh:', err);
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

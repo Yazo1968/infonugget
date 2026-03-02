@@ -4,6 +4,7 @@ import { CustomStyle, Palette, FontPair } from '../types';
 import { BUILTIN_STYLE_NAMES, generateStyleWithAI } from '../utils/ai';
 import { useFocusTrap } from '../hooks/useFocusTrap';
 import { useStyleContext } from '../context/StyleContext';
+import { useAbortController } from '../hooks/useAbortController';
 
 interface StyleStudioModalProps {
   onClose: () => void;
@@ -97,7 +98,7 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
   const [aiDescription, setAiDescription] = useState('');
   const [aiGenerating, setAiGenerating] = useState(false);
   const [aiError, setAiError] = useState('');
-  const aiAbortRef = useRef<AbortController | null>(null);
+  const { create: createAbort, abort: abortAI, isAbortError } = useAbortController();
   const aiNameInputRef = useRef<HTMLInputElement>(null);
 
   // ── Selected style from draft ──
@@ -194,9 +195,9 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
   // Cleanup abort controller on unmount
   useEffect(() => {
     return () => {
-      aiAbortRef.current?.abort();
+      abortAI();
     };
-  }, []);
+  }, [abortAI]);
 
   // ── Flush editor before switching selection ──
   const selectStyle = (id: string) => {
@@ -243,8 +244,7 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
 
     setAiGenerating(true);
     setAiError('');
-    const controller = new AbortController();
-    aiAbortRef.current = controller;
+    const controller = createAbort();
 
     try {
       const result = await generateStyleWithAI(trimmedName, aiDescription, controller.signal);
@@ -263,16 +263,15 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
       setSelectedId(newStyle.id);
       setShowAIDialog(false);
     } catch (err: unknown) {
-      if ((err as Error).name === 'AbortError') return;
+      if (isAbortError(err)) return;
       setAiError(err instanceof Error ? err.message : 'Generation failed');
     } finally {
       setAiGenerating(false);
-      aiAbortRef.current = null;
     }
   }, [aiName, aiDescription, draft, flushEditorToDraft]);
 
   const handleCancelAI = () => {
-    aiAbortRef.current?.abort();
+    abortAI();
     setShowAIDialog(false);
     setAiName('');
     setAiDescription('');

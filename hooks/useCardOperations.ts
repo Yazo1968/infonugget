@@ -3,6 +3,7 @@ import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { Card, CardFolder, CardItem, DetailLevel, ChatMessage, Nugget, isCardFolder } from '../types';
+import { resolveEnabledDocs } from '../utils/documentResolution';
 import { getUniqueName } from '../utils/naming';
 import {
   flattenCards,
@@ -321,8 +322,7 @@ export function useCardOperations() {
       const level = message.detailLevel || 'Standard';
       const now = Date.now();
 
-      const activeDocNames = selectedNugget.documents
-        .filter((d) => d.enabled !== false && d.content)
+      const activeDocNames = resolveEnabledDocs(selectedNugget.documents)
         .map((d) => d.name);
 
       const newCard: Card = {

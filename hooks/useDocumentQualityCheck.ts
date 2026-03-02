@@ -1,9 +1,14 @@
 import { useState, useCallback, useMemo } from 'react';
+import { CLAUDE_MODEL } from '../utils/constants';
 import { Nugget, QualityReport, TopicCluster, QualityConflict } from '../types';
 import { callClaude } from '../utils/ai';
 import { buildQualityCheckPrompt } from '../utils/prompts/qualityCheck';
 import { buildTocSystemPrompt } from '../utils/pdfBookmarks';
+import { resolveEnabledDocs } from '../utils/documentResolution';
 import { RecordUsageFn } from './useTokenUsage';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('QualityCheck');
 
 // ─────────────────────────────────────────────────────────────────
 // Document Quality Check Hook
@@ -43,7 +48,7 @@ export function useDocumentQualityCheck(
   const effectiveStatus = useMemo((): QualityStatus => {
     if (!selectedNugget) return null;
 
-    const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false && (d.content || d.fileId));
+    const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
     if (enabledDocs.length === 0) return null;
     if (enabledDocs.length === 1) return 'green';
 
@@ -59,9 +64,7 @@ export function useDocumentQualityCheck(
   const runQualityCheck = useCallback(async () => {
     if (!selectedNugget) return;
 
-    const enabledDocs = selectedNugget.documents.filter(
-      (d) => d.enabled !== false && (d.content || d.fileId),
-    );
+    const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
 
     // Single doc or no docs → auto-green
     if (enabledDocs.length <= 1) {
@@ -138,7 +141,7 @@ export function useDocumentQualityCheck(
 
       recordUsage?.({
         provider: 'claude',
-        model: 'claude-sonnet-4-6',
+        model: CLAUDE_MODEL,
         inputTokens: usage?.input_tokens ?? 0,
         outputTokens: usage?.output_tokens ?? 0,
         cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
@@ -163,7 +166,7 @@ export function useDocumentQualityCheck(
 
       updateNugget(selectedNugget.id, (n) => ({ ...n, qualityReport: report }));
     } catch (err) {
-      console.error('[QualityCheck] Analysis failed:', err);
+      log.error('Analysis failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
       setCheckError(msg);
     } finally {

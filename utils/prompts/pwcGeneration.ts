@@ -1,5 +1,5 @@
 import { DetailLevel, StylingOptions } from '../../types';
-import { buildExpertPriming, transformContentToTags, hexToColorName, fontToDescriptor } from './promptUtils';
+import { buildExpertPriming, transformContentToTags, hexToColorName, fontToDescriptor, countWords, describeCanvas } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // PwC Corporate — Dedicated Prompt Pipeline (Hybrid JSON Trial)
@@ -122,14 +122,8 @@ export function buildPwcPlannerPrompt(
   previousPlan?: string,
   subject?: string,
 ): string {
-  const wordCount = synthesisContent.split(/\s+/).filter((w) => w.length > 0).length;
-
-  let canvasDescription = 'landscape — wider than tall';
-  if (aspectRatio === '9:16') canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '1:1') canvasDescription = 'square — equal width and height';
-  else if (aspectRatio === '4:5' || aspectRatio === '3:4' || aspectRatio === '2:3')
-    canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '5:4' || aspectRatio === '3:2') canvasDescription = 'near-square landscape';
+  const wordCount = countWords(synthesisContent);
+  const canvasDescription = describeCanvas(aspectRatio);
 
   let diversityClause = '';
   if (previousPlan) {
@@ -276,12 +270,7 @@ export function buildPwcCoverPlannerPrompt(
   aspectRatio: string = '16:9',
   coverType: DetailLevel,
 ): string {
-  let canvasDescription = 'landscape — wider than tall';
-  if (aspectRatio === '9:16') canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '1:1') canvasDescription = 'square — equal width and height';
-  else if (aspectRatio === '4:5' || aspectRatio === '3:4' || aspectRatio === '2:3')
-    canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '5:4' || aspectRatio === '3:2') canvasDescription = 'near-square landscape';
+  const canvasDescription = describeCanvas(aspectRatio);
 
   const coverKind = coverType === 'TitleCard' ? 'Title Card' : 'Takeaway Card';
 

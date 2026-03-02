@@ -1,8 +1,11 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import type { TextLayer } from 'pdfjs-dist';
+import { createLogger } from '../utils/logger';
 import { loadPdfjs } from '../utils/pdfLoader';
 import { base64ToUint8Array } from '../utils/pdfBookmarks';
+
+const log = createLogger('PdfViewer');
 
 export interface PdfViewerHandle {
   scrollToPage: (pageNum: number) => void;
@@ -154,7 +157,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
           setPdfjsLoaded(true);
         })
         .catch((err) => {
-          console.error('Failed to load PDF viewer library:', err);
+          log.error('Failed to load PDF viewer library:', err);
           setPdfjsError('Failed to load PDF viewer. Please refresh the page.');
         });
     }, []);
@@ -258,7 +261,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
           renderedStateRef.current.set(pageNum, { scale, rotation });
         } catch (e: any) {
           if (e?.name !== 'RenderingCancelledException') {
-            console.error(`Error rendering page ${pageNum}:`, e);
+            log.error(`Error rendering page ${pageNum}:`, e);
           }
           return; // Don't render text layer if canvas render failed
         }
@@ -283,7 +286,7 @@ const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(
             await textLayer.render();
           } catch (e: any) {
             if (e?.name !== 'RenderingCancelledException') {
-              console.error(`Error rendering text layer for page ${pageNum}:`, e);
+              log.error(`Error rendering text layer for page ${pageNum}:`, e);
             }
           }
         }

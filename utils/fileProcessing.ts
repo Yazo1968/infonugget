@@ -1,7 +1,11 @@
 import { Heading, UploadedFile } from '../types';
+import { GEMINI_FLASH_MODEL } from './constants';
 import { getGeminiAI, withGeminiRetry } from './ai';
+import { createLogger } from './logger';
 import { parseMarkdownStructure } from './markdown';
 import { HEADING_EXTRACTION_PROMPT, PDF_CONVERSION_PROMPT } from './prompts/documentConversion';
+
+const log = createLogger('FileProcessing');
 
 // ── Helpers ──
 
@@ -38,12 +42,12 @@ export function createPlaceholderDocument(file: File): UploadedFile {
  */
 async function convertPdfWithGemini(file: File): Promise<string> {
   const base64 = await fileToBase64(file);
-  console.debug(`[FileProcessing] PDF base64 ready (${base64.length} chars), sending to Gemini Flash…`);
+  log.debug(`PDF base64 ready (${base64.length} chars), sending to Gemini Flash…`);
 
   const response = await withGeminiRetry(async () => {
     const ai = await getGeminiAI();
     return await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: GEMINI_FLASH_MODEL,
       contents: [
         { parts: [{ inlineData: { data: base64, mimeType: 'application/pdf' } }, { text: PDF_CONVERSION_PROMPT }] },
       ],
@@ -58,7 +62,7 @@ async function convertPdfWithGemini(file: File): Promise<string> {
       .map((p: any) => p.text)
       .join('') || '';
 
-  console.debug(`[FileProcessing] Gemini conversion complete (${text.length} chars)`);
+  log.debug(`Gemini conversion complete (${text.length} chars)`);
   return text;
 }
 
@@ -112,12 +116,12 @@ export async function processFileToDocument(file: File, id?: string): Promise<Up
  */
 export async function extractHeadingsWithGemini(base64: string, fileName: string): Promise<Heading[]> {
   try {
-    console.debug(`[FileProcessing] Extracting headings + word counts via Gemini Flash for "${fileName}"...`);
+    log.debug(`Extracting headings + word counts via Gemini Flash for "${fileName}"...`);
 
     const response = await withGeminiRetry(async () => {
       const ai = await getGeminiAI();
       return await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: GEMINI_FLASH_MODEL,
         contents: [
           {
             parts: [{ inlineData: { data: base64, mimeType: 'application/pdf' } }, { text: HEADING_EXTRACTION_PROMPT }],
@@ -134,7 +138,7 @@ export async function extractHeadingsWithGemini(base64: string, fileName: string
         .map((p: any) => p.text)
         .join('') || '';
 
-    console.debug(`[FileProcessing] Gemini heading response (${text.length} chars)`);
+    log.debug(`Gemini heading response (${text.length} chars)`);
 
     // Parse JSON response — Gemini may wrap it in markdown fences
     const cleaned = text
@@ -144,7 +148,7 @@ export async function extractHeadingsWithGemini(base64: string, fileName: string
     const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
 
     if (!arrayMatch) {
-      console.warn('[FileProcessing] No heading array found in Gemini response. Raw:', text.substring(0, 500));
+      log.warn('No heading array found in Gemini response. Raw:', text.substring(0, 500));
       return [];
     }
 
@@ -158,10 +162,10 @@ export async function extractHeadingsWithGemini(base64: string, fileName: string
       wordCount: typeof entry.wordCount === 'number' ? entry.wordCount : undefined,
     }));
 
-    console.debug(`[FileProcessing] Gemini heading extraction: ${headings.length} headings from "${fileName}"`);
+    log.debug(`Gemini heading extraction: ${headings.length} headings from "${fileName}"`);
     return headings;
   } catch (err) {
-    console.warn('[FileProcessing] Gemini heading extraction failed:', err);
+    log.warn('Gemini heading extraction failed:', err);
     return [];
   }
 }

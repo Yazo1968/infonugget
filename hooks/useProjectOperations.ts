@@ -11,6 +11,9 @@ import type { PdfProcessorResult } from '../components/PdfProcessorModal';
 import { useToast } from '../components/ToastNotification';
 import { generateSubject } from '../utils/subjectGeneration';
 import { RecordUsageFn } from './useTokenUsage';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('ProjectOps');
 
 /** Re-upload a document's content to the Files API, returning a new fileId (or undefined on failure). */
 async function reuploadDocToFilesAPI(doc: UploadedFile): Promise<string | undefined> {
@@ -21,7 +24,7 @@ async function reuploadDocToFilesAPI(doc: UploadedFile): Promise<string | undefi
       return await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
     }
   } catch (err) {
-    console.warn('[useProjectOperations] Files API re-upload failed for', doc.name, err);
+    log.warn('Files API re-upload failed for', doc.name, err);
   }
   return undefined;
 }
@@ -117,7 +120,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                   const fileId = await uploadToFilesAPI(processed.content, pf.file.name, 'text/plain');
                   processed = { ...processed, fileId };
                 } catch (err) {
-                  console.warn('[App] Files API upload failed (will use inline fallback):', err);
+                  log.warn('Files API upload failed (will use inline fallback):', err);
                 }
               }
               updateNugget(nugget.id, (n) => ({
@@ -126,7 +129,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                 lastModifiedAt: Date.now(),
               }));
             } catch (err) {
-              console.error(`[App] Processing failed for ${pf.file.name}:`, err);
+              log.error(`Processing failed for ${pf.file.name}:`, err);
               updateNugget(nugget.id, (n) => ({
                 ...n,
                 documents: n.documents.map((d) => (d.id === pf.placeholderId ? { ...d, status: 'error' as const } : d)),
@@ -224,7 +227,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                   try {
                     pdfFileId = await uploadToFilesAPI(base64ToBlob(processedBase64, 'application/pdf'), pf.file.name, 'application/pdf');
                   } catch (err) {
-                    console.warn('[App] Native PDF Files API upload failed:', err);
+                    log.warn('Native PDF Files API upload failed:', err);
                   }
                   const structure = bookmarks.length > 0 ? flattenBookmarks(bookmarks) : [];
                   updateNugget(nugget.id, (n) => ({
@@ -251,7 +254,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                   }));
                 }
               } catch (err) {
-                console.error(`[App] Processing failed for ${pf.file.name}:`, err);
+                log.error(`Processing failed for ${pf.file.name}:`, err);
                 updateNugget(nugget.id, (n) => ({
                   ...n,
                   documents: n.documents.map((d) => (d.id === pf.placeholderId ? { ...d, status: 'error' as const } : d)),
@@ -283,7 +286,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                 duration: 8000,
               });
             } catch (err) {
-              console.warn('[App] Subject auto-generation failed for new nugget:', err);
+              log.warn('Subject auto-generation failed for new nugget:', err);
               addToast({
                 type: 'warning',
                 message: 'Could not auto-generate subject',
@@ -521,7 +524,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         updateNugget(nuggetId, (n) => ({ ...n, subject, lastModifiedAt: Date.now() }));
         addToast({ type: 'success', message: 'Subject regenerated successfully.', duration: 4000 });
       } catch (err) {
-        console.warn('[App] Subject regeneration failed:', err);
+        log.warn('Subject regeneration failed:', err);
         addToast({
           type: 'error',
           message: 'Failed to regenerate subject.',
@@ -582,7 +585,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
           duration: 8000,
         });
       } catch (err) {
-        console.warn('[App] Subject auto-generation failed:', err);
+        log.warn('Subject auto-generation failed:', err);
         addToast({
           type: 'warning',
           message: 'Could not auto-generate subject',

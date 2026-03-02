@@ -1,4 +1,7 @@
 import { ParsedPlan, PlanQuestion, ConflictItem, AutoDeckLod } from '../../types';
+import { createLogger } from '../logger';
+
+const log = createLogger('AutoDeckParser');
 
 // ── JSON extraction helper ──
 
@@ -238,7 +241,7 @@ export function parseProducerResponse(raw: string): ProducerResult {
       }));
 
       if (attempt.label !== 'strict') {
-        console.warn(`[AutoDeck] Producer JSON recovered via ${attempt.label} parse (${cards.length} cards)`);
+        log.warn(`Producer JSON recovered via ${attempt.label} parse (${cards.length} cards)`);
       }
 
       return { status: 'ok', cards };

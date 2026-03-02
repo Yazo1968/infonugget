@@ -78,7 +78,5 @@ export function estimateCardCount(
   };
 }
 
-/** Count words in a string (simple whitespace split) */
-export function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
+// Re-export shared countWords so existing imports keep working
+export { countWords } from '../prompts/promptUtils';

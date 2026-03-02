@@ -1,4 +1,5 @@
 import { Card, CardFolder, CardItem, DetailLevel, UploadedFile, isCardFolder } from '../types';
+import { countWords } from './prompts/promptUtils';
 
 /**
  * Flatten a CardItem[] into a flat Card[] (folders dissolved).
@@ -235,7 +236,7 @@ export function computeMdSectionWordCount(cardTitle: string, doc: UploadedFile):
   // Markdown path: extract text and count words
   const text = extractMdSectionText(cardTitle, doc);
   if (!text) return null;
-  return text.split(/\s+/).filter((w) => w.length > 0).length;
+  return countWords(text);
 }
 
 /**

@@ -1,23 +1,4 @@
 /**
- * Relative timestamp for display (e.g. "5m ago", "2d ago", "Jan 15").
- */
-function _formatTimestamp(ts?: number): string {
-  if (!ts) return '—';
-  const date = new Date(ts);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMs / 3600000);
-  const diffDays = Math.floor(diffMs / 86400000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
-}
-
-/**
  * Full timestamp in fixed format: "03 Jan 2026 6:12 PM".
  */
 export function formatTimestampFull(ts?: number): string {

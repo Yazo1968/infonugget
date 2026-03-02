@@ -1,4 +1,5 @@
 import { InsightsDocument } from '../../types';
+import { createLogger } from '../logger';
 import {
   StorageBackend,
   AppSessionState,
@@ -10,6 +11,8 @@ import {
   StoredNuggetDocument,
   StoredProject,
 } from './StorageBackend';
+
+const log = createLogger('IndexedDB');
 
 const DB_NAME = 'infonugget-db';
 const DB_VERSION = 5;
@@ -227,7 +230,7 @@ export class IndexedDBBackend implements StorageBackend {
       };
 
       request.onerror = () => {
-        console.error('IndexedDB init failed:', request.error);
+        log.error('IndexedDB init failed:', request.error);
         reject(request.error);
       };
     });

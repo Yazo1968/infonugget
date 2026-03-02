@@ -1,6 +1,9 @@
 import type { PDFRef } from 'pdf-lib';
 import type { PDFDocumentProxy } from 'pdfjs-dist';
 import { BookmarkNode, Heading } from '../types';
+import { createLogger } from './logger';
+
+const log = createLogger('PdfBookmarks');
 
 // ── Extraction from pdf.js ──
 
@@ -47,7 +50,7 @@ export async function extractBookmarksFromPdf(pdfDocument: PDFDocumentProxy): Pr
 
     return buildTree(outline, 1);
   } catch (err) {
-    console.warn('[pdfBookmarks] Failed to extract bookmarks from PDF:', err);
+    log.warn('Failed to extract bookmarks from PDF:', err);
     return [];
   }
 }

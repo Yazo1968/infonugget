@@ -6,7 +6,6 @@ import {
   CardFolder,
   isCardFolder,
   DetailLevel,
-  InsightsSession,
   Nugget,
   Project,
   ImageVersion,
@@ -16,7 +15,6 @@ import {
   StoredFile,
   StoredHeading,
   StoredImage,
-  StoredInsightsSession,
   StoredNugget,
   StoredNuggetDocument,
   StoredProject,
@@ -270,30 +268,6 @@ export function deserializeCard(stored: StoredHeading, images: StoredImage[]): C
   }
 
   return card;
-}
-
-// ── Insights serialization ──
-
-export function serializeInsightsSession(session: InsightsSession): {
-  session: StoredInsightsSession;
-  headings: StoredHeading[];
-  images: StoredImage[];
-} {
-  const storedSession: StoredInsightsSession = {
-    id: session.id,
-    messages: session.messages,
-  };
-
-  const headings: StoredHeading[] = [];
-  const images: StoredImage[] = [];
-  const insightsFileId = '__insights__';
-
-  for (const card of session.cards) {
-    headings.push(serializeCard(card, insightsFileId));
-    images.push(...extractImages(card, insightsFileId));
-  }
-
-  return { session: storedSession, headings, images };
 }
 
 // ── Nugget serialization ──

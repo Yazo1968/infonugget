@@ -1,7 +1,9 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
+import { useAbortController } from './useAbortController';
 import { Card, CardItem, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { CLAUDE_MODEL, GEMINI_IMAGE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard } from '../utils/cardUtils';
 import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, getGeminiAI } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
@@ -20,7 +22,11 @@ import {
   buildPwcCoverPlannerPrompt,
   buildPwcCoverVisualizerPrompt,
 } from '../utils/prompts/pwcGeneration';
+import { resolveEnabledDocs } from '../utils/documentResolution';
 import { useToast } from '../components/ToastNotification';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('CardGen');
 
 /**
  * Card generation pipeline — shared by the insights workflow.
@@ -46,7 +52,7 @@ export function useCardGeneration(
   const generateCardRef = useRef<(card: Card) => Promise<void>>(undefined);
 
   // AbortController for cancelling in-flight generation (single or batch)
-  const abortRef = useRef<AbortController | null>(null);
+  const { create: createAbort, abort: abortOp, isAbortError } = useAbortController();
 
   // Helper: set status for a specific card
   const setCardStatus = useCallback((cardId: string, status: string) => {
@@ -101,7 +107,7 @@ export function useCardGeneration(
   const performSynthesis = useCallback(
     async (card: Card, level: DetailLevel, signal?: AbortSignal) => {
       if (!selectedNugget) return null;
-      const enabledDocs = selectedNugget.documents.filter((d) => d.enabled !== false);
+      const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
       const docsWithFileId = enabledDocs.filter((d) => d.fileId);
       if (docsWithFileId.length === 0) return null;
 
@@ -159,20 +165,14 @@ export function useCardGeneration(
           systemBlocks,
           messages,
           maxTokens: isCover
-            ? level === 'TakeawayCard'
-              ? 350
-              : 256
-            : level === 'Executive'
-              ? 300
-              : level === 'Standard'
-                ? 600
-                : 1200,
+            ? (CARD_TOKEN_LIMITS[level] ?? COVER_TOKEN_LIMIT)
+            : (CARD_TOKEN_LIMITS[level] ?? CARD_TOKEN_LIMITS.Detailed),
           signal,
         });
 
         recordUsage?.({
           provider: 'claude',
-          model: 'claude-sonnet-4-6',
+          model: CLAUDE_MODEL,
           inputTokens: claudeUsage?.input_tokens ?? 0,
           outputTokens: claudeUsage?.output_tokens ?? 0,
           cacheReadTokens: claudeUsage?.cache_read_input_tokens ?? 0,
@@ -193,8 +193,8 @@ export function useCardGeneration(
 
         return synthesizedText;
       } catch (err: any) {
-        if (err.name === 'AbortError') return null;
-        console.error('Synthesis failed:', err);
+        if (isAbortError(err)) return null;
+        log.error('Synthesis failed:', err);
         updateNuggetCard(card.id, (c) => ({
           ...c,
           isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
@@ -223,9 +223,7 @@ export function useCardGeneration(
       if (externalSignal) {
         signal = externalSignal;
       } else {
-        abortRef.current?.abort();
-        const controller = new AbortController();
-        abortRef.current = controller;
+        const controller = createAbort();
         signal = controller.signal;
       }
 
@@ -275,7 +273,7 @@ export function useCardGeneration(
           if (plannerResponse?.usage) {
             recordUsage?.({
               provider: 'claude',
-              model: 'claude-sonnet-4-6',
+              model: CLAUDE_MODEL,
               inputTokens: plannerResponse.usage?.input_tokens ?? 0,
               outputTokens: plannerResponse.usage?.output_tokens ?? 0,
               cacheReadTokens: plannerResponse.usage?.cache_read_input_tokens ?? 0,
@@ -283,7 +281,7 @@ export function useCardGeneration(
             });
           }
         } catch (err) {
-          console.warn('Planner step failed, falling back to direct visualization:', err);
+          log.warn('Planner step failed, falling back to direct visualization:', err);
         }
 
         setCardStatus(
@@ -316,7 +314,7 @@ export function useCardGeneration(
         const imageResponse = await withGeminiRetry(async () => {
           const ai = await getGeminiAI();
           return await ai.models.generateContent({
-            model: 'gemini-3-pro-image-preview',
+            model: GEMINI_IMAGE_MODEL,
             contents: [{ parts }],
             config: {
               ...PRO_IMAGE_CONFIG,
@@ -331,7 +329,7 @@ export function useCardGeneration(
         if (imageResponse?.usageMetadata) {
           recordUsage?.({
             provider: 'gemini',
-            model: 'gemini-3-pro-image-preview',
+            model: GEMINI_IMAGE_MODEL,
             inputTokens: imageResponse.usageMetadata?.promptTokenCount ?? 0,
             outputTokens: imageResponse.usageMetadata?.candidatesTokenCount ?? 0,
           });
@@ -387,9 +385,9 @@ export function useCardGeneration(
           });
         }
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
-        console.error('Generation failed:', err);
-        console.error(
+        if (isAbortError(err)) return;
+        log.error('Generation failed:', err);
+        log.error(
           'Generation error details:',
           JSON.stringify(
             {
@@ -480,9 +478,7 @@ export function useCardGeneration(
     setManifestCards(null);
 
     // Create shared abort controller for the batch
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+    const controller = createAbort();
 
     // Set initial batch status on each card
     for (const item of selectedItems) {
@@ -514,9 +510,8 @@ export function useCardGeneration(
   );
 
   const stopGeneration = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
-  }, []);
+    abortOp();
+  }, [abortOp]);
 
   return {
     genStatus,

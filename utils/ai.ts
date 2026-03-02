@@ -1,5 +1,15 @@
 import { StylingOptions, Palette, FontPair, CustomStyle } from '../types';
 import type { GoogleGenAI } from '@google/genai';
+import { createLogger } from './logger';
+import {
+  CLAUDE_MODEL,
+  API_MAX_RETRIES,
+  RETRY_BACKOFF_BASE_MS,
+  RETRY_JITTER_MAX_MS,
+  RETRY_DELAY_CAP_MS,
+} from './constants';
+
+const log = createLogger('AI');
 
 export const VISUAL_STYLES: Record<string, Palette> = {
   'Flat Design': {
@@ -204,7 +214,7 @@ function rotateGeminiKey(): boolean {
   if (_currentKeyIndex + 1 < GEMINI_KEYS.length) {
     _currentKeyIndex++;
     _aiInstance = null; // force re-creation with new key
-    console.warn(`[Gemini] Rotated to fallback key (index ${_currentKeyIndex})`);
+    log.warn(`Rotated to fallback key (index ${_currentKeyIndex})`);
     return true;
   }
   return false;
@@ -224,9 +234,31 @@ export function detectSettingsMismatch(current: StylingOptions, reference: Styli
   return keys.some((k) => current.palette[k] !== reference.palette[k]);
 }
 
+/** Classify whether an API error is transient and worth retrying. */
+function isRetryableError(err: any): boolean {
+  const msg = (err.message || '').toLowerCase();
+  const status = err.status || err.httpStatusCode || 0;
+  return (
+    status === 429 ||
+    status === 500 ||
+    status === 503 ||
+    msg.includes('429') ||
+    msg.includes('500') ||
+    msg.includes('503') ||
+    msg.includes('overloaded') ||
+    msg.includes('unavailable') ||
+    msg.includes('resource_exhausted') ||
+    msg.includes('rate limit') ||
+    msg.includes('rate_limit') ||
+    msg.includes('too many requests') ||
+    msg.includes('internal server error') ||
+    msg.includes('high demand')
+  );
+}
+
 const withRetry = async <T>(
   fn: () => Promise<T>,
-  maxRetries = 5,
+  maxRetries = API_MAX_RETRIES,
   onRetry?: (attempt: number, maxAttempts: number, delayMs: number) => void,
 ): Promise<T> => {
   let retries = 0;
@@ -234,33 +266,17 @@ const withRetry = async <T>(
     try {
       return await fn();
     } catch (err: any) {
-      const msg = err.message?.toLowerCase() || '';
-      const status = err.status || err.httpStatusCode || 0;
-      const isRetryable =
-        status === 429 ||
-        status === 500 ||
-        status === 503 ||
-        msg.includes('429') ||
-        msg.includes('500') ||
-        msg.includes('503') ||
-        msg.includes('overloaded') ||
-        msg.includes('unavailable') ||
-        msg.includes('resource_exhausted') ||
-        msg.includes('rate limit') ||
-        msg.includes('rate_limit') ||
-        msg.includes('too many requests') ||
-        msg.includes('internal server error') ||
-        msg.includes('high demand');
-      if (isRetryable) {
+      if (isRetryableError(err)) {
         retries++;
         if (retries >= maxRetries) throw err;
-        // Exponential backoff with jitter: base * 2^retry + random jitter (0–1s)
-        const baseDelay = Math.pow(2, retries) * 1000; // 2s, 4s, 8s, 16s
-        const jitter = Math.random() * 1000; // 0–1000ms
-        const delay = Math.min(baseDelay + jitter, 32_000); // cap at 32s
+        // Exponential backoff with jitter
+        const baseDelay = Math.pow(2, retries) * RETRY_BACKOFF_BASE_MS;
+        const jitter = Math.random() * RETRY_JITTER_MAX_MS;
+        const delay = Math.min(baseDelay + jitter, RETRY_DELAY_CAP_MS);
         onRetry?.(retries, maxRetries, delay);
-        console.warn(
-          `[withRetry] Attempt ${retries}/${maxRetries} failed (${status || msg.slice(0, 60)}). Retrying in ${(delay / 1000).toFixed(1)}s...`,
+        const errDetail = err.status || err.httpStatusCode || (err.message || '').slice(0, 60);
+        log.warn(
+          `Attempt ${retries}/${maxRetries} failed (${errDetail}). Retrying in ${(delay / 1000).toFixed(1)}s...`,
         );
         await new Promise((resolve) => setTimeout(resolve, delay));
         continue;
@@ -277,32 +293,14 @@ const withRetry = async <T>(
  */
 export const withGeminiRetry = async <T>(
   fn: () => Promise<T>,
-  maxRetries = 5,
+  maxRetries = API_MAX_RETRIES,
   onRetry?: (attempt: number, maxAttempts: number, delayMs: number) => void,
 ): Promise<T> => {
   try {
     return await withRetry(fn, maxRetries, onRetry);
   } catch (err: any) {
-    const msg = (err.message || '').toLowerCase();
-    const status = err.status || err.httpStatusCode || 0;
-    const isRetryable =
-      status === 429 ||
-      status === 500 ||
-      status === 503 ||
-      msg.includes('429') ||
-      msg.includes('500') ||
-      msg.includes('503') ||
-      msg.includes('overloaded') ||
-      msg.includes('unavailable') ||
-      msg.includes('resource_exhausted') ||
-      msg.includes('rate limit') ||
-      msg.includes('rate_limit') ||
-      msg.includes('too many requests') ||
-      msg.includes('internal server error') ||
-      msg.includes('high demand');
-
-    if (isRetryable && rotateGeminiKey()) {
-      console.warn('[withGeminiRetry] Primary key exhausted, retrying with fallback key...');
+    if (isRetryableError(err) && rotateGeminiKey()) {
+      log.warn('Primary key exhausted, retrying with fallback key...');
       return await withRetry(fn, maxRetries, onRetry);
     }
     throw err;
@@ -314,7 +312,16 @@ export const withGeminiRetry = async <T>(
 // Supports prompt caching via cache_control on system + message blocks.
 // ─────────────────────────────────────────────────────────────────
 
-const CLAUDE_MODEL = 'claude-sonnet-4-6';
+/** Shared Anthropic API headers. */
+function anthropicHeaders(apiKey: string): Record<string, string> {
+  return {
+    'x-api-key': apiKey,
+    'anthropic-version': '2023-06-01',
+    'anthropic-beta': 'files-api-2025-04-14',
+    'anthropic-dangerous-direct-browser-access': 'true',
+  };
+}
+
 const CLAUDE_MAX_TOKENS = 64000;
 
 // Minimum tokens for Sonnet caching (1,024 tokens ≈ ~4,000 chars)
@@ -494,13 +501,7 @@ export async function callClaude(
   const response = await withRetry(async () => {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'files-api-2025-04-14',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: { ...anthropicHeaders(apiKey), 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
       signal,
     });
@@ -519,8 +520,8 @@ export async function callClaude(
   // Log cache performance
   const { cache_creation_input_tokens, cache_read_input_tokens, input_tokens } = usage;
   if (cache_creation_input_tokens || cache_read_input_tokens) {
-    console.debug(
-      `[Claude] cache_read: ${cache_read_input_tokens ?? 0}, cache_write: ${cache_creation_input_tokens ?? 0}, uncached: ${input_tokens}`,
+    log.debug(
+      `cache_read: ${cache_read_input_tokens ?? 0}, cache_write: ${cache_creation_input_tokens ?? 0}, uncached: ${input_tokens}`,
     );
   }
 
@@ -564,12 +565,7 @@ export async function uploadToFilesAPI(
 
   const res = await fetch('/api/anthropic-files', {
     method: 'POST',
-    headers: {
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-beta': 'files-api-2025-04-14',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
+    headers: anthropicHeaders(apiKey),
     body: formData,
   });
 
@@ -579,7 +575,7 @@ export async function uploadToFilesAPI(
   }
 
   const data = (await res.json()) as FilesAPIResponse;
-  console.debug(`[FilesAPI] Uploaded "${filename}" → ${data.id} (${data.size_bytes} bytes)`);
+  log.debug(`Uploaded "${filename}" → ${data.id} (${data.size_bytes} bytes)`);
   return data.id;
 }
 
@@ -689,20 +685,15 @@ export async function deleteFromFilesAPI(fileId: string): Promise<void> {
   try {
     const res = await fetch(`/api/anthropic-files/${fileId}`, {
       method: 'DELETE',
-      headers: {
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'files-api-2025-04-14',
-        'anthropic-dangerous-direct-browser-access': 'true',
-      },
+      headers: anthropicHeaders(apiKey),
     });
     if (res.ok) {
-      console.debug(`[FilesAPI] Deleted file ${fileId}`);
+      log.debug(`Deleted file ${fileId}`);
     } else {
-      console.warn(`[FilesAPI] Failed to delete file ${fileId}: ${res.status}`);
+      log.warn(`Failed to delete file ${fileId}: ${res.status}`);
     }
   } catch (err) {
-    console.warn(`[FilesAPI] Delete failed for ${fileId}:`, err);
+    log.warn(`Delete failed for ${fileId}:`, err);
   }
 }
 
@@ -778,7 +769,7 @@ export async function callClaudeWithFileApiDocs({
 
   recordUsage?.({
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: CLAUDE_MODEL,
     inputTokens: usage?.input_tokens ?? 0,
     outputTokens: usage?.output_tokens ?? 0,
     cacheReadTokens: usage?.cache_read_input_tokens ?? 0,

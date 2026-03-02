@@ -1,5 +1,5 @@
 import { DetailLevel, UploadedFile, isCoverLevel } from '../../types';
-import { buildExpertPriming } from './promptUtils';
+import { buildExpertPriming, countWords, describeCanvas } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Card Content Generation
@@ -100,14 +100,8 @@ export function buildPlannerPrompt(
   previousPlan?: string,
   subject?: string,
 ): string {
-  const wordCount = synthesisContent.split(/\s+/).filter((w) => w.length > 0).length;
-
-  let canvasDescription = 'landscape — wider than tall';
-  if (aspectRatio === '9:16') canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '1:1') canvasDescription = 'square — equal width and height';
-  else if (aspectRatio === '4:5' || aspectRatio === '3:4' || aspectRatio === '2:3')
-    canvasDescription = 'portrait — taller than wide';
-  else if (aspectRatio === '5:4' || aspectRatio === '3:2') canvasDescription = 'near-square landscape';
+  const wordCount = countWords(synthesisContent);
+  const canvasDescription = describeCanvas(aspectRatio);
 
   // Build diversity clause when regenerating
   let diversityClause = '';

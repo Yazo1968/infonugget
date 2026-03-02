@@ -2,6 +2,25 @@ import { StylingOptions } from '../../types';
 import { STYLE_IDENTITIES } from '../ai';
 
 // ─────────────────────────────────────────────────────────────────
+// Shared Prompt Helpers
+// ─────────────────────────────────────────────────────────────────
+
+/** Count words in a string (whitespace-split). */
+export function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/** Map an aspect ratio string to a human-readable canvas description. */
+export function describeCanvas(aspectRatio: string): string {
+  if (aspectRatio === '9:16') return 'portrait — taller than wide';
+  if (aspectRatio === '1:1') return 'square — equal width and height';
+  if (aspectRatio === '4:5' || aspectRatio === '3:4' || aspectRatio === '2:3')
+    return 'portrait — taller than wide';
+  if (aspectRatio === '5:4' || aspectRatio === '3:2') return 'near-square landscape';
+  return 'landscape — wider than tall';
+}
+
+// ─────────────────────────────────────────────────────────────────
 // Expert Priming — Subject-Based Domain Expert Injection
 // ─────────────────────────────────────────────────────────────────
 // Builds a priming sentence that makes Claude adopt the role of a

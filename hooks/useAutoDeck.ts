@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import {
   AutoDeckBriefing,
@@ -10,6 +10,7 @@ import {
   ReviewCardState,
 } from '../types';
 import { flattenCards } from '../utils/cardUtils';
+import { CLAUDE_MODEL } from '../utils/constants';
 import { callClaude, callClaudeWithFileApiDocs } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
 import { buildPlannerPrompt, buildFinalizerPrompt } from '../utils/prompts/autoDeckPlanner';
@@ -25,6 +26,11 @@ import { AUTO_DECK_LOD_LEVELS, AUTO_DECK_LIMITS, countWords } from '../utils/aut
 import { getUniqueName } from '../utils/naming';
 import { estimateTokens } from '../utils/tokenEstimation';
 import { useToast } from '../components/ToastNotification';
+import { createLogger } from '../utils/logger';
+import { useAbortController } from './useAbortController';
+import { resolveOrderedDocs, splitDocsByTransport } from '../utils/documentResolution';
+
+const log = createLogger('AutoDeck');
 
 /**
  * Auto-Deck orchestration hook.
@@ -51,7 +57,7 @@ export function useAutoDeck(
   const { addToast } = useToast();
 
   const [session, setSession] = useState<AutoDeckSession | null>(null);
-  const abortRef = useRef<AbortController | null>(null);
+  const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();
 
   // ── Helpers ──
 
@@ -77,10 +83,7 @@ export function useAutoDeck(
       if (!selectedNugget) return;
 
       // Resolve documents in the user-specified order
-      const allNuggetDocs = selectedNugget.documents.filter((d) => d.content || d.fileId || d.pdfBase64);
-      const orderedSelectedDocs = orderedDocIds
-        .map((id) => allNuggetDocs.find((d) => d.id === id))
-        .filter(Boolean) as typeof allNuggetDocs;
+      const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, orderedDocIds);
 
       if (orderedSelectedDocs.length === 0) {
         addToast({ message: 'No documents selected for Auto-Deck.', type: 'error' });
@@ -107,8 +110,7 @@ export function useAutoDeck(
       setSession(newSession);
 
       // Split documents: inline (content) vs Files API (fileId only, e.g. native PDFs)
-      const fileApiDocs = orderedSelectedDocs.filter((d) => d.fileId && !d.content);
-      const inlineDocs = orderedSelectedDocs.filter((d) => d.content);
+      const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
 
       // Build inline document context for prompt — preserving user-specified order
       const docs = inlineDocs.map((d) => ({
@@ -149,8 +151,7 @@ export function useAutoDeck(
         return;
       }
 
-      const abortController = new AbortController();
-      abortRef.current = abortController;
+      const abortController = createAbort();
 
       try {
         const { systemBlocks, messages } = buildPlannerPrompt({
@@ -223,8 +224,8 @@ export function useAutoDeck(
           );
         }
       } catch (err: any) {
-        if (err.name === 'AbortError') return;
-        console.error('[useAutoDeck] Planner failed:', err);
+        if (isAbortError(err)) return;
+        log.error('Planner failed:', err);
         setSession((prev) =>
           prev
             ? {
@@ -235,7 +236,7 @@ export function useAutoDeck(
             : prev,
         );
       } finally {
-        abortRef.current = null;
+        clearAbort();
       }
     },
     [selectedNugget, recordUsage, addToast],
@@ -254,14 +255,10 @@ export function useAutoDeck(
     setStatus('revising');
 
     // Resolve documents in the same order as the original session
-    const allNuggetDocs = selectedNugget.documents.filter((d) => d.content || d.fileId || d.pdfBase64);
-    const orderedSelectedDocs = session.orderedDocIds
-      .map((id) => allNuggetDocs.find((d) => d.id === id))
-      .filter(Boolean) as typeof allNuggetDocs;
+    const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
 
     // Split documents: inline vs Files API
-    const fileApiDocs = orderedSelectedDocs.filter((d) => d.fileId && !d.content);
-    const inlineDocs = orderedSelectedDocs.filter((d) => d.content);
+    const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
 
     const docs = inlineDocs.map((d) => ({
       id: d.id,
@@ -291,8 +288,7 @@ export function useAutoDeck(
       if (!state.included) excludedCards.push(Number(numStr));
     });
 
-    const abortController = new AbortController();
-    abortRef.current = abortController;
+    const abortController = createAbort();
 
     try {
       const { systemBlocks, messages } = buildPlannerPrompt({
@@ -373,8 +369,8 @@ export function useAutoDeck(
         );
       }
     } catch (err: any) {
-      if (err.name === 'AbortError') return;
-      console.error('[useAutoDeck] Revision failed:', err);
+      if (isAbortError(err)) return;
+      log.error('Revision failed:', err);
       setSession((prev) =>
         prev
           ? {
@@ -385,7 +381,7 @@ export function useAutoDeck(
           : prev,
       );
     } finally {
-      abortRef.current = null;
+      clearAbort();
     }
   }, [session, selectedNugget, recordUsage, setStatus, addToast]);
 
@@ -400,14 +396,10 @@ export function useAutoDeck(
     if (!session || !session.parsedPlan || !session.reviewState || !selectedNugget) return;
 
     // Resolve documents in the same order as the original session
-    const allNuggetDocs = selectedNugget.documents.filter((d) => d.content || d.fileId || d.pdfBase64);
-    const orderedSelectedDocs = session.orderedDocIds
-      .map((id) => allNuggetDocs.find((d) => d.id === id))
-      .filter(Boolean) as typeof allNuggetDocs;
+    const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
 
     // Split documents: inline vs Files API
-    const fileApiDocs = orderedSelectedDocs.filter((d) => d.fileId && !d.content);
-    const inlineDocs = orderedSelectedDocs.filter((d) => d.content);
+    const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
 
     const inlineDocsWithWordCount = inlineDocs.map((d) => ({
       id: d.id,
@@ -442,8 +434,7 @@ export function useAutoDeck(
       return;
     }
 
-    const abortController = new AbortController();
-    abortRef.current = abortController;
+    const abortController = createAbort();
 
     // Hoist so catch block can access for cleanup
     const placeholderMap = new Map<string, string>(); // title → cardId
@@ -487,7 +478,7 @@ export function useAutoDeck(
 
         recordUsage?.({
           provider: 'claude',
-          model: 'claude-sonnet-4-6',
+          model: CLAUDE_MODEL,
           inputTokens: finUsage?.input_tokens ?? 0,
           outputTokens: finUsage?.output_tokens ?? 0,
           cacheReadTokens: finUsage?.cache_read_input_tokens ?? 0,
@@ -663,11 +654,11 @@ export function useAutoDeck(
         }
       }
 
-      if (err.name === 'AbortError') {
+      if (isAbortError(err)) {
         return;
       }
 
-      console.error('[useAutoDeck] Submit failed:', err);
+      log.error('Submit failed:', err);
       setSession((prev) =>
         prev
           ? {
@@ -678,7 +669,7 @@ export function useAutoDeck(
           : prev,
       );
     } finally {
-      abortRef.current = null;
+      clearAbort();
     }
   }, [session, selectedNugget, recordUsage, updateNugget, setStatus, addToast, placeholderFns]);
 
@@ -756,8 +747,7 @@ export function useAutoDeck(
   // ── Abort / Reset ──
 
   const abort = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    abortOp();
     setSession((prev) => {
       if (!prev) return prev;
       // Go back to reviewing if we were finalizing/producing/revising, otherwise reset
@@ -772,8 +762,7 @@ export function useAutoDeck(
   }, []);
 
   const reset = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    abortOp();
     setSession(null);
   }, []);
 

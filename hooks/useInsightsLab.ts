@@ -1,14 +1,20 @@
-import { useState, useCallback, useRef, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { ChatMessage, DetailLevel, DocChangeEvent, isCoverLevel } from '../types';
 import { callClaude } from '../utils/ai';
+import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT, CHAT_MAX_TOKENS } from '../utils/constants';
 import { RecordUsageFn } from './useTokenUsage';
+import { useAbortController } from './useAbortController';
 import { buildInsightsSystemPrompt, buildCardContentInstruction } from '../utils/prompts/insightsLab';
 import { buildCoverContentInstruction } from '../utils/prompts/coverGeneration';
 import { computeDocumentHash } from '../utils/documentHash';
 import { computeMessageBudget, pruneMessages } from '../utils/tokenEstimation';
 import { buildTocSystemPrompt } from '../utils/pdfBookmarks';
+import { resolveEnabledDocs } from '../utils/documentResolution';
 import { buildQualityWarningsBlock } from '../utils/prompts/qualityCheck';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('InsightsLab');
 
 /**
  * Chat state management + Claude API integration for the Insights Lab workflow.
@@ -21,7 +27,7 @@ import { buildQualityWarningsBlock } from '../utils/prompts/qualityCheck';
 export function useInsightsLab(recordUsage?: RecordUsageFn) {
   const { selectedNugget, appendNuggetMessage, setNuggets, selectedNuggetId } = useNuggetContext();
   const [isLoading, setIsLoading] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
+  const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();
 
   /**
    * Resolve the document contents for the active insights nugget.
@@ -35,8 +41,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
     bookmarks?: import('../types').BookmarkNode[];
   }> => {
     if (!selectedNugget || selectedNugget.type !== 'insights') return [];
-    return selectedNugget.documents
-      .filter((doc) => (doc.content || doc.fileId) && doc.enabled !== false)
+    return resolveEnabledDocs(selectedNugget.documents)
       .map((doc) => ({
         name: doc.name,
         content: doc.content || '',
@@ -87,8 +92,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
       appendNuggetMessage(userMessage);
 
       setIsLoading(true);
-      const controller = new AbortController();
-      abortRef.current = controller;
+      const controller = createAbort();
 
       try {
         // ── Split documents: docs with fileId go via Files API only; the rest go inline ──
@@ -120,13 +124,11 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         }
 
         // Token budget scaled to detail level to prevent over-generation
-        let maxTokens = 8192;
-        if (isCardRequest) {
-          if (detailLevel === 'TitleCard') maxTokens = 150;
-          else if (detailLevel === 'TakeawayCard') maxTokens = 350;
-          else if (detailLevel === 'Executive') maxTokens = 300;
-          else if (detailLevel === 'Standard') maxTokens = 600;
-          else maxTokens = 1200; // Detailed
+        let maxTokens = CHAT_MAX_TOKENS;
+        if (isCardRequest && detailLevel) {
+          maxTokens = isCoverLevel(detailLevel)
+            ? (CARD_TOKEN_LIMITS[detailLevel] ?? COVER_TOKEN_LIMIT)
+            : (CARD_TOKEN_LIMITS[detailLevel] ?? CARD_TOKEN_LIMITS.Detailed);
         }
 
         // ── Pre-flight budget check ──
@@ -147,8 +149,8 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         const { claudeMessages, dropped } = pruneMessages(history, text.trim(), messageBudget);
 
         if (dropped > 0) {
-          console.debug(
-            `[InsightsLab] Pruned ${dropped} messages to fit context window (budget: ${messageBudget} tokens)`,
+          log.debug(
+            `Pruned ${dropped} messages to fit context window (budget: ${messageBudget} tokens)`,
           );
         }
 
@@ -193,7 +195,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
 
         recordUsage?.({
           provider: 'claude',
-          model: 'claude-sonnet-4-6',
+          model: CLAUDE_MODEL,
           inputTokens: claudeUsage?.input_tokens ?? 0,
           outputTokens: claudeUsage?.output_tokens ?? 0,
           cacheReadTokens: claudeUsage?.cache_read_input_tokens ?? 0,
@@ -218,9 +220,9 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         setNuggets((prev) => prev.map((n) => (n.id === selectedNugget.id ? { ...n, lastDocHash: currentHash } : n)));
       } catch (err: any) {
         // Silently ignore aborted requests
-        if (err.name === 'AbortError') return;
+        if (isAbortError(err)) return;
 
-        console.error('Insights lab error:', err);
+        log.error('Insights lab error:', err);
 
         // Detect token overflow for user-friendly message
         const isOverflow =
@@ -243,7 +245,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
 
         appendNuggetMessage(errorMessage);
       } finally {
-        abortRef.current = null;
+        clearAbort();
         setIsLoading(false);
       }
     },
@@ -254,10 +256,9 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
    * Abort the in-flight Claude request.
    */
   const stopResponse = useCallback(() => {
-    abortRef.current?.abort();
-    abortRef.current = null;
+    abortOp();
     setIsLoading(false);
-  }, []);
+  }, [abortOp]);
 
   /**
    * Clear all messages from the active insights nugget.

@@ -1,11 +1,15 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
+import { CLAUDE_MODEL, GEMINI_IMAGE_MODEL } from '../utils/constants';
 import { StorageBackend } from '../utils/storage/StorageBackend';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('TokenUsage');
 
 // ── Cost rates per 1M tokens (USD) ──
 
 const COST_RATES: Record<string, { input: number; output: number; cacheRead?: number; cacheWrite?: number }> = {
-  'claude-sonnet-4-6': { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
-  'gemini-3-pro-image-preview': { input: 1.25, output: 5 },
+  [CLAUDE_MODEL]: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+  [GEMINI_IMAGE_MODEL]: { input: 1.25, output: 5 },
 };
 
 // Fallback for unknown models
@@ -114,14 +118,14 @@ export function useTokenUsage(storage?: StorageBackend, initialTotals?: TokenUsa
     saveTimerRef.current = setTimeout(() => {
       storage
         .saveTokenUsage(latestTotalsRef.current as unknown as Record<string, unknown>)
-        .catch((err) => console.warn('[TokenUsage] Failed to save:', err));
+        .catch((err) => log.warn('Failed to save:', err));
     }, SAVE_DEBOUNCE_MS);
   }, [storage]);
 
   const recordUsage: RecordUsageFn = useCallback(
     (raw) => {
-      console.debug(
-        '[TokenUsage] recordUsage called:',
+      log.debug(
+        'recordUsage called:',
         raw.provider,
         raw.model,
         'in:',
@@ -175,7 +179,7 @@ export function useTokenUsage(storage?: StorageBackend, initialTotals?: TokenUsa
     if (storage?.isReady()) {
       storage
         .saveTokenUsage(EMPTY_TOTALS as unknown as Record<string, unknown>)
-        .catch((err) => console.warn('[TokenUsage] Failed to save reset:', err));
+        .catch((err) => log.warn('Failed to save reset:', err));
     }
   }, [storage]);
 

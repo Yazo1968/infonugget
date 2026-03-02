@@ -1,4 +1,5 @@
 import { UploadedFile, Heading } from '../types';
+import { CLAUDE_MODEL } from './constants';
 import { callClaude } from './ai';
 import { RecordUsageFn } from '../hooks/useTokenUsage';
 
@@ -91,7 +92,7 @@ export async function generateSubject(docs: UploadedFile[], recordUsage?: Record
 
   recordUsage?.({
     provider: 'claude',
-    model: 'claude-sonnet-4-6',
+    model: CLAUDE_MODEL,
     inputTokens: usage.input_tokens,
     outputTokens: usage.output_tokens,
     cacheReadTokens: usage.cache_read_input_tokens,
