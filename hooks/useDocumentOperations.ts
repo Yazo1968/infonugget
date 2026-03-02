@@ -176,6 +176,12 @@ export function useDocumentOperations({
 
       // AI synthesis requires docs on Files API
       if (docsWithFileId.length === 0) {
+        addToast({
+          type: 'error',
+          message: 'Documents not ready for AI synthesis',
+          detail: 'No documents have been uploaded to the Files API. Try re-uploading your documents.',
+          duration: 8000,
+        });
         setGeneratingSourceIds((prev) => {
           const next = new Set(prev);
           next.delete(_editorCardId);
@@ -274,8 +280,14 @@ export function useDocumentOperations({
         // Fill the placeholder card with the synthesized content
         fillPlaceholderCard(placeholderId, detailLevel, synthesizedText);
         setActiveCardId(placeholderId);
-      } catch (err) {
+      } catch (err: any) {
         log.error('Generate card content failed:', err);
+        addToast({
+          type: 'error',
+          message: `Content generation failed for "${cardTitle}"`,
+          detail: err.message || 'Unknown error',
+          duration: 8000,
+        });
         removePlaceholderCard(placeholderId, detailLevel);
       } finally {
         setGeneratingSourceIds((prev) => {
@@ -527,7 +539,13 @@ export function useDocumentOperations({
             try {
               fileId = await uploadToFilesAPI(processed.content, uniqueName, 'text/plain');
             } catch (err) {
-              log.warn('Files API upload failed (will use inline fallback):', err);
+              log.warn('Files API upload failed:', err);
+              addToast({
+                type: 'warning',
+                message: `Files API upload failed for "${uniqueName}"`,
+                detail: 'AI synthesis will be unavailable for this document. Check your network connection and try re-uploading.',
+                duration: 8000,
+              });
             }
           }
           updateNuggetDocument(placeholder.id, { ...processed, name: uniqueName, fileId });
@@ -626,6 +644,12 @@ export function useDocumentOperations({
               );
             } catch (err) {
               log.warn('Native PDF Files API upload failed:', err);
+              addToast({
+                type: 'warning',
+                message: `Files API upload failed for "${uniqueName}"`,
+                detail: 'AI synthesis will be unavailable for this PDF. Check your network connection and try re-uploading.',
+                duration: 8000,
+              });
             }
 
             const structure = bookmarks.length > 0

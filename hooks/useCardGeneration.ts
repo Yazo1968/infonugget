@@ -103,7 +103,15 @@ export function useCardGeneration(
       if (!selectedNugget) return null;
       const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
       const docsWithFileId = enabledDocs.filter((d) => d.fileId);
-      if (docsWithFileId.length === 0) return null;
+      if (docsWithFileId.length === 0) {
+        addToast({
+          type: 'error',
+          message: 'Documents not ready for AI synthesis',
+          detail: 'No documents have been uploaded to the Files API. Try re-uploading your documents.',
+          duration: 8000,
+        });
+        return null;
+      }
 
       // Set synthesizing status
       updateNuggetCard(card.id, (c) => ({
@@ -190,6 +198,12 @@ export function useCardGeneration(
       } catch (err: any) {
         if (isAbortError(err)) return null;
         log.error('Synthesis failed:', err);
+        addToast({
+          type: 'error',
+          message: `Content synthesis failed for "${card.text}"`,
+          detail: err.message || 'Unknown error',
+          duration: 8000,
+        });
         updateNuggetCard(card.id, (c) => ({
           ...c,
           isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
