@@ -73,10 +73,16 @@ export class SupabaseBackend implements StorageBackend {
     return path;
   }
 
-  /** Get a public URL for a storage path in the card-images bucket. */
-  private getImageUrl(path: string): string {
-    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
-    return data.publicUrl;
+  /** Get a signed URL for a storage path in the card-images bucket (1-hour expiry). */
+  private async getImageUrl(path: string): Promise<string> {
+    const { data, error } = await supabase.storage
+      .from('card-images')
+      .createSignedUrl(path, 3600); // 1 hour
+    if (error || !data?.signedUrl) {
+      log.error('Failed to create signed URL for:', path, error);
+      return '';
+    }
+    return data.signedUrl;
   }
 
   /** Upload a PDF (from base64) to the pdfs bucket. Returns the storage path. */
@@ -647,29 +653,33 @@ export class SupabaseBackend implements StorageBackend {
     }
     if (!data) return [];
 
-    return data.map((row) => {
+    const results: StoredImage[] = [];
+    for (const row of data) {
       const cardUrl = row.storage_path
-        ? this.getImageUrl(row.storage_path)
+        ? await this.getImageUrl(row.storage_path)
         : '';
 
-      const imageHistory: StoredImageVersion[] = (row.image_history || []).map(
-        (entry: { imageUrl: string; timestamp: number; label: string }) => ({
-          imageUrl: entry.imageUrl.startsWith('http')
-            ? entry.imageUrl
-            : this.getImageUrl(entry.imageUrl),
+      const imageHistory: StoredImageVersion[] = [];
+      for (const entry of (row.image_history || []) as Array<{ imageUrl: string; timestamp: number; label: string }>) {
+        const url = entry.imageUrl.startsWith('http')
+          ? entry.imageUrl
+          : await this.getImageUrl(entry.imageUrl);
+        imageHistory.push({
+          imageUrl: url,
           timestamp: entry.timestamp,
           label: entry.label,
-        }),
-      );
+        });
+      }
 
-      return {
+      results.push({
         fileId: row.nugget_id,
         headingId: row.card_id,
         level: row.detail_level,
         cardUrl,
         imageHistory,
-      } as StoredImage;
-    });
+      } as StoredImage);
+    }
+    return results;
   }
 
   async deleteNuggetImages(nuggetId: string): Promise<void> {
