@@ -28,21 +28,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session: s } }) => {
+    // Use onAuthStateChange as the single source of truth.
+    // It fires INITIAL_SESSION immediately (waits for any PKCE code exchange
+    // to complete), then SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED as needed.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
     });
 
-    // Listen for auth state changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
+    // Fallback: if onAuthStateChange hasn't fired within 3s, check directly
+    const timeout = setTimeout(async () => {
+      const { data: { session: s } } = await supabase.auth.getSession();
+      setSession(prev => prev ?? s);
+      setUser(prev => prev ?? s?.user ?? null);
       setLoading(false);
-    });
+    }, 3000);
 
-    return () => subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeout);
+      subscription.unsubscribe();
+    };
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
