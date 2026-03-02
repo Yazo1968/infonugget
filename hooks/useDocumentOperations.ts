@@ -174,20 +174,64 @@ export function useDocumentOperations({
         // which will use a verbatim extraction prompt
       }
 
-      // AI synthesis requires docs on Files API
-      if (docsWithFileId.length === 0) {
-        addToast({
-          type: 'error',
-          message: 'Documents not ready for AI synthesis',
-          detail: 'No documents have been uploaded to the Files API. Try re-uploading your documents.',
-          duration: 8000,
-        });
-        setGeneratingSourceIds((prev) => {
-          const next = new Set(prev);
-          next.delete(_editorCardId);
-          return next;
-        });
-        return;
+      // AI synthesis requires docs on Files API — auto-upload any that are missing fileId
+      let resolvedDocs = docsWithFileId;
+      if (resolvedDocs.length === 0) {
+        const uploadable = enabledDocs.filter((d) => d.content || d.pdfBase64);
+        if (uploadable.length === 0) {
+          addToast({
+            type: 'error',
+            message: 'No uploadable documents found',
+            detail: 'Documents must have content before AI synthesis can work.',
+            duration: 8000,
+          });
+          setGeneratingSourceIds((prev) => {
+            const next = new Set(prev);
+            next.delete(_editorCardId);
+            return next;
+          });
+          return;
+        }
+
+        addToast({ type: 'info', message: 'Uploading documents to Files API...', duration: 4000 });
+        for (const doc of uploadable) {
+          try {
+            let newFileId: string | undefined;
+            if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
+              newFileId = await uploadToFilesAPI(
+                base64ToBlob(doc.pdfBase64, 'application/pdf'),
+                doc.name,
+                'application/pdf',
+              );
+            } else if (doc.content) {
+              newFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
+            }
+            if (newFileId) {
+              updateNuggetDocument(doc.id, { ...doc, fileId: newFileId });
+              // Update local reference for the current generation call
+              (doc as any).fileId = newFileId;
+            }
+          } catch (err: any) {
+            log.warn(`Auto-upload failed for "${doc.name}":`, err);
+            addToast({
+              type: 'error',
+              message: `Files API upload failed for "${doc.name}"`,
+              detail: err.message || 'Check Edge Function secrets and network connection.',
+              duration: 8000,
+            });
+          }
+        }
+
+        // Re-check after upload attempts
+        resolvedDocs = enabledDocs.filter((d) => d.fileId);
+        if (resolvedDocs.length === 0) {
+          setGeneratingSourceIds((prev) => {
+            const next = new Set(prev);
+            next.delete(_editorCardId);
+            return next;
+          });
+          return;
+        }
       }
 
       // Build unified section focus + content prompt
@@ -233,7 +277,7 @@ export function useDocumentOperations({
         const systemBlocks: Array<{ text: string; cache: boolean }> = [{ text: systemRole, cache: false }];
 
         // Build user message with document blocks + section focus + content prompt
-        const docBlocks = docsWithFileId.map((d) => ({
+        const docBlocks = resolvedDocs.map((d) => ({
           type: 'document' as const,
           source: { type: 'file' as const, file_id: d.fileId! },
           title: d.name,

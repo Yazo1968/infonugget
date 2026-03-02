@@ -5,7 +5,8 @@ import { useAbortController } from './useAbortController';
 import { Card, CardItem, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, GEMINI_IMAGE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard } from '../utils/cardUtils';
-import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, callGeminiProxy } from '../utils/ai';
+import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, callGeminiProxy, uploadToFilesAPI } from '../utils/ai';
+import { base64ToBlob } from '../utils/fileProcessing';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
 import { buildContentPrompt, buildPlannerPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
@@ -32,7 +33,7 @@ export function useCardGeneration(
   useReferenceImage: boolean = false,
   recordUsage?: RecordUsageFn,
 ) {
-  const { selectedNugget, updateNuggetCard } = useNuggetContext();
+  const { selectedNugget, updateNuggetCard, updateNuggetDocument } = useNuggetContext();
   const { activeCardId } = useSelectionContext();
 
   const { addToast } = useToast();
@@ -102,15 +103,51 @@ export function useCardGeneration(
     async (card: Card, level: DetailLevel, signal?: AbortSignal) => {
       if (!selectedNugget) return null;
       const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
-      const docsWithFileId = enabledDocs.filter((d) => d.fileId);
+      let docsWithFileId = enabledDocs.filter((d) => d.fileId);
+
+      // Auto-upload docs missing fileId before synthesis
       if (docsWithFileId.length === 0) {
-        addToast({
-          type: 'error',
-          message: 'Documents not ready for AI synthesis',
-          detail: 'No documents have been uploaded to the Files API. Try re-uploading your documents.',
-          duration: 8000,
-        });
-        return null;
+        const uploadable = enabledDocs.filter((d) => d.content || d.pdfBase64);
+        if (uploadable.length === 0) {
+          addToast({
+            type: 'error',
+            message: 'No uploadable documents found',
+            detail: 'Documents must have content before AI synthesis can work.',
+            duration: 8000,
+          });
+          return null;
+        }
+
+        addToast({ type: 'info', message: 'Uploading documents to Files API...', duration: 4000 });
+        for (const doc of uploadable) {
+          try {
+            let newFileId: string | undefined;
+            if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
+              newFileId = await uploadToFilesAPI(
+                base64ToBlob(doc.pdfBase64, 'application/pdf'),
+                doc.name,
+                'application/pdf',
+              );
+            } else if (doc.content) {
+              newFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
+            }
+            if (newFileId) {
+              updateNuggetDocument(doc.id, { ...doc, fileId: newFileId });
+              (doc as any).fileId = newFileId;
+            }
+          } catch (err: any) {
+            log.warn(`Auto-upload failed for "${doc.name}":`, err);
+            addToast({
+              type: 'error',
+              message: `Files API upload failed for "${doc.name}"`,
+              detail: err.message || 'Check Edge Function secrets and network connection.',
+              duration: 8000,
+            });
+          }
+        }
+
+        docsWithFileId = enabledDocs.filter((d) => d.fileId);
+        if (docsWithFileId.length === 0) return null;
       }
 
       // Set synthesizing status
