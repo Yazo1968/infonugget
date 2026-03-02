@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Nugget, Project } from '../types';
 import { useAuth } from '../context/AuthContext';
+import LogoIcon from './LogoIcon';
 
 interface DashboardProps {
   projects: Project[];
@@ -130,9 +131,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       {/* ── Compact header ── */}
       <div style={stagger(0)} className="relative z-20 shrink-0 flex items-center justify-between px-6 py-4">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-accent-blue rounded-full flex items-center justify-center shadow-lg">
-            <div className="w-[10px] h-[10px] bg-white rounded-[2px] rotate-45" />
-          </div>
+          <LogoIcon size={32} darkMode={darkMode} />
           <span className={`text-xl tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
             <span className="font-light italic">info</span>
             <span className="font-semibold not-italic">nugget</span>

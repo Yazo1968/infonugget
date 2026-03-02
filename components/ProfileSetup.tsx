@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react';
 import { supabase } from '../utils/supabase';
 import { useAuth } from '../context/AuthContext';
+import LogoIcon from './LogoIcon';
 
 interface ProfileSetupProps {
   onComplete: () => void;
@@ -68,9 +69,8 @@ export default function ProfileSetup({ onComplete }: ProfileSetupProps) {
       <div className={`w-full max-w-sm p-8 rounded-xl shadow-lg border ${darkMode ? 'bg-zinc-900 border-zinc-800' : 'bg-white border-zinc-200'}`}>
         {/* Logo */}
         <div className="text-center mb-6">
-          <div className="w-12 h-12 bg-accent-blue rounded-full flex items-center justify-center shadow-lg mx-auto mb-4"
-            style={{ boxShadow: '0 0 30px 8px rgba(42, 159, 212, 0.12)' }}>
-            <div className="w-[8px] h-[8px] bg-white rounded-[2px] rotate-45" />
+          <div className="flex justify-center mb-4">
+            <LogoIcon size={48} darkMode={darkMode} />
           </div>
           <h1 className={`text-lg font-bold mb-1 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
             Welcome to InfoNugget

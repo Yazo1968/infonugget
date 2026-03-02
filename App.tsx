@@ -25,6 +25,7 @@ import PanelTabBar from './components/PanelTabBar';
 import QualityPanel from './components/QualityPanel';
 import NuggetTabBar from './components/NuggetTabBar';
 import HeaderBar from './components/HeaderBar';
+import LogoIcon from './components/LogoIcon';
 
 import { UnsavedChangesDialog } from './components/Dialogs';
 import { useAppContext } from './context/AppContext';
@@ -898,8 +899,8 @@ const App: React.FC = () => {
 
                   {/* Main content area — branded empty state */}
                   <div className="flex-1 flex flex-col items-center justify-center text-center px-8 transition-colors duration-200">
-                    <div className="w-12 h-12 bg-accent-blue rounded-full flex items-center justify-center shadow-lg shadow-[rgba(42,159,212,0.2)] mb-5">
-                      <div className="w-4 h-4 bg-white rounded-sm rotate-45" />
+                    <div className="mb-5">
+                      <LogoIcon size={48} darkMode={darkMode} />
                     </div>
                     <h2 className="text-xl tracking-tight mb-1">
                       <span className="font-light italic">info</span>
@@ -927,10 +928,8 @@ const App: React.FC = () => {
                   }}
                   style={emptyDragging ? { backgroundColor: 'rgba(42, 159, 212, 0.04)' } : undefined}
                 >
-                  <div
-                    className={`w-12 h-12 bg-accent-blue rounded-full flex items-center justify-center shadow-lg shadow-[rgba(42,159,212,0.2)] mb-5 transition-transform duration-300 ${emptyDragging ? 'scale-110' : ''}`}
-                  >
-                    <div className="w-4 h-4 bg-white rounded-sm rotate-45" />
+                  <div className={`mb-5 transition-transform duration-300 ${emptyDragging ? 'scale-110' : ''}`}>
+                    <LogoIcon size={48} darkMode={darkMode} />
                   </div>
                   <h2 className="text-xl tracking-tight mb-1">
                     <span className="font-light italic">info</span>

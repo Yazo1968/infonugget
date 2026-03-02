@@ -1,5 +1,6 @@
 import { useState, useMemo, useEffect, useRef, type FormEvent } from 'react';
 import { useAuth } from '../context/AuthContext';
+import LogoIcon from './LogoIcon';
 
 type AuthMode = 'signin' | 'signup';
 type AuthView = 'signin' | 'signup' | 'forgot' | 'reset-sent' | 'confirmation-sent';
@@ -283,8 +284,8 @@ export default function AuthPage({ initialMode = 'signin', onBackToLanding }: Au
       <>
         {/* Logo / Title */}
         <div className="text-center mb-8">
-          <div className="w-10 h-10 bg-accent-blue rounded-full flex items-center justify-center shadow-lg mx-auto mb-3">
-            <div className="w-[7px] h-[7px] bg-white rounded-[1.5px] rotate-45" />
+          <div className="flex justify-center mb-3">
+            <LogoIcon size={40} darkMode={darkMode} />
           </div>
           <h1 className={`text-xl font-bold ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
             <span className="font-light italic">info</span>

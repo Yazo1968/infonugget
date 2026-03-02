@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import LogoIcon from './LogoIcon';
 
 interface LandingPageProps {
   onGetStarted: () => void;
@@ -56,9 +57,7 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
       {/* ── Nav ── */}
       <nav style={stagger(0)} className="relative z-10 shrink-0 flex items-center justify-between px-6 py-4 max-w-5xl mx-auto w-full">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 bg-accent-blue rounded-full flex items-center justify-center shadow-lg">
-            <div className="w-[10px] h-[10px] bg-white rounded-[2px] rotate-45" />
-          </div>
+          <LogoIcon size={32} darkMode={darkMode} />
           <span className={`text-xl tracking-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
             <span className="font-light italic">info</span>
             <span className="font-semibold not-italic">nugget</span>
@@ -107,11 +106,8 @@ export default function LandingPage({ onGetStarted, onSignIn }: LandingPageProps
 
           {/* Hero */}
           <div style={stagger(100)} className="text-center mt-16 mb-16">
-            <div className="mb-6">
-              <div className="w-16 h-16 bg-accent-blue rounded-full flex items-center justify-center shadow-xl mx-auto mb-6"
-                style={{ boxShadow: '0 0 40px 10px rgba(42, 159, 212, 0.15)' }}>
-                <div className="w-6 h-6 bg-white rounded-md rotate-45" />
-              </div>
+            <div className="mb-6 flex justify-center">
+              <LogoIcon size={64} darkMode={darkMode} />
             </div>
             <h1 className={`text-4xl sm:text-5xl tracking-tight mb-4 leading-tight ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
               Condense knowledge into

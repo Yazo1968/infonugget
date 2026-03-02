@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useThemeContext } from '../context/ThemeContext';
+import LogoIcon from './LogoIcon';
 import { TokenUsageTotals, formatTokens, formatCost } from '../hooks/useTokenUsage';
 
 interface HeaderBarProps {
@@ -90,9 +91,7 @@ function HeaderBar({ expandedPanel, onReturnToLanding, onBreadcrumbDocSelect, us
           className="flex items-center gap-2 hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-none p-0"
           title="Return to projects"
         >
-          <div className="w-7 h-7 bg-accent-blue rounded-full flex items-center justify-center shrink-0">
-            <div className="w-[9px] h-[9px] bg-white rounded-[2px] rotate-45" />
-          </div>
+          <LogoIcon size={28} darkMode={darkMode} className="shrink-0" />
           <span className="text-[17px] tracking-tight text-zinc-900 dark:text-zinc-100">
             <span className="font-light italic">info</span>
             <span className="font-semibold not-italic">nugget</span>
