@@ -77,8 +77,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
-    // Use 'local' scope to guarantee the local session is cleared immediately,
-    // even if the network request to revoke the token fails
+    // Clear React state immediately so the UI redirects to landing page,
+    // then tell Supabase to clean up the stored session
+    setSession(null);
+    setUser(null);
     await supabase.auth.signOut({ scope: 'local' });
   }, []);
 
