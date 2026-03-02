@@ -19,11 +19,32 @@ const CLAUDE_PROXY_URL = `${SUPABASE_URL}/functions/v1/claude-proxy`;
 const CLAUDE_FILES_PROXY_URL = `${SUPABASE_URL}/functions/v1/claude-files-proxy`;
 const GEMINI_PROXY_URL = `${SUPABASE_URL}/functions/v1/gemini-proxy`;
 
-/** Get the current Supabase auth token for Edge Function calls. */
+/** Get a fresh Supabase auth token for Edge Function calls. */
 async function getAuthToken(): Promise<string> {
+  // getSession() may return a cached/expired token — try it first,
+  // then force a refresh if the token looks expired or is missing.
   const { data: { session } } = await supabase.auth.getSession();
-  if (!session?.access_token) throw new Error('Not authenticated');
-  return session.access_token;
+  if (session?.access_token) {
+    // Check if the JWT is expired by decoding the payload
+    try {
+      const payload = JSON.parse(atob(session.access_token.split('.')[1]));
+      const nowSec = Math.floor(Date.now() / 1000);
+      if (payload.exp && payload.exp > nowSec + 30) {
+        // Token still valid (with 30s buffer)
+        return session.access_token;
+      }
+    } catch {
+      // If we can't decode, use the token as-is and let the server decide
+      return session.access_token;
+    }
+  }
+
+  // Token missing or expired — force a refresh
+  const { data: { session: refreshed }, error } = await supabase.auth.refreshSession();
+  if (error || !refreshed?.access_token) {
+    throw new Error('Not authenticated — session refresh failed');
+  }
+  return refreshed.access_token;
 }
 
 const log = createLogger('AI');
