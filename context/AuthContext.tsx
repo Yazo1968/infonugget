@@ -28,18 +28,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Use onAuthStateChange as the single source of truth.
-    // It fires INITIAL_SESSION immediately (waits for any PKCE code exchange
-    // to complete), then SIGNED_IN / SIGNED_OUT / TOKEN_REFRESHED as needed.
+    // Handle PKCE code exchange explicitly if code is in the URL
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    if (code) {
+      console.log('[Auth] PKCE code detected in URL, exchanging...');
+      supabase.auth.exchangeCodeForSession(code).then(({ data, error }) => {
+        if (error) {
+          console.error('[Auth] PKCE exchange failed:', error.message);
+        } else {
+          console.log('[Auth] PKCE exchange success, user:', data.session?.user?.email);
+          setSession(data.session);
+          setUser(data.session?.user ?? null);
+          setLoading(false);
+          // Clean up the URL
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      });
+    }
+
+    // Also handle hash-based tokens (implicit flow fallback)
+    const hash = window.location.hash;
+    if (hash && hash.includes('access_token')) {
+      console.log('[Auth] Hash tokens detected in URL');
+    }
+
+    // Listen for auth state changes (also fires INITIAL_SESSION)
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      console.log('[Auth] onAuthStateChange:', event, s?.user?.email ?? 'no user');
       setSession(s);
       setUser(s?.user ?? null);
       setLoading(false);
     });
 
-    // Fallback: if onAuthStateChange hasn't fired within 3s, check directly
+    // Fallback: if nothing has fired within 3s, check directly
     const timeout = setTimeout(async () => {
       const { data: { session: s } } = await supabase.auth.getSession();
+      console.log('[Auth] Fallback getSession:', s?.user?.email ?? 'no session');
       setSession(prev => prev ?? s);
       setUser(prev => prev ?? s?.user ?? null);
       setLoading(false);
