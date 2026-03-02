@@ -284,7 +284,10 @@ export function useCardGeneration(
       }));
 
       try {
-        const contentToMap = card.synthesisMap?.[currentLevel];
+        // Look up content at the toolbar's level first, then fall back to the card's own level
+        const contentToMap =
+          card.synthesisMap?.[currentLevel] ||
+          card.synthesisMap?.[card.detailLevel || 'Standard'];
 
         if (!contentToMap) {
           addToast({
