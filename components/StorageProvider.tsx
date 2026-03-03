@@ -301,7 +301,7 @@ async function hydrateFromStorage(): Promise<InitialPersistedState | null> {
     selectedDocumentId: appState?.selectedDocumentId ?? null,
     selectedProjectId: appState?.selectedProjectId ?? null,
     activeCardId: appState?.activeCardId ?? null,
-    openProjectId: appState?.openProjectId ?? null,
+    openProjectId: null, // Always land on dashboard; user opens a project explicitly
     workflowMode: 'insights',
     tokenUsageTotals: storedTokenUsage as Record<string, number> | undefined,
     customStyles: (storedCustomStyles as CustomStyle[] | null) ?? undefined,
