@@ -2,6 +2,14 @@ import { Card, CardFolder, CardItem, DetailLevel, UploadedFile, isCardFolder } f
 import { countWords } from './prompts/promptUtils';
 
 /**
+ * Strip the dedup suffix (e.g. "(2)", "(3)") from a card title.
+ * Use when passing the title to prompts or rendering on images.
+ */
+export function cleanCardTitle(title: string): string {
+  return title.replace(/\s*\(\d+\)$/, '');
+}
+
+/**
  * Flatten a CardItem[] into a flat Card[] (folders dissolved).
  * Use when you need all cards regardless of grouping.
  */

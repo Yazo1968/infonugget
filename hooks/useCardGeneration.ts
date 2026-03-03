@@ -4,7 +4,7 @@ import { useSelectionContext } from '../context/SelectionContext';
 import { useAbortController } from './useAbortController';
 import { Card, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
-import { flattenCards, findCard } from '../utils/cardUtils';
+import { flattenCards, findCard, cleanCardTitle } from '../utils/cardUtils';
 import { callClaude, uploadToFilesAPI } from '../utils/ai';
 import { base64ToBlob } from '../utils/fileProcessing';
 import { RecordUsageFn } from './useTokenUsage';
@@ -162,14 +162,17 @@ export function useCardGeneration(
         );
 
       try {
+        // Strip dedup suffix so "(2)" doesn't appear in prompts or on images
+        const title = cleanCardTitle(card.text);
+
         // Build unified section focus (handles both MD and PDF)
         const nuggetSubject = selectedNugget?.subject;
-        const sectionFocus = buildSectionFocus(card.text, enabledDocs);
+        const sectionFocus = buildSectionFocus(title, enabledDocs);
 
         // Branch: cover prompts vs content prompts
         const contentPrompt = isCover
-          ? buildCoverContentPrompt(card.text, level, nuggetSubject)
-          : buildContentPrompt(card.text, level, nuggetSubject);
+          ? buildCoverContentPrompt(title, level, nuggetSubject)
+          : buildContentPrompt(title, level, nuggetSubject);
         const finalPrompt = sectionFocus ? `${sectionFocus}\n\n${contentPrompt}` : contentPrompt;
 
         const expertPriming = buildExpertPriming(nuggetSubject);
@@ -226,7 +229,7 @@ export function useCardGeneration(
 
         if (!isCover) {
           synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
-          synthesizedText = `# ${card.text}\n\n${synthesizedText.trimStart()}`;
+          synthesizedText = `# ${title}\n\n${synthesizedText.trimStart()}`;
         }
 
         updateNuggetCard(card.id, (c) => ({
