@@ -215,7 +215,12 @@ export function useCardGeneration(
           cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
         });
 
-        let synthesizedText = rawSynthesized;
+        // Sanitize forbidden characters the model may still produce
+        let synthesizedText = rawSynthesized
+          .replace(/[\u2014\u2013]/g, '-')   // em dash, en dash → hyphen
+          .replace(/\*+/g, '')                // strip asterisks (bold markers)
+          .replace(/^>\s?/gm, '');            // strip blockquote markers
+
         if (!isCover) {
           synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
           synthesizedText = `# ${card.text}\n\n${synthesizedText.trimStart()}`;
