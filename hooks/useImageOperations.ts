@@ -5,7 +5,6 @@ import { useSelectionContext } from '../context/SelectionContext';
 import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage } from '../types';
 import { findCard, findParentFolder, flattenCards, mapCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
-import { getStorage } from '../components/StorageProvider';
 import { manageImagesApi } from '../utils/api';
 import { createLogger } from '../utils/logger';
 
