@@ -583,8 +583,22 @@ export class SupabaseBackend implements StorageBackend {
   async saveNuggetImage(image: StoredImage): Promise<void> {
     // Upload the main card image to storage
     const mainPath = this.cardImagePath(image.fileId, image.headingId, image.level);
-    let storagePath: string;
-    if (image.cardUrl.startsWith('data:') || image.cardUrl.startsWith('blob:')) {
+    let storagePath: string | null;
+    if (!image.cardUrl) {
+      // No current image (deleted) — remove the old file from storage but keep history
+      const { data: existing } = await supabase
+        .from('card_images')
+        .select('storage_path')
+        .eq('nugget_id', image.fileId)
+        .eq('card_id', image.headingId)
+        .eq('detail_level', image.level)
+        .eq('user_id', this.userId)
+        .single();
+      if (existing?.storage_path) {
+        await supabase.storage.from('card-images').remove([existing.storage_path]);
+      }
+      storagePath = null;
+    } else if (image.cardUrl.startsWith('data:') || image.cardUrl.startsWith('blob:')) {
       const urlToUpload = image.cardUrl.startsWith('blob:')
         ? await this.blobUrlToDataUrl(image.cardUrl)
         : image.cardUrl;

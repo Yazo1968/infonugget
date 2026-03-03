@@ -91,13 +91,15 @@ export function extractImages(card: Card, fileId: string): StoredImage[] {
   const images: StoredImage[] = [];
   for (const level of DETAIL_LEVELS) {
     const cardUrl = card.cardUrlMap?.[level];
-    if (cardUrl) {
+    const history = card.imageHistoryMap?.[level];
+    // Include entry if there's a current image OR version history to preserve
+    if (cardUrl || (history && history.length > 0)) {
       images.push({
         fileId,
         headingId: card.id,
         level,
-        cardUrl,
-        imageHistory: (card.imageHistoryMap?.[level] || []).map((v) => ({
+        cardUrl: cardUrl || '',
+        imageHistory: (history || []).map((v) => ({
           imageUrl: v.imageUrl,
           timestamp: v.timestamp,
           label: v.label,
@@ -255,7 +257,10 @@ export function deserializeCard(stored: StoredHeading, images: StoredImage[]): C
 
     for (const img of matchingImages) {
       const lvl = (LEGACY_LEVEL_MAP[img.level as string] || img.level) as DetailLevel;
-      cardUrlMap[lvl] = img.cardUrl;
+      // Only set cardUrl if non-empty (history-only entries have empty cardUrl)
+      if (img.cardUrl) {
+        cardUrlMap[lvl] = img.cardUrl;
+      }
       if (img.imageHistory?.length > 0) {
         imageHistoryMap[lvl] = img.imageHistory;
       }

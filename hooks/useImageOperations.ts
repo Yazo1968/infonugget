@@ -112,37 +112,20 @@ export function useImageOperations({
   const handleDeleteCardImage = useCallback(() => {
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
-    const nuggetId = selectedNugget.id;
     const cardId = activeCardId;
-    const cardUpdater = (c: Card) => {
-      const newUrlMap = { ...(c.cardUrlMap || {}) };
-      delete newUrlMap[level];
-      const newHistoryMap = { ...(c.imageHistoryMap || {}) };
-      delete newHistoryMap[level];
-      const newPlanMap = { ...(c.visualPlanMap || {}) };
-      delete newPlanMap[level];
-      const newPromptMap = { ...(c.lastPromptMap || {}) };
-      delete newPromptMap[level];
-      const newGenContentMap = { ...(c.lastGeneratedContentMap || {}) };
-      delete newGenContentMap[level];
-      return {
-        ...c,
-        cardUrlMap: newUrlMap,
-        imageHistoryMap: newHistoryMap,
-        visualPlanMap: newPlanMap,
-        lastPromptMap: newPromptMap,
-        lastGeneratedContentMap: newGenContentMap,
-      };
-    };
-    updateNugget(nuggetId, (n) => ({
+    // Only remove the current displayed image — preserve version history and other maps
+    updateNugget(selectedNugget.id, (n) => ({
       ...n,
-      cards: mapCardById(n.cards, cardId, cardUpdater),
+      cards: mapCardById(n.cards, cardId, (c) => {
+        const newUrlMap = { ...(c.cardUrlMap || {}) };
+        delete newUrlMap[level];
+        return { ...c, cardUrlMap: newUrlMap };
+      }),
       lastModifiedAt: Date.now(),
     }));
-    // Persist deletion to backend immediately (don't rely on orphan cleanup)
-    getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
-      log.warn('Failed to delete image from storage:', err);
-    });
+    // Don't call deleteNuggetImage — that would destroy the entire DB row including
+    // version history. Auto-save will persist the cleared cardUrl while keeping
+    // imageHistoryMap intact (extractImages handles history-only entries).
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
 
   const handleDeleteCardVersions = useCallback(() => {
