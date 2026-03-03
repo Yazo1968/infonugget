@@ -171,7 +171,7 @@ const CardRow: React.FC<CardRowProps> = ({
           </div>
         ) : (
           <p
-            className={`text-[11px] truncate ${
+            className={`text-[11px] flex min-w-0 ${
               isSynthesizing ? 'font-medium italic' : isActive ? 'font-semibold' : 'font-medium'
             }`}
             style={{
@@ -179,7 +179,8 @@ const CardRow: React.FC<CardRowProps> = ({
             }}
             title={card.text}
           >
-            {card.text}
+            <span className="truncate">{card.text.length > 6 ? card.text.slice(0, -3) : card.text}</span>
+            {card.text.length > 6 && <span className="shrink-0">{card.text.slice(-3)}</span>}
           </p>
         )}
       </div>
