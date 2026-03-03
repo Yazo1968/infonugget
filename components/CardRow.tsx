@@ -1,5 +1,51 @@
-import React from 'react';
+import React, { useRef, useState, useEffect } from 'react';
 import { Card, isCoverLevel } from '../types';
+
+/** Middle-truncate text: show start + "..." + end when it overflows its container. */
+export const MiddleTruncate: React.FC<{ text: string; className?: string; style?: React.CSSProperties }> = ({ text, className, style }) => {
+  const containerRef = useRef<HTMLParagraphElement>(null);
+  const [display, setDisplay] = useState(text);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      // Reset to full text to measure true scrollWidth
+      el.textContent = text;
+      if (el.scrollWidth <= el.clientWidth) {
+        setDisplay(text);
+        return;
+      }
+      // Binary search for the max chars that fit with "..." + last 3
+      const tail = text.slice(-3);
+      let lo = 0, hi = text.length - 3;
+      while (lo < hi) {
+        const mid = Math.ceil((lo + hi) / 2);
+        el.textContent = text.slice(0, mid) + '\u2026' + tail;
+        if (el.scrollWidth <= el.clientWidth) lo = mid;
+        else hi = mid - 1;
+      }
+      setDisplay(lo > 0 ? text.slice(0, lo) + '\u2026' + tail : text);
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text]);
+
+  return (
+    <p
+      ref={containerRef}
+      className={className}
+      style={{ ...style, overflow: 'hidden', whiteSpace: 'nowrap' }}
+      title={text}
+    >
+      {display}
+    </p>
+  );
+};
 
 export interface CardRowProps {
   card: Card;
@@ -170,18 +216,15 @@ const CardRow: React.FC<CardRowProps> = ({
             )}
           </div>
         ) : (
-          <p
-            className={`text-[11px] flex min-w-0 ${
+          <MiddleTruncate
+            text={card.text}
+            className={`text-[11px] ${
               isSynthesizing ? 'font-medium italic' : isActive ? 'font-semibold' : 'font-medium'
             }`}
             style={{
               color: isSynthesizing ? 'var(--tree-icon-dim)' : isActive ? 'var(--tree-active)' : 'var(--tree-text-dim)',
             }}
-            title={card.text}
-          >
-            <span className="truncate min-w-0">{card.text.length > 6 ? card.text.slice(0, -3) : card.text}</span>
-            {card.text.length > 6 && <span className="shrink-0 whitespace-nowrap">{card.text.slice(-3)}</span>}
-          </p>
+          />
         )}
       </div>
 
