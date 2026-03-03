@@ -368,15 +368,6 @@ const App: React.FC = () => {
     action();
   }, []);
 
-  // ── Breadcrumb navigation handlers ──
-  const handleBreadcrumbDocSelect = useCallback(
-    (docId: string) => {
-      selectEntity({ documentId: docId });
-      appGatedAction(() => setExpandedPanel('sources'));
-    },
-    [appGatedAction, selectEntity, setExpandedPanel],
-  );
-
   const handleAppDialogSave = useCallback(() => {
     const panel = appPendingDirtyPanel;
     if (panel === 'cards') cardsPanelRef.current?.save();
@@ -656,9 +647,7 @@ const App: React.FC = () => {
           >
             {/* Header bar — always visible */}
             <HeaderBar
-              expandedPanel={expandedPanel}
               onReturnToLanding={handleReturnToLanding}
-              onBreadcrumbDocSelect={handleBreadcrumbDocSelect}
               usageTotals={usageTotals}
               resetUsage={resetUsage}
             />

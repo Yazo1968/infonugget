@@ -1,44 +1,20 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useNuggetContext } from '../context/NuggetContext';
-import { useProjectContext } from '../context/ProjectContext';
+import React, { useState, useRef, useEffect } from 'react';
 import { useThemeContext } from '../context/ThemeContext';
 import LogoIcon from './LogoIcon';
 import { TokenUsageTotals, formatTokens, formatCost } from '../hooks/useTokenUsage';
 
 interface HeaderBarProps {
-  expandedPanel: string | null;
   onReturnToLanding: () => void;
-  onBreadcrumbDocSelect: (docId: string) => void;
   usageTotals: TokenUsageTotals;
   resetUsage: () => void;
 }
 
-function HeaderBar({ expandedPanel, onReturnToLanding, onBreadcrumbDocSelect, usageTotals, resetUsage }: HeaderBarProps) {
-  const { selectedNugget, selectedNuggetId, selectedDocumentId, toggleNuggetDocument } = useNuggetContext();
-  const { projects } = useProjectContext();
+function HeaderBar({ onReturnToLanding, usageTotals, resetUsage }: HeaderBarProps) {
   const { darkMode, toggleDarkMode } = useThemeContext();
 
-  // ── Local state (moved from App.tsx) ──
+  // ── Local state ──
   const [showUsageDropdown, setShowUsageDropdown] = useState(false);
   const usageDropdownRef = useRef<HTMLDivElement>(null);
-  const [breadcrumbDropdown, setBreadcrumbDropdown] = useState<'project' | 'nugget' | 'document' | null>(null);
-  const breadcrumbRef = useRef<HTMLDivElement>(null);
-
-  // ── Derived values ──
-  const nuggetDocs = selectedNugget?.documents ?? [];
-
-  const activeDocForBreadcrumb = useMemo(() => {
-    if (!nuggetDocs.length) return null;
-    if (selectedDocumentId) {
-      const found = nuggetDocs.find((d) => d.id === selectedDocumentId);
-      if (found) return found;
-    }
-    return nuggetDocs[0];
-  }, [nuggetDocs, selectedDocumentId]);
-
-  const parentProject = selectedNugget
-    ? projects.find((p) => p.nuggetIds.includes(selectedNugget.id))
-    : null;
 
   // ── Effects ──
 
@@ -54,38 +30,10 @@ function HeaderBar({ expandedPanel, onReturnToLanding, onBreadcrumbDocSelect, us
     return () => document.removeEventListener('mousedown', handler);
   }, [showUsageDropdown]);
 
-  // Close breadcrumb dropdown on outside click or Escape
-  useEffect(() => {
-    if (!breadcrumbDropdown) return;
-    const onClick = (e: MouseEvent) => {
-      if (breadcrumbRef.current && !breadcrumbRef.current.contains(e.target as Node)) setBreadcrumbDropdown(null);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setBreadcrumbDropdown(null);
-    };
-    document.addEventListener('mousedown', onClick);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onClick);
-      document.removeEventListener('keydown', onKey);
-    };
-  }, [breadcrumbDropdown]);
-
-  // Auto-close breadcrumb dropdown on nugget change
-  useEffect(() => {
-    setBreadcrumbDropdown(null);
-  }, [selectedNuggetId]);
-
-  // ── Local handler: select doc + close dropdown ──
-  const handleDocSelect = (docId: string) => {
-    onBreadcrumbDocSelect(docId);
-    setBreadcrumbDropdown(null);
-  };
-
   return (
     <header className="shrink-0 flex flex-col pt-2 border-b border-zinc-100 dark:border-zinc-700 relative z-[110]">
-      {/* Top row: logo + controls */}
-      <div className="h-9 flex items-center justify-between px-5">
+      {/* Single row: logo + controls */}
+      <div className="h-9 flex items-center justify-between px-5 mb-1">
         <button
           onClick={onReturnToLanding}
           className="flex items-center gap-2 hover:opacity-70 transition-opacity cursor-pointer bg-transparent border-none p-0"
@@ -203,136 +151,6 @@ function HeaderBar({ expandedPanel, onReturnToLanding, onBreadcrumbDocSelect, us
           </div>
         )}
       </div>
-      </div>
-
-      {/* Bottom row: breadcrumb navigation */}
-      <div className="h-7 flex items-center gap-0 min-w-0 px-2 text-[13px] text-zinc-900 dark:text-zinc-100">
-      {selectedNugget && (
-        <nav
-          ref={breadcrumbRef}
-          aria-label="Breadcrumb"
-          data-breadcrumb-dropdown
-          className="flex items-center gap-0 min-w-0 flex-1"
-        >
-          {/* ── Project segment (static label — scoped by landing page) ── */}
-          {parentProject && (
-            <>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Project">
-                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-              </svg>
-              <span className="ml-1 font-semibold not-italic px-1 py-0.5 whitespace-nowrap text-zinc-900 dark:text-zinc-100" title={parentProject.name}>
-                {parentProject.name}
-              </span>
-              <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
-            </>
-          )}
-
-          {/* ── Document segment ── */}
-          {(expandedPanel === null || expandedPanel === 'sources' || expandedPanel === 'chat' || expandedPanel === 'auto-deck' || expandedPanel === 'quality') ? (
-            /* Default / Sources / Chat / Auto-Deck: "Active Documents" with check/uncheck dropdown */
-            nuggetDocs.length > 0 && (
-              <>
-                <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Active Documents">
-                  <path d="M16 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z" />
-                  <path d="M8 2h10a2 2 0 0 1 2 2v12" />
-                </svg>
-                <div className="relative ml-1">
-                  <button
-                    onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
-                    className="font-semibold not-italic px-1 py-0.5 -my-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-0.5"
-                    aria-expanded={breadcrumbDropdown === 'document'}
-                  >
-                    Active Documents
-                    <span className="text-[10px] font-normal text-zinc-400 ml-0.5">
-                      ({nuggetDocs.filter((d) => d.enabled !== false).length}/{nuggetDocs.length})
-                    </span>
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ml-0.5 opacity-40 shrink-0">
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </button>
-                  {breadcrumbDropdown === 'document' && (
-                    <div className="absolute top-full left-0 mt-1 min-w-[200px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
-                      {(() => { const enabledCount = nuggetDocs.filter((d) => d.enabled !== false).length; return nuggetDocs.map((doc) => {
-                        const isEnabled = doc.enabled !== false;
-                        const isLastEnabled = isEnabled && enabledCount <= 1;
-                        const isActive = doc.id === selectedDocumentId;
-                        return (
-                          <div
-                            key={doc.id}
-                            className="flex items-center gap-2 px-3 py-1.5 select-none transition-colors rounded text-zinc-800 dark:text-zinc-200"
-                          >
-                            <button
-                              onClick={(e) => { e.stopPropagation(); if (!isLastEnabled) toggleNuggetDocument(doc.id); }}
-                              className={`shrink-0 w-3.5 h-3.5 rounded border flex items-center justify-center transition-colors ${isLastEnabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'} ${isEnabled ? 'border-zinc-300 dark:border-zinc-600 bg-zinc-900' : 'border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 hover:border-zinc-400 dark:hover:border-zinc-500'}`}
-                              aria-label={isLastEnabled ? 'At least one document must be active' : isEnabled ? `Disable ${doc.name}` : `Enable ${doc.name}`}
-                            >
-                              {isEnabled && (
-                                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                                  <polyline points="20 6 9 17 4 12" />
-                                </svg>
-                              )}
-                            </button>
-                            <span
-                              className={`truncate flex-1 min-w-0 cursor-pointer rounded px-1 -mx-1 transition-colors ${isActive ? 'bg-zinc-200 dark:bg-zinc-700 font-medium' : 'hover:underline'}`}
-                              onClick={() => handleDocSelect(doc.id)}
-                            >
-                              {doc.name}
-                            </span>
-                            <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
-                              {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
-                            </span>
-                          </div>
-                        );
-                      }); })()}
-                    </div>
-                  )}
-                </div>
-              </>
-            )
-          ) : (
-            /* Default: single active doc with dropdown */
-            activeDocForBreadcrumb && (
-              <>
-                <span className="mx-1.5 text-zinc-900 dark:text-zinc-100 font-light select-none">/</span>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400 shrink-0" aria-label="Document">
-                  <path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
-                  <path d="M14 2v4a2 2 0 0 0 2 2h4" />
-                </svg>
-                <div className="relative ml-1">
-                  <button
-                    onClick={() => setBreadcrumbDropdown((prev) => (prev === 'document' ? null : 'document'))}
-                    className="font-semibold not-italic px-1 py-0.5 -my-0.5 rounded hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors inline-flex items-center gap-0.5 whitespace-nowrap"
-                    title={activeDocForBreadcrumb.name}
-                    aria-expanded={breadcrumbDropdown === 'document'}
-                  >
-                    {activeDocForBreadcrumb.name}
-                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="ml-0.5 opacity-40 shrink-0">
-                      <polyline points="6 9 12 15 18 9" />
-                    </svg>
-                  </button>
-                  {breadcrumbDropdown === 'document' && (
-                    <div className="absolute top-full left-0 mt-1 min-w-[180px] max-h-64 overflow-y-auto bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 z-[120] py-1 text-[12px]">
-                      {nuggetDocs.map((doc) => (
-                        <button
-                          key={doc.id}
-                          onClick={() => handleDocSelect(doc.id)}
-                          className={`w-full text-left px-3 py-1.5 truncate transition-colors flex items-center gap-2 ${doc.id === activeDocForBreadcrumb.id ? 'bg-zinc-200 dark:bg-zinc-700 font-medium text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-                        >
-                          <span className="truncate">{doc.name}</span>
-                          <span className="text-[10px] text-zinc-400 dark:text-zinc-500 shrink-0 uppercase">
-                            {doc.sourceType === 'native-pdf' ? 'pdf' : 'md'}
-                          </span>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </>
-            )
-          )}
-        </nav>
-      )}
       </div>
     </header>
   );
