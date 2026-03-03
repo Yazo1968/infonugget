@@ -87,7 +87,7 @@ Allowed content types (use ONLY these):
 5. Tables when comparing items across dimensions - only when a table genuinely fits the data
 
 FORBIDDEN characters in output - do NOT use any of these:
-- Em dashes
+- Em dashes and en dashes
 - Square brackets [ ]
 - Blockquote marker >
 - Pipe characters |
