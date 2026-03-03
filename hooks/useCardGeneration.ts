@@ -215,10 +215,13 @@ export function useCardGeneration(
           cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
         });
 
-        // Sanitize forbidden characters the model may still produce
+        // Sanitize prohibited characters the model may still produce
         let synthesizedText = rawSynthesized
-          .replace(/[\u2014\u2013]/g, '-')   // em dash, en dash → hyphen
-          .replace(/\*+/g, '')                // strip asterisks (bold markers)
+          .replace(/[\u2014\u2013]/g, '-')   // em dash, en dash -> hyphen
+          .replace(/\u2192/g, '->')           // arrow -> text arrow
+          .replace(/[\u2713\u2714\u2717\u2718]/g, '') // check/cross marks
+          .replace(/\*+/g, '')                // strip asterisks
+          .replace(/~/g, '')                  // strip tildes
           .replace(/^>\s?/gm, '');            // strip blockquote markers
 
         if (!isCover) {

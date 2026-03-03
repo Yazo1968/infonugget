@@ -86,13 +86,7 @@ Allowed content types (use ONLY these):
 4. Numbered lists for sequential steps, ranked items, or ordered processes
 5. Tables when comparing items across dimensions - only when a table genuinely fits the data
 
-FORBIDDEN characters in output - do NOT use any of these:
-- Em dashes and en dashes
-- Square brackets [ ]
-- Blockquote marker >
-- Pipe characters |
-- Asterisks * or **
-Use only simple punctuation: periods, commas, colons, semicolons, hyphens, parentheses.
+PROHIBITED CHARACTERS: No em dashes (\u2014), en dashes (\u2013), arrows (\u2192), check/cross marks (\u2713\u2717), blockquote markers (>), square bracket annotations, tilde (~), pipe characters (|), or asterisks (*). Use colons, periods, commas, semicolons, hyphens, parentheses, and plain subheadings instead.
 
 Output: Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
 `.trim();
