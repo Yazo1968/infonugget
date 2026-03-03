@@ -179,8 +179,8 @@ const CardRow: React.FC<CardRowProps> = ({
             }}
             title={card.text}
           >
-            <span className="truncate">{card.text.length > 6 ? card.text.slice(0, -3) : card.text}</span>
-            {card.text.length > 6 && <span className="shrink-0">{card.text.slice(-3)}</span>}
+            <span className="truncate min-w-0">{card.text.length > 6 ? card.text.slice(0, -3) : card.text}</span>
+            {card.text.length > 6 && <span className="shrink-0 whitespace-nowrap">{card.text.slice(-3)}</span>}
           </p>
         )}
       </div>

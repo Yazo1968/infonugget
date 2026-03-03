@@ -169,8 +169,8 @@ const FolderRow: React.FC<FolderRowProps> = ({
             </div>
           ) : (
             <span className="text-[11px] font-semibold flex min-w-0" style={{ color: 'var(--tree-text)' }} title={folder.name}>
-              <span className="truncate">{folder.name.length > 6 ? folder.name.slice(0, -3) : folder.name}</span>
-              {folder.name.length > 6 && <span className="shrink-0">{folder.name.slice(-3)}</span>}
+              <span className="truncate min-w-0">{folder.name.length > 6 ? folder.name.slice(0, -3) : folder.name}</span>
+              {folder.name.length > 6 && <span className="shrink-0 whitespace-nowrap">{folder.name.slice(-3)}</span>}
             </span>
           )}
         </div>
