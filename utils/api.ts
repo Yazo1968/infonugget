@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase';
 import { createLogger } from './logger';
-import { StylingOptions, DetailLevel, UploadedFile } from '../types';
+import { StylingOptions, DetailLevel, UploadedFile, QualityReport, BookmarkNode } from '../types';
 
 const log = createLogger('API');
 
@@ -15,6 +15,8 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 
 const GENERATE_CARD_URL = `${SUPABASE_URL}/functions/v1/generate-card`;
 const MANAGE_IMAGES_URL = `${SUPABASE_URL}/functions/v1/manage-images`;
+const CHAT_MESSAGE_URL = `${SUPABASE_URL}/functions/v1/chat-message`;
+const AUTO_DECK_URL = `${SUPABASE_URL}/functions/v1/auto-deck`;
 
 /** Get a fresh auth token for Edge Function calls. */
 async function getAuthToken(): Promise<string> {
@@ -147,6 +149,147 @@ export async function manageImagesApi(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(body.error || `manage-images failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// chat-message API
+// ─────────────────────────────────────────────────────────────────
+
+export interface ChatMessageDocument {
+  name: string;
+  content?: string;
+  fileId?: string;
+  sourceType?: string;
+  bookmarks?: BookmarkNode[];
+}
+
+export interface ChatMessageHistoryEntry {
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  isCardContent?: boolean;
+}
+
+export interface ChatMessageRequest {
+  action: 'send_message' | 'initiate_chat';
+  userText?: string;
+  isCardRequest?: boolean;
+  detailLevel?: DetailLevel;
+  conversationHistory?: ChatMessageHistoryEntry[];
+  subject?: string;
+  qualityReport?: QualityReport;
+  documents: ChatMessageDocument[];
+}
+
+export interface ChatMessageResponse {
+  success: boolean;
+  responseText: string;
+  budgetExceeded?: boolean;
+  messagesPruned?: number;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
+}
+
+/**
+ * Call the chat-message Edge Function.
+ * Handles both regular chat and card content generation via Claude.
+ * All prompt building, token budgeting, and message pruning happen server-side.
+ */
+export async function chatMessageApi(
+  request: ChatMessageRequest,
+  signal?: AbortSignal,
+): Promise<ChatMessageResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(CHAT_MESSAGE_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `chat-message failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// auto-deck API
+// ─────────────────────────────────────────────────────────────────
+
+export interface AutoDeckRequest {
+  action: 'plan' | 'revise' | 'finalize' | 'produce';
+  briefing?: import('../types').AutoDeckBriefing;
+  lod?: import('../types').AutoDeckLod;
+  subject?: string;
+  qualityReport?: QualityReport;
+  documents?: Array<{
+    id: string;
+    name: string;
+    content?: string;
+    fileId?: string;
+    sourceType?: string;
+    structure?: Array<{ level: number; text: string; page?: number; wordCount?: number }>;
+  }>;
+  totalWordCount?: number;
+  // For revise
+  revision?: {
+    previousPlan: import('../types').ParsedPlan;
+    generalComment: string;
+    cardComments: Record<number, string>;
+    excludedCards: number[];
+    questionAnswers?: Record<string, string>;
+  };
+  // For finalize
+  plan?: import('../types').ParsedPlan;
+  questions?: import('../types').PlanQuestion[];
+  questionAnswers?: Record<string, string>;
+  generalComment?: string;
+  // For produce
+  planCards?: import('../types').PlannedCard[];
+  batchContext?: string;
+  maxTokens?: number;
+}
+
+export interface AutoDeckResponse {
+  success: boolean;
+  responseText: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
+}
+
+/**
+ * Call the auto-deck Edge Function.
+ * Handles plan, revise, finalize, and produce actions.
+ * All prompt building happens server-side; parsing stays client-side.
+ */
+export async function autoDeckApi(
+  request: AutoDeckRequest,
+  signal?: AbortSignal,
+): Promise<AutoDeckResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(AUTO_DECK_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `auto-deck failed: ${res.status}`);
   }
 
   return res.json();

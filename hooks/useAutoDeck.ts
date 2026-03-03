@@ -11,11 +11,7 @@ import {
 } from '../types';
 import { flattenCards } from '../utils/cardUtils';
 import { CLAUDE_MODEL } from '../utils/constants';
-import { callClaude, callClaudeWithFileApiDocs } from '../utils/ai';
 import { RecordUsageFn } from './useTokenUsage';
-import { buildPlannerPrompt, buildFinalizerPrompt } from '../utils/prompts/autoDeckPlanner';
-import { buildProducerPrompt, batchPlan } from '../utils/prompts/autoDeckProducer';
-import { buildQualityWarningsBlock } from '../utils/prompts/qualityCheck';
 import {
   parsePlannerResponse,
   parseFinalizerResponse,
@@ -28,7 +24,8 @@ import { estimateTokens } from '../utils/tokenEstimation';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
 import { useAbortController } from './useAbortController';
-import { resolveOrderedDocs, splitDocsByTransport } from '../utils/documentResolution';
+import { resolveOrderedDocs } from '../utils/documentResolution';
+import { autoDeckApi } from '../utils/api';
 
 const log = createLogger('AutoDeck');
 
@@ -109,35 +106,14 @@ export function useAutoDeck(
       };
       setSession(newSession);
 
-      // Split documents: inline (content) vs Files API (fileId only, e.g. native PDFs)
-      const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
+      // Compute total word count and pre-flight token check (inline docs only — Files API docs handled server-side)
+      const inlineContent = orderedSelectedDocs
+        .filter((d) => !d.fileId)
+        .map((d) => d.content || '');
+      const totalWordCount = inlineContent.reduce((sum, c) => sum + countWords(c), 0);
 
-      // Build inline document context for prompt — preserving user-specified order
-      const docs = inlineDocs.map((d) => ({
-        id: d.id,
-        name: d.name,
-        wordCount: d.content ? countWords(d.content) : 0,
-        content: d.content || '',
-      }));
-      // Files API docs included in metadata but content sent via document blocks
-      const fileApiDocsMeta = fileApiDocs.map((d) => ({
-        id: d.id,
-        name: d.name,
-        wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
-        content: '', // content sent via Files API document blocks, not inline
-      }));
-      const allDocsMeta = orderedDocIds
-        .map((id) => {
-          const inlineDoc = docs.find((d) => d.id === id);
-          if (inlineDoc) return inlineDoc;
-          return fileApiDocsMeta.find((d) => d.id === id);
-        })
-        .filter(Boolean) as typeof docs;
-
-      const totalWordCount = docs.reduce((sum, d) => sum + d.wordCount, 0);
-
-      // Pre-flight token check (only inline docs — Files API docs don't count toward input tokens)
-      const estimatedInputTokens = estimateTokens(docs.map((d) => d.content).join(''));
+      // Pre-flight token check
+      const estimatedInputTokens = estimateTokens(inlineContent.join(''));
       if (estimatedInputTokens > 180000) {
         setSession((prev) =>
           prev
@@ -154,31 +130,36 @@ export function useAutoDeck(
       const abortController = createAbort();
 
       try {
-        const { systemBlocks, messages } = buildPlannerPrompt({
+        // Build document payload for the Edge Function
+        const apiDocs = orderedSelectedDocs.map((d) => ({
+          id: d.id,
+          name: d.name,
+          content: d.fileId ? undefined : (d.content || ''),
+          fileId: d.fileId,
+          sourceType: d.sourceType,
+          structure: d.structure,
+        }));
+
+        const response = await autoDeckApi({
+          action: 'plan',
           briefing,
           lod,
           subject: selectedNugget?.subject,
-          documents: allDocsMeta,
+          qualityReport: selectedNugget?.qualityReport,
+          documents: apiDocs,
           totalWordCount,
+        }, abortController.signal);
+
+        recordUsage?.({
+          provider: 'claude',
+          model: CLAUDE_MODEL,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
         });
 
-        // Inject quality warnings (if dismissed red report exists)
-        const plannerQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
-        if (plannerQualityWarnings) {
-          systemBlocks.push({ text: plannerQualityWarnings, cache: false });
-        }
-
-        const { text: rawResponse } = await callClaudeWithFileApiDocs({
-          fileApiDocs: fileApiDocs.map((d) => ({ fileId: d.fileId!, name: d.name })),
-          systemBlocks,
-          messages,
-          maxTokens: 16384,
-          temperature: 0.1,
-          signal: abortController.signal,
-          recordUsage,
-        });
-
-        const result = parsePlannerResponse(rawResponse);
+        const result = parsePlannerResponse(response.responseText);
 
         if (result.status === 'conflict') {
           setSession((prev) =>
@@ -257,32 +238,12 @@ export function useAutoDeck(
     // Resolve documents in the same order as the original session
     const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
 
-    // Split documents: inline vs Files API
-    const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
+    // Compute total word count of inline docs (Files API docs don't count)
+    const totalWordCount = orderedSelectedDocs
+      .filter((d) => !d.fileId)
+      .reduce((sum, d) => sum + (d.content ? countWords(d.content) : 0), 0);
 
-    const docs = inlineDocs.map((d) => ({
-      id: d.id,
-      name: d.name,
-      wordCount: d.content ? countWords(d.content) : 0,
-      content: d.content || '',
-    }));
-    const fileApiDocsMeta = fileApiDocs.map((d) => ({
-      id: d.id,
-      name: d.name,
-      wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
-      content: '',
-    }));
-    const allDocsMeta = session.orderedDocIds
-      .map((id) => {
-        const inlineDoc = docs.find((d) => d.id === id);
-        if (inlineDoc) return inlineDoc;
-        return fileApiDocsMeta.find((d) => d.id === id);
-      })
-      .filter(Boolean) as typeof docs;
-
-    const totalWordCount = docs.reduce((sum, d) => sum + d.wordCount, 0);
-
-    // Collect excluded cards and question answers
+    // Collect excluded cards
     const excludedCards: number[] = [];
     Object.entries(session.reviewState.cardStates).forEach(([numStr, state]) => {
       if (!state.included) excludedCards.push(Number(numStr));
@@ -291,11 +252,23 @@ export function useAutoDeck(
     const abortController = createAbort();
 
     try {
-      const { systemBlocks, messages } = buildPlannerPrompt({
+      // Build document payload for the Edge Function
+      const apiDocs = orderedSelectedDocs.map((d) => ({
+        id: d.id,
+        name: d.name,
+        content: d.fileId ? undefined : (d.content || ''),
+        fileId: d.fileId,
+        sourceType: d.sourceType,
+        structure: d.structure,
+      }));
+
+      const response = await autoDeckApi({
+        action: 'revise',
         briefing: session.briefing,
         lod: session.lod,
         subject: selectedNugget?.subject,
-        documents: allDocsMeta,
+        qualityReport: selectedNugget?.qualityReport,
+        documents: apiDocs,
         totalWordCount,
         revision: {
           previousPlan: session.parsedPlan,
@@ -304,25 +277,18 @@ export function useAutoDeck(
           excludedCards,
           questionAnswers: session.reviewState.questionAnswers,
         },
+      }, abortController.signal);
+
+      recordUsage?.({
+        provider: 'claude',
+        model: CLAUDE_MODEL,
+        inputTokens: response.usage.inputTokens,
+        outputTokens: response.usage.outputTokens,
+        cacheReadTokens: response.usage.cacheReadTokens,
+        cacheWriteTokens: response.usage.cacheWriteTokens,
       });
 
-      // Inject quality warnings (if dismissed red report exists)
-      const revisionQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
-      if (revisionQualityWarnings) {
-        systemBlocks.push({ text: revisionQualityWarnings, cache: false });
-      }
-
-      const { text: rawResponse } = await callClaudeWithFileApiDocs({
-        fileApiDocs: fileApiDocs.map((d) => ({ fileId: d.fileId!, name: d.name })),
-        systemBlocks,
-        messages,
-        maxTokens: 16384,
-        temperature: 0.1,
-        signal: abortController.signal,
-        recordUsage,
-      });
-
-      const result = parsePlannerResponse(rawResponse);
+      const result = parsePlannerResponse(response.responseText);
 
       if (result.status === 'ok') {
         const cardStates: Record<number, ReviewCardState> = {};
@@ -398,31 +364,6 @@ export function useAutoDeck(
     // Resolve documents in the same order as the original session
     const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
 
-    // Split documents: inline vs Files API
-    const { fileApiDocs, inlineDocs } = splitDocsByTransport(orderedSelectedDocs);
-
-    const inlineDocsWithWordCount = inlineDocs.map((d) => ({
-      id: d.id,
-      name: d.name,
-      wordCount: d.content ? countWords(d.content) : 0,
-      content: d.content || '',
-    }));
-    const fileApiDocsMeta = fileApiDocs.map((d) => ({
-      id: d.id,
-      name: d.name,
-      wordCount: d.structure?.reduce((sum, h) => sum + (h.wordCount ?? 0), 0) ?? 0,
-      content: '',
-    }));
-    const allDocsMetaWithWordCount = session.orderedDocIds
-      .map((id) => {
-        const inlineDoc = inlineDocsWithWordCount.find((d) => d.id === id);
-        if (inlineDoc) return inlineDoc;
-        return fileApiDocsMeta.find((d) => d.id === id);
-      })
-      .filter(Boolean) as typeof inlineDocsWithWordCount;
-
-    const _totalWordCount = inlineDocsWithWordCount.reduce((sum, d) => sum + d.wordCount, 0);
-
     // Filter to only included cards
     const includedCards = session.parsedPlan.cards.filter(
       (c) => session.reviewState!.cardStates[c.number]?.included !== false,
@@ -457,8 +398,8 @@ export function useAutoDeck(
       if (hasAnsweredQuestions || hasGeneralComment) {
         setStatus('finalizing');
 
-        // Finalizer only restructures the plan — does NOT need source documents
-        const { systemBlocks: finSystemBlocks, messages: finMessages } = buildFinalizerPrompt({
+        const finResponse = await autoDeckApi({
+          action: 'finalize',
           briefing: session.briefing,
           lod: session.lod,
           subject: selectedNugget?.subject,
@@ -466,26 +407,18 @@ export function useAutoDeck(
           questions: session.parsedPlan.questions || [],
           questionAnswers: session.reviewState.questionAnswers,
           generalComment: session.reviewState.generalComment || undefined,
-        });
-
-        const { text: finRawResponse, usage: finUsage } = await callClaude('', {
-          systemBlocks: finSystemBlocks,
-          messages: finMessages,
-          maxTokens: 16384,
-          temperature: 0.1,
-          signal: abortController.signal,
-        });
+        }, abortController.signal);
 
         recordUsage?.({
           provider: 'claude',
           model: CLAUDE_MODEL,
-          inputTokens: finUsage?.input_tokens ?? 0,
-          outputTokens: finUsage?.output_tokens ?? 0,
-          cacheReadTokens: finUsage?.cache_read_input_tokens ?? 0,
-          cacheWriteTokens: finUsage?.cache_creation_input_tokens ?? 0,
+          inputTokens: finResponse.usage.inputTokens,
+          outputTokens: finResponse.usage.outputTokens,
+          cacheReadTokens: finResponse.usage.cacheReadTokens,
+          cacheWriteTokens: finResponse.usage.cacheWriteTokens,
         });
 
-        const finResult = parseFinalizerResponse(finRawResponse);
+        const finResult = parseFinalizerResponse(finResponse.responseText);
 
         if (finResult.status !== 'ok') {
           throw new Error(finResult.status === 'error' ? finResult.error : 'Finalizer returned unexpected status');
@@ -510,12 +443,27 @@ export function useAutoDeck(
       // ── Phase 2: Produce ──
       setStatus('producing');
 
-      // Build producer doc metadata (without wordCount, matching ProducerPromptParams)
-      const producerDocsMeta = allDocsMetaWithWordCount.map(({ id, name, content }) => ({ id, name, content }));
+      // Build document payload for the Edge Function
+      const apiDocs = orderedSelectedDocs.map((d) => ({
+        id: d.id,
+        name: d.name,
+        content: d.fileId ? undefined : (d.content || ''),
+        fileId: d.fileId,
+        sourceType: d.sourceType,
+        structure: d.structure,
+      }));
 
-      // Batch if needed (>15 cards)
+      // Batch if needed (>15 cards) — inline batch logic
       const finalCards = finalizedPlan.cards;
-      const batches = finalCards.length > 15 ? batchPlan(finalCards, 12) : [finalCards];
+      const batchSize = 12;
+      const batches: typeof finalCards[] = [];
+      if (finalCards.length > 15) {
+        for (let i = 0; i < finalCards.length; i += batchSize) {
+          batches.push(finalCards.slice(i, i + batchSize));
+        }
+      } else {
+        batches.push(finalCards);
+      }
 
       const enabledDocNames = orderedSelectedDocs.map((d) => d.name);
       const detailLevel = AUTO_DECK_LOD_LEVELS[session.lod].detailLevel;
@@ -558,36 +506,33 @@ export function useAutoDeck(
             otherCards.map((c) => `  Card ${c.number}: ${c.title} — ${c.description}`).join('\n');
         }
 
-        const { systemBlocks, messages } = buildProducerPrompt({
-          briefing: session.briefing,
-          lod: session.lod,
-          subject: selectedNugget?.subject,
-          plan: batch,
-          documents: producerDocsMeta,
-          batchContext,
-        });
-
-        // Inject quality warnings (if dismissed red report exists)
-        const producerQualityWarnings = buildQualityWarningsBlock(selectedNugget?.qualityReport);
-        if (producerQualityWarnings) {
-          systemBlocks.push({ text: producerQualityWarnings, cache: false });
-        }
-
         // Scale maxTokens based on batch size and LOD
         const lodConfig = AUTO_DECK_LOD_LEVELS[session.lod];
         const tokensPerCard = Math.ceil(lodConfig.wordCountMax * 1.5 * 1.3); // words→tokens with overhead
         const maxTokens = Math.min(64000, batch.length * tokensPerCard + 500);
 
-        const { text: rawResponse } = await callClaudeWithFileApiDocs({
-          fileApiDocs: fileApiDocs.map((d) => ({ fileId: d.fileId!, name: d.name })),
-          systemBlocks,
-          messages,
+        const prodResponse = await autoDeckApi({
+          action: 'produce',
+          briefing: session.briefing,
+          lod: session.lod,
+          subject: selectedNugget?.subject,
+          qualityReport: selectedNugget?.qualityReport,
+          documents: apiDocs,
+          planCards: batch,
+          batchContext,
           maxTokens,
-          signal: abortController.signal,
-          recordUsage,
+        }, abortController.signal);
+
+        recordUsage?.({
+          provider: 'claude',
+          model: CLAUDE_MODEL,
+          inputTokens: prodResponse.usage.inputTokens,
+          outputTokens: prodResponse.usage.outputTokens,
+          cacheReadTokens: prodResponse.usage.cacheReadTokens,
+          cacheWriteTokens: prodResponse.usage.cacheWriteTokens,
         });
 
-        const result = parseProducerResponse(rawResponse);
+        const result = parseProducerResponse(prodResponse.responseText);
         if (result.status === 'ok') {
           allProducedCards.push(...result.cards);
           // Fill placeholders for this batch as content arrives
