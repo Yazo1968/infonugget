@@ -79,26 +79,3 @@ ${docList}
 Return ONLY the JSON. No preamble, no explanation, no markdown fences around it. Just the raw JSON object.`;
 }
 
-/**
- * Build a warnings block for injection into downstream prompts (chat, auto-deck).
- * Returns null if there are no active warnings (green, or red but not dismissed).
- */
-export function buildQualityWarningsBlock(report?: QualityReport): string | null {
-  if (!report) return null;
-  if (report.status !== 'red') return null;
-  if (!report.dismissed) return null;
-
-  const issues: string[] = [];
-
-  const isolatedClusters = report.clusters.filter((c) => c.isolated);
-  if (isolatedClusters.length > 0) {
-    issues.push(`${isolatedClusters.length} unrelated document cluster(s)`);
-  }
-  if (report.conflicts.length > 0) {
-    issues.push(`${report.conflicts.length} conflict(s)`);
-  }
-
-  if (issues.length === 0) return null;
-
-  return `The document quality check found ${issues.join(' and ')}. When relevant, add a brief footnote formatted exactly as: <i class="qn">See Quality Check panel for details.</i>`;
-}

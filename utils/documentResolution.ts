@@ -17,20 +17,6 @@ export function resolveEnabledDocs(docs: UploadedFile[]): UploadedFile[] {
 }
 
 /**
- * Splits documents by transport: Files API (fileId-only) vs inline (has content).
- * This determines whether documents go as file references or inline text in prompts.
- */
-export function splitDocsByTransport(docs: UploadedFile[]): {
-  fileApiDocs: UploadedFile[];
-  inlineDocs: UploadedFile[];
-} {
-  return {
-    fileApiDocs: docs.filter((d) => d.fileId && !d.content),
-    inlineDocs: docs.filter((d) => d.content),
-  };
-}
-
-/**
  * Resolves documents for ordered selection (used by Auto-Deck).
  * Filters to available docs, then orders by the provided ID list.
  */
