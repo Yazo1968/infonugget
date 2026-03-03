@@ -5,19 +5,15 @@ import { useAbortController } from './useAbortController';
 import { Card, CardItem, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, GEMINI_IMAGE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard } from '../utils/cardUtils';
-import { withGeminiRetry, callClaude, PRO_IMAGE_CONFIG, callGeminiProxy, uploadToFilesAPI } from '../utils/ai';
+import { callClaude, uploadToFilesAPI } from '../utils/ai';
 import { base64ToBlob } from '../utils/fileProcessing';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
-import { buildContentPrompt, buildPlannerPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
-import { buildVisualizerPrompt } from '../utils/prompts/imageGeneration';
-import {
-  buildCoverContentPrompt,
-  buildCoverPlannerPrompt,
-  buildCoverVisualizerPrompt,
-} from '../utils/prompts/coverGeneration';
+import { buildContentPrompt, buildSectionFocus } from '../utils/prompts/contentGeneration';
+import { buildCoverContentPrompt } from '../utils/prompts/coverGeneration';
 import { buildExpertPriming } from '../utils/prompts/promptUtils';
 import { resolveEnabledDocs } from '../utils/documentResolution';
+import { generateCardApi } from '../utils/api';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
 
@@ -257,13 +253,6 @@ export function useCardGeneration(
 
   const generateCard = useCallback(
     async (card: Card, skipReferenceOnce?: boolean, externalSignal?: AbortSignal) => {
-      if (typeof window !== 'undefined' && (window as any).aistudio) {
-        const hasKey = await (window as any).aistudio.hasSelectedApiKey();
-        if (!hasKey) {
-          await (window as any).aistudio.openSelectKey();
-        }
-      }
-
       // Use provided signal (batch) or create a new AbortController (single card)
       let signal: AbortSignal;
       if (externalSignal) {
@@ -275,7 +264,6 @@ export function useCardGeneration(
 
       const settings = { ...menuDraftOptions };
       const currentLevel = settings.levelOfDetail;
-      const nuggetSubject = selectedNugget?.subject;
 
       // Set generating status
       updateNuggetCard(card.id, (c) => ({
@@ -299,202 +287,79 @@ export function useCardGeneration(
           return;
         }
 
-        const isCover = isCoverLevel(currentLevel);
-        setCardStatus(card.id, `Planning layout for [${card.text}]...`);
+        setCardStatus(card.id, `Generating image for [${card.text}]...`);
 
         if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
-        let visualPlan: string | undefined;
-        try {
-          const plannerPrompt = isCover
-            ? buildCoverPlannerPrompt(card.text, contentToMap, settings.style, settings.aspectRatio, currentLevel)
-            : buildPlannerPrompt(
-                card.text,
-                contentToMap,
-                settings.aspectRatio,
-                card.visualPlanMap?.[currentLevel],
-                nuggetSubject,
-              );
-
-          const plannerResponse = await callClaude(plannerPrompt, { maxTokens: 1024, temperature: 0.7, signal });
-          visualPlan = plannerResponse?.text || undefined;
-          if (plannerResponse?.usage) {
-            recordUsage?.({
-              provider: 'claude',
-              model: CLAUDE_MODEL,
-              inputTokens: plannerResponse.usage?.input_tokens ?? 0,
-              outputTokens: plannerResponse.usage?.output_tokens ?? 0,
-              cacheReadTokens: plannerResponse.usage?.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: plannerResponse.usage?.cache_creation_input_tokens ?? 0,
-            });
-          }
-        } catch (err) {
-          log.warn('Planner step failed, falling back to direct visualization:', err);
-        }
-
-        setCardStatus(
-          card.id,
-          `Rendering ${settings.style} ${isCover ? 'Card' : 'Visual'} [${currentLevel}] for [${card.text}]...`,
-        );
-
+        // Prepare reference image for the API (if applicable)
         const shouldUseRef = !!(referenceImage && useReferenceImage && !skipReferenceOnce);
-        const lastPrompt = isCover
-          ? buildCoverVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, currentLevel)
-          : buildVisualizerPrompt(card.text, contentToMap, settings, visualPlan, shouldUseRef, nuggetSubject);
-
-        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-
-        const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [];
+        let refImagePayload: { base64: string; mimeType: string } | null = null;
         if (shouldUseRef) {
-          parts.push({
-            inlineData: {
-              mimeType: extractMime(referenceImage!.url),
-              data: extractBase64(referenceImage!.url),
-            },
-          });
-        }
-        parts.push({ text: lastPrompt });
-
-        // Retry up to 2 extra times when Gemini returns a 200 but no image data
-        const IMAGE_EMPTY_RETRIES = 2;
-        let imageResponse = await withGeminiRetry(async () => {
-          return await callGeminiProxy(
-            GEMINI_IMAGE_MODEL,
-            [{ parts }],
-            {
-              ...PRO_IMAGE_CONFIG,
-              imageConfig: {
-                aspectRatio: settings.aspectRatio,
-                imageSize: settings.resolution,
-              },
-            },
-            signal,
-          );
-        });
-
-        for (let emptyRetry = 0; emptyRetry < IMAGE_EMPTY_RETRIES; emptyRetry++) {
-          if (imageResponse.images && imageResponse.images.length > 0) break;
-          if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
-          // Safety block — don't retry if the model explicitly refused
-          const reason = imageResponse.finishReason?.toUpperCase();
-          if (reason === 'SAFETY' || reason === 'PROHIBITED_CONTENT' || imageResponse.promptFeedback?.blockReason) {
-            break;
-          }
-          log.warn(`Empty image response for "${card.text}" (attempt ${emptyRetry + 1}/${IMAGE_EMPTY_RETRIES}), retrying...`);
-          await new Promise((r) => setTimeout(r, 1500 * (emptyRetry + 1)));
-          imageResponse = await withGeminiRetry(async () => {
-            return await callGeminiProxy(
-              GEMINI_IMAGE_MODEL,
-              [{ parts }],
-              {
-                ...PRO_IMAGE_CONFIG,
-                imageConfig: {
-                  aspectRatio: settings.aspectRatio,
-                  imageSize: settings.resolution,
-                },
-              },
-              signal,
-            );
-          });
+          refImagePayload = {
+            base64: extractBase64(referenceImage!.url),
+            mimeType: extractMime(referenceImage!.url),
+          };
         }
 
-        if (imageResponse?.usageMetadata) {
-          recordUsage?.({
-            provider: 'gemini',
-            model: GEMINI_IMAGE_MODEL,
-            inputTokens: imageResponse.usageMetadata?.promptTokenCount ?? 0,
-            outputTokens: imageResponse.usageMetadata?.candidatesTokenCount ?? 0,
-          });
-        }
+        // Prepare document references for the API
+        const enabledDocs = resolveEnabledDocs(selectedNugget?.documents ?? []);
+        const documents = enabledDocs.map((d) => ({
+          fileId: d.fileId,
+          name: d.name,
+          sourceType: d.sourceType,
+          structure: d.structure,
+        }));
 
-        let cardUrl = '';
-        if (!imageResponse.images || imageResponse.images.length === 0) {
-          // Build a descriptive error using diagnostics from the proxy
-          const reason = imageResponse.finishReason;
-          const blocked = imageResponse.promptFeedback?.blockReason;
-          let detail = 'The response may have been blocked or empty.';
-          if (blocked) {
-            detail = `Prompt blocked by safety filter: ${blocked}`;
-          } else if (reason === 'SAFETY' || reason === 'PROHIBITED_CONTENT') {
-            detail = `Image generation blocked (${reason}). Try simplifying the card content.`;
-          } else if (reason) {
-            detail = `Model finish reason: ${reason}. The model may not have generated an image for this content.`;
-          }
-          if (imageResponse.text) {
-            log.warn(`Gemini returned text but no image for "${card.text}":`, imageResponse.text.slice(0, 200));
-          }
-          throw new Error(`No image data received from the AI model. ${detail}`);
-        }
-        const img = imageResponse.images[0];
-        if (!img.data || typeof img.data !== 'string' || img.data.length < 100) {
-          throw new Error('Image data is empty or corrupted. The AI model returned an invalid image.');
-        }
-        cardUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
+        // Call the server-side generate-card Edge Function
+        // This runs the full pipeline: planning → image gen → storage upload → DB persist
+        const response = await generateCardApi({
+          nuggetId: selectedNugget!.id,
+          cardId: card.id,
+          cardTitle: card.text,
+          detailLevel: currentLevel as DetailLevel,
+          settings,
+          subject: selectedNugget?.subject,
+          existingSynthesis: contentToMap,
+          previousPlan: card.visualPlanMap?.[currentLevel],
+          documents,
+          referenceImage: refImagePayload,
+          skipSynthesis: true, // Content already synthesized
+        }, signal);
 
-        if (cardUrl) {
-          updateNuggetCard(card.id, (c) => {
-            // Preserve version history: keep existing versions and append the new generation
-            const existingHistory = c.imageHistoryMap?.[currentLevel] || [];
-            const prevUrl = c.cardUrlMap?.[currentLevel];
-            const updatedHistory = [...existingHistory];
-            // If there's a previous image that isn't already the last entry, add it
-            if (
-              prevUrl &&
-              (updatedHistory.length === 0 || updatedHistory[updatedHistory.length - 1].imageUrl !== prevUrl)
-            ) {
-              updatedHistory.push({
-                imageUrl: prevUrl,
-                timestamp: Date.now(),
-                label: updatedHistory.length === 0 ? 'Original' : `Generation ${updatedHistory.length}`,
-              });
-            }
-            // Add the new generation
+        // Update local state with the server response (signed URL, not data URL)
+        updateNuggetCard(card.id, (c) => {
+          const existingHistory = c.imageHistoryMap?.[currentLevel] || [];
+          const prevUrl = c.cardUrlMap?.[currentLevel];
+          const updatedHistory = [...existingHistory];
+          if (
+            prevUrl &&
+            (updatedHistory.length === 0 || updatedHistory[updatedHistory.length - 1].imageUrl !== prevUrl)
+          ) {
             updatedHistory.push({
-              imageUrl: cardUrl,
+              imageUrl: prevUrl,
               timestamp: Date.now(),
-              label: `Generation ${updatedHistory.length + 1}`,
+              label: updatedHistory.length === 0 ? 'Original' : `Generation ${updatedHistory.length}`,
             });
-            // Cap at 10 versions
-            while (updatedHistory.length > 10) updatedHistory.shift();
-            return {
-              ...c,
-              cardUrlMap: { ...(c.cardUrlMap || {}), [currentLevel]: cardUrl },
-              isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
-              imageHistoryMap: { ...(c.imageHistoryMap || {}), [currentLevel]: updatedHistory },
-              lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: contentToMap },
-              visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: visualPlan },
-              lastPromptMap: { ...(c.lastPromptMap || {}), [currentLevel]: lastPrompt },
-            };
+          }
+          updatedHistory.push({
+            imageUrl: response.imageUrl,
+            timestamp: Date.now(),
+            label: `Generation ${updatedHistory.length + 1}`,
           });
-        }
+          while (updatedHistory.length > 10) updatedHistory.shift();
+          return {
+            ...c,
+            cardUrlMap: { ...(c.cardUrlMap || {}), [currentLevel]: response.imageUrl },
+            isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
+            imageHistoryMap: { ...(c.imageHistoryMap || {}), [currentLevel]: updatedHistory },
+            lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: response.synthesisContent },
+            visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: response.visualPlan },
+          };
+        });
       } catch (err: any) {
         if (isAbortError(err)) return;
         log.error('Generation failed:', err);
-        log.error(
-          'Generation error details:',
-          JSON.stringify(
-            {
-              message: err.message,
-              status: err.status,
-              code: err.code,
-              details: err.details,
-              errorInfo: err.errorInfo,
-              aspectRatio: settings.aspectRatio,
-              resolution: settings.resolution,
-              style: settings.style,
-              level: currentLevel,
-            },
-            null,
-            2,
-          ),
-        );
-        if (err.message?.includes('Requested entity was not found') || err.status === 404) {
-          if (typeof window !== 'undefined' && (window as any).aistudio) {
-            await (window as any).aistudio.openSelectKey();
-          }
-        }
 
-        // Determine if this was a retryable error (503/overloaded/rate-limit)
         const msg = (err.message || '').toLowerCase();
         const isOverloaded =
           msg.includes('503') ||
@@ -524,7 +389,6 @@ export function useCardGeneration(
       }
     },
     [
-      performSynthesis,
       manifestCards,
       menuDraftOptions,
       referenceImage,
@@ -532,8 +396,7 @@ export function useCardGeneration(
       updateNuggetCard,
       setCardStatus,
       addToast,
-      recordUsage,
-      selectedNugget?.subject,
+      selectedNugget,
     ],
   );
 

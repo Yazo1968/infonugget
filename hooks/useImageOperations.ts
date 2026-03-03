@@ -6,6 +6,7 @@ import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage } from '..
 import { findCard, findParentFolder, flattenCards, mapCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
 import { getStorage } from '../components/StorageProvider';
+import { manageImagesApi } from '../utils/api';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ImageOps');
@@ -113,8 +114,9 @@ export function useImageOperations({
     if (!activeCardId || !selectedNugget) return;
     const level = activeLogicTab;
     const cardId = activeCardId;
-    // Only remove the current displayed image — preserve version history and other maps
-    updateNugget(selectedNugget.id, (n) => ({
+    const nuggetId = selectedNugget.id;
+    // Optimistic local update: clear current image, preserve history
+    updateNugget(nuggetId, (n) => ({
       ...n,
       cards: mapCardById(n.cards, cardId, (c) => {
         const newUrlMap = { ...(c.cardUrlMap || {}) };
@@ -123,9 +125,10 @@ export function useImageOperations({
       }),
       lastModifiedAt: Date.now(),
     }));
-    // Don't call deleteNuggetImage — that would destroy the entire DB row including
-    // version history. Auto-save will persist the cleared cardUrl while keeping
-    // imageHistoryMap intact (extractImages handles history-only entries).
+    // Persist to backend via Edge Function
+    manageImagesApi({ action: 'delete_active', nuggetId, cardId, detailLevel: level }).catch((err) => {
+      log.warn('Failed to delete active image via API:', err);
+    });
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
 
   const handleDeleteCardVersions = useCallback(() => {
@@ -153,14 +156,15 @@ export function useImageOperations({
         lastGeneratedContentMap: newGenContentMap,
       };
     };
+    // Optimistic local update
     updateNugget(nuggetId, (n) => ({
       ...n,
       cards: mapCardById(n.cards, cardId, cardUpdater),
       lastModifiedAt: Date.now(),
     }));
-    // Persist deletion to backend immediately
-    getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
-      log.warn('Failed to delete image from storage:', err);
+    // Persist via Edge Function (deletes storage files + DB row)
+    manageImagesApi({ action: 'delete_versions', nuggetId, cardId, detailLevel: level }).catch((err) => {
+      log.warn('Failed to delete versions via API:', err);
     });
   }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
 
@@ -168,10 +172,7 @@ export function useImageOperations({
     if (!selectedNugget) return;
     const level = activeLogicTab;
     const nuggetId = selectedNugget.id;
-    // Collect all card IDs that have images at this level before updating state
-    const cardIdsToDelete = flattenCards(selectedNugget.cards)
-      .filter((c) => c.cardUrlMap?.[level])
-      .map((c) => c.id);
+    // Optimistic local update: clear all cards' image data at this level
     updateNugget(nuggetId, (n) => ({
       ...n,
       cards: mapCards(n.cards, (c) => {
@@ -196,12 +197,10 @@ export function useImageOperations({
       }),
       lastModifiedAt: Date.now(),
     }));
-    // Persist all deletions to backend immediately
-    for (const cardId of cardIdsToDelete) {
-      getStorage().deleteNuggetImage(nuggetId, cardId, level).catch((err) => {
-        log.warn('Failed to delete image from storage:', err);
-      });
-    }
+    // Persist via Edge Function (deletes all storage files + DB rows at this level)
+    manageImagesApi({ action: 'delete_all', nuggetId, detailLevel: level }).catch((err) => {
+      log.warn('Failed to delete all images via API:', err);
+    });
   }, [selectedNugget, activeLogicTab, updateNugget]);
 
   // ── Downloads ──
