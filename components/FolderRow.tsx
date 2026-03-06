@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, CardFolder, DetailLevel } from '../types';
-import CardRow from './CardRow';
+import CardRow, { MiddleTruncate } from './CardRow';
 
 export interface FolderRowProps {
   folder: CardFolder;
@@ -168,9 +168,11 @@ const FolderRow: React.FC<FolderRowProps> = ({
               )}
             </div>
           ) : (
-            <span className="text-[11px] font-semibold truncate block" style={{ color: 'var(--tree-text)' }} title={folder.name}>
-              {folder.name}
-            </span>
+            <MiddleTruncate
+              text={folder.name}
+              className="text-[11px] font-semibold"
+              style={{ color: 'var(--tree-text)' }}
+            />
           )}
         </div>
 

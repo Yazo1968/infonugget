@@ -25,8 +25,6 @@ interface AssetsPanelProps {
   onImageModified?: (cardId: string, newImageUrl: string, history: ImageVersion[]) => void;
   contentDirty?: boolean;
   currentContent?: string;
-  onDownloadImage?: () => void;
-  onDownloadSelectedImages?: () => void;
   referenceImage?: ReferenceImage | null;
   onStampReference?: () => void;
   useReferenceImage?: boolean;
@@ -38,9 +36,9 @@ interface AssetsPanelProps {
   manifestCards?: Card[] | null;
   onExecuteBatch?: () => void;
   onCloseManifest?: () => void;
-  onDeleteCardImage?: () => void;
-  onDeleteCardVersions?: () => void;
-  onDeleteAllCardImages?: () => void;
+  onSetActiveImage?: (imageId: string) => void;
+  onDeleteAlbumImage?: (imageId: string) => void;
+  albumActionPending?: string | null;
   onUsage?: (entry: { provider: 'gemini'; model: string; inputTokens: number; outputTokens: number }) => void;
   onOpenStyleStudio?: () => void;
 }
@@ -59,8 +57,6 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   onImageModified,
   contentDirty,
   currentContent,
-  onDownloadImage,
-  onDownloadSelectedImages,
   referenceImage,
   onStampReference,
   useReferenceImage,
@@ -72,9 +68,9 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   manifestCards,
   onExecuteBatch,
   onCloseManifest,
-  onDeleteCardImage,
-  onDeleteCardVersions,
-  onDeleteAllCardImages,
+  onSetActiveImage,
+  onDeleteAlbumImage,
+  albumActionPending,
   onUsage,
   onOpenStyleStudio,
 }) => {
@@ -88,9 +84,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
     | 'ratio'
     | 'resolution'
     | 'reference'
-    | 'download'
     | 'generate'
-    | 'delete'
     | 'palette-background'
     | 'palette-primary'
     | 'palette-secondary'
@@ -103,6 +97,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const [cardLabMode, setCardLabMode] = useState<'generate' | 'inpaint'>('generate');
   const [showUserDefinedSub, setShowUserDefinedSub] = useState(false);
   const [userDefinedLocked, setUserDefinedLocked] = useState(false);
+  const [confirmDeleteImageId, setConfirmDeleteImageId] = useState<string | null>(null);
 
   // Reset sub-menu when style menu closes
   useEffect(() => {
@@ -137,7 +132,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
     }));
   };
 
-  const hasImage = !!activeCard?.cardUrlMap?.[activeLogicTab];
+  const hasImage = !!activeCard?.activeImageMap?.[activeLogicTab];
 
   // Clear toolbar state and revert to generate mode when no image
   useEffect(() => {
@@ -147,6 +142,8 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
     }
   }, [hasImage]);
   const isGenerating = !!activeCard?.isGeneratingMap?.[activeLogicTab];
+  const album = activeCard?.albumMap?.[activeLogicTab] || [];
+  const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating;
 
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];
 
@@ -586,7 +583,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                           setOpenMenu(null);
                         }}
                         disabled={!hasImage}
-                        className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeCard?.cardUrlMap?.[activeLogicTab] === referenceImage.url ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
+                        className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeCard?.activeImageMap?.[activeLogicTab] === referenceImage.url ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
                       >
                         Set Current as Ref.
                       </button>
@@ -741,116 +738,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 
               <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
 
-              {/* Download menu */}
-              <div className="relative" onMouseEnter={() => hoverMenuEnter('download')} onMouseLeave={hoverMenuLeave}>
-                <button
-                  onClick={() => toggleMenuLocked('download')}
-                  disabled={!hasImage}
-                  title="Download"
-                  aria-label="Download"
-                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${openMenu === 'download' ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <polyline points="7 10 12 15 17 10" />
-                    <line x1="12" y1="15" x2="12" y2="3" />
-                  </svg>
-                </button>
-                {openMenu === 'download' && (
-                  <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                    <div className="rounded-lg shadow-lg py-2 px-1 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 animate-in fade-in slide-in-from-top-2 duration-150 min-w-[140px]">
-                      <button
-                        onClick={() => {
-                          onDownloadImage?.();
-                          setOpenMenu(null);
-                        }}
-                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
-                      >
-                        Download Card
-                      </button>
-                      <button
-                        onClick={() => {
-                          onDownloadSelectedImages?.();
-                          setOpenMenu(null);
-                        }}
-                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors"
-                      >
-                        Download Selected
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
 
-              {/* Delete images menu */}
-              <div className="relative" onMouseEnter={() => hoverMenuEnter('delete')} onMouseLeave={hoverMenuLeave}>
-                <button
-                  onClick={() => toggleMenuLocked('delete')}
-                  disabled={!hasImage}
-                  title="Delete images"
-                  aria-label="Delete images"
-                  className={`w-7 h-7 rounded-full flex items-center justify-center transition-all duration-200 active:scale-95 ${openMenu === 'delete' ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950'} disabled:opacity-40 disabled:pointer-events-none`}
-                >
-                  <svg
-                    width="16"
-                    height="16"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M3 6h18" />
-                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                  </svg>
-                </button>
-                {openMenu === 'delete' && (
-                  <div className="absolute left-1/2 -translate-x-1/2 top-full pt-2 z-50">
-                    <div className="rounded-lg shadow-lg py-2 px-1 border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 animate-in fade-in slide-in-from-top-2 duration-150 min-w-[180px]">
-                      <button
-                        onClick={() => {
-                          onDeleteCardImage?.();
-                          setOpenMenu(null);
-                        }}
-                        disabled={!hasImage}
-                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:pointer-events-none"
-                      >
-                        Delete Card Active Image
-                      </button>
-                      <button
-                        onClick={() => {
-                          onDeleteCardVersions?.();
-                          setOpenMenu(null);
-                        }}
-                        disabled={!activeCard?.imageHistoryMap?.[activeLogicTab]?.length}
-                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:pointer-events-none"
-                      >
-                        Delete All Active Card Images
-                      </button>
-                      <button
-                        onClick={() => {
-                          onDeleteAllCardImages?.();
-                          setOpenMenu(null);
-                        }}
-                        className="flex items-center gap-2 w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap text-red-500 hover:bg-red-50 transition-colors"
-                      >
-                        Delete All Cards Images
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
             </div>
           </div>
         ) : (
@@ -955,17 +843,21 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
           <div ref={imageContainerRef} className="w-full h-full animate-in fade-in duration-300 relative">
             <ErrorBoundary name="Annotation Workbench">
               <AnnotationWorkbench
-                imageUrl={activeCard!.cardUrlMap![activeLogicTab]!}
+                imageUrl={activeCard!.activeImageMap![activeLogicTab]!}
                 cardId={activeCard!.id}
                 cardText={activeCard!.text}
                 palette={committedSettings.palette}
                 style={committedSettings.style}
                 aspectRatio={committedSettings.aspectRatio}
                 resolution={committedSettings.resolution}
-                imageHistory={activeCard!.imageHistoryMap?.[activeLogicTab]}
+                imageHistory={activeCard!.albumMap?.[activeLogicTab]?.map((img) => ({
+                  imageUrl: img.imageUrl,
+                  timestamp: img.createdAt,
+                  label: img.label,
+                }))}
                 mode="inline"
                 onImageModified={onImageModified}
-                onRequestFullscreen={() => onZoomImage(activeCard!.cardUrlMap![activeLogicTab] || '')}
+                onRequestFullscreen={() => onZoomImage(activeCard!.activeImageMap![activeLogicTab] || '')}
                 contentDirty={contentDirty}
                 currentContent={currentContent}
                 onToolbarStateChange={setToolbarState}
@@ -1074,6 +966,134 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
           </div>
         )}
       </div>
+
+      {/* ─── Album strip ─── */}
+      {showAlbumStrip && (
+        <div className="shrink-0 px-3 py-2 border-t border-zinc-200/60 dark:border-zinc-700/60">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400">
+              Album
+            </span>
+            <span className="text-[9px] text-zinc-400 dark:text-zinc-500">
+              {album.findIndex((img) => img.isActive) + 1} of {album.length}
+            </span>
+          </div>
+          <div className="flex items-center gap-2 overflow-x-auto pb-1">
+            {album
+              .slice()
+              .sort((a, b) => a.sortOrder - b.sortOrder)
+              .map((img) => (
+                <div
+                  key={img.id}
+                  onClick={() => !albumActionPending && !img.isActive && confirmDeleteImageId !== img.id && onSetActiveImage?.(img.id)}
+                  role="button"
+                  tabIndex={albumActionPending ? -1 : 0}
+                  title={img.label}
+                  className={`group/thumb relative shrink-0 w-20 h-20 rounded-lg overflow-hidden border-2 transition-all duration-150 ${
+                    img.isActive
+                      ? 'border-[#2a9fd4] shadow-[0_0_0_2px_rgba(42,159,212,0.25)] scale-105'
+                      : 'border-zinc-200 dark:border-zinc-600 hover:border-zinc-400 dark:hover:border-zinc-400 hover:scale-[1.03]'
+                  } ${albumActionPending ? 'opacity-60 cursor-wait' : img.isActive ? 'cursor-default' : 'cursor-pointer'}`}
+                >
+                  <img
+                    src={img.imageUrl}
+                    alt={img.label}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                  {albumActionPending === img.id && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    </div>
+                  )}
+                  {!albumActionPending && confirmDeleteImageId !== img.id && (
+                    <div className="absolute top-0.5 right-0.5 flex flex-col gap-0.5 opacity-0 group-hover/thumb:opacity-100 transition-opacity">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const image = new Image();
+                          image.crossOrigin = 'anonymous';
+                          image.onload = () => {
+                            const canvas = document.createElement('canvas');
+                            canvas.width = image.naturalWidth;
+                            canvas.height = image.naturalHeight;
+                            const ctx = canvas.getContext('2d');
+                            ctx?.drawImage(image, 0, 0);
+                            canvas.toBlob((blob) => {
+                              if (!blob) return;
+                              const blobUrl = URL.createObjectURL(blob);
+                              const link = document.createElement('a');
+                              link.href = blobUrl;
+                              const cardName = (activeCard?.text || 'image').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '_');
+                              link.download = `${cardName}.png`;
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                              URL.revokeObjectURL(blobUrl);
+                            }, 'image/png');
+                          };
+                          image.src = img.imageUrl;
+                        }}
+                        className="w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-[#2a9fd4] transition-colors"
+                        title={`Download ${img.label}`}
+                        aria-label={`Download ${img.label}`}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                      </button>
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDeleteImageId(img.id);
+                        }}
+                        className="w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-red-600 transition-colors"
+                        title={`Delete ${img.label}`}
+                        aria-label={`Delete ${img.label}`}
+                      >
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6" />
+                          <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2" />
+                        </svg>
+                      </button>
+                    </div>
+                  )}
+                  {confirmDeleteImageId === img.id && (
+                    <div
+                      className="absolute inset-0 bg-black/70 flex flex-col items-center justify-center gap-1.5 rounded-lg"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <span className="text-[10px] font-semibold text-white leading-none">Delete?</span>
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteImageId(null);
+                            onDeleteAlbumImage?.(img.id);
+                          }}
+                          className="px-2 py-1 text-[10px] font-bold rounded bg-red-600 text-white hover:bg-red-500 transition-colors"
+                        >
+                          Yes
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteImageId(null);
+                          }}
+                          className="px-2 py-1 text-[10px] font-bold rounded bg-zinc-600 text-white hover:bg-zinc-500 transition-colors"
+                        >
+                          No
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* ─── Card Properties footer ─── */}
       {(showReference && referenceImage) || hasImage ? (

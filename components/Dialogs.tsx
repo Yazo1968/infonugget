@@ -231,6 +231,7 @@ interface DocumentChangeNoticeProps {
   onContinue: () => void;
   onStartFresh: () => void;
   onCancel: () => void;
+  onViewLog?: () => void;
 }
 
 export const DocumentChangeNotice: React.FC<DocumentChangeNoticeProps> = ({
@@ -238,44 +239,9 @@ export const DocumentChangeNotice: React.FC<DocumentChangeNoticeProps> = ({
   onContinue,
   onStartFresh,
   onCancel,
+  onViewLog,
 }) => {
   const focusTrapRef = useFocusTrap<HTMLDivElement>({ onEscape: onCancel });
-  // Group events by document (using docId), tracking latest name per doc
-  const docMap = new Map<string, { name: string; events: string[] }>();
-  const docOrder: string[] = [];
-  for (const e of changes) {
-    let entry = docMap.get(e.docId);
-    if (!entry) {
-      entry = { name: e.docName, events: [] };
-      docMap.set(e.docId, entry);
-      docOrder.push(e.docId);
-    }
-    switch (e.type) {
-      case 'added':
-        entry.events.push('Added');
-        break;
-      case 'removed':
-        entry.events.push('Removed');
-        break;
-      case 'renamed':
-        entry.events.push(`Renamed from "${e.oldName}"`);
-        entry.name = e.docName;
-        break;
-      case 'enabled':
-        entry.events.push('Enabled');
-        break;
-      case 'disabled':
-        entry.events.push('Disabled');
-        break;
-      case 'updated':
-        entry.events.push('Content updated');
-        break;
-      default:
-        entry.events.push('Changed');
-        break;
-    }
-  }
-  const grouped = docOrder.map((id) => docMap.get(id)!);
 
   return createPortal(
     <div
@@ -287,8 +253,7 @@ export const DocumentChangeNotice: React.FC<DocumentChangeNoticeProps> = ({
         role="dialog"
         aria-modal="true"
         aria-labelledby="doc-change-title"
-        className="w-full max-w-md mx-4 bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 flex flex-col animate-in zoom-in-95 duration-300"
-        style={{ maxHeight: 'min(520px, 80vh)' }}
+        className="w-full max-w-sm mx-4 bg-white dark:bg-zinc-900 rounded-xl shadow-2xl border border-zinc-200 dark:border-zinc-700 flex flex-col animate-in zoom-in-95 duration-300"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -318,31 +283,18 @@ export const DocumentChangeNotice: React.FC<DocumentChangeNoticeProps> = ({
         </div>
 
         {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <p className="text-[11px] text-zinc-400 dark:text-zinc-500">
-            {grouped.length === 1 ? '1 document was' : `${grouped.length} documents were`} changed since the last
-            message:
+        <div className="px-5 py-4 space-y-3">
+          <p className="text-xs text-zinc-600 dark:text-zinc-300">
+            {changes.length} source {changes.length === 1 ? 'change' : 'changes'} since last message.
           </p>
-          <div
-            className="text-[11px] text-zinc-600 dark:text-zinc-400 space-y-2"
-            style={{ scrollbarWidth: 'none' }}
-          >
-            {grouped.map((g, i) => (
-              <div key={i}>
-                <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate" title={g.name}>
-                  {g.name}
-                </p>
-                <ul className="space-y-0.5 ml-2 mt-0.5">
-                  {g.events.map((ev, j) => (
-                    <li key={j} className="flex items-start gap-1.5">
-                      <span className="text-zinc-400 dark:text-zinc-500 mt-px shrink-0">•</span>
-                      <span>{ev}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
+          {onViewLog && (
+            <button
+              onClick={() => { onCancel(); onViewLog(); }}
+              className="text-[11px] font-medium text-[var(--accent-blue,#2a9fd4)] hover:underline"
+            >
+              View Log →
+            </button>
+          )}
         </div>
 
         {/* Footer */}

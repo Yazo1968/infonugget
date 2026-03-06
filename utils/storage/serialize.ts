@@ -8,12 +8,15 @@ import {
   DetailLevel,
   Nugget,
   Project,
+  AlbumImage,
   ImageVersion,
   BookmarkNode,
+  SourcesLogStats,
 } from '../../types';
 import {
   StoredFile,
   StoredHeading,
+  StoredAlbumImage,
   StoredImage,
   StoredNugget,
   StoredNuggetDocument,
@@ -87,17 +90,44 @@ export function serializeCard(card: Card, fileId: string): StoredHeading {
   };
 }
 
+/** Extract album images from a card for persistence. */
+export function extractAlbumImages(card: Card, fileId: string): StoredAlbumImage[] {
+  const images: StoredAlbumImage[] = [];
+  for (const level of DETAIL_LEVELS) {
+    const album = card.albumMap?.[level];
+    if (album && album.length > 0) {
+      for (const img of album) {
+        images.push({
+          id: img.id,
+          fileId,
+          headingId: card.id,
+          level,
+          storagePath: img.storagePath,
+          imageUrl: img.imageUrl,
+          isActive: img.isActive,
+          label: img.label,
+          sortOrder: img.sortOrder,
+          createdAt: img.createdAt,
+        });
+      }
+    }
+  }
+  return images;
+}
+
+/** @deprecated Legacy extraction — kept for backward compat with IndexedDB. Use extractAlbumImages. */
 export function extractImages(card: Card, fileId: string): StoredImage[] {
   const images: StoredImage[] = [];
   for (const level of DETAIL_LEVELS) {
-    const cardUrl = card.cardUrlMap?.[level];
-    if (cardUrl) {
+    const cardUrl = card.activeImageMap?.[level] || card.cardUrlMap?.[level];
+    const history = card.imageHistoryMap?.[level];
+    if (cardUrl || (history && history.length > 0)) {
       images.push({
         fileId,
         headingId: card.id,
         level,
-        cardUrl,
-        imageHistory: (card.imageHistoryMap?.[level] || []).map((v) => ({
+        cardUrl: cardUrl || '',
+        imageHistory: (history || []).map((v) => ({
           imageUrl: v.imageUrl,
           timestamp: v.timestamp,
           label: v.label,
@@ -154,7 +184,7 @@ export function serializeCardItems(
  */
 export function deserializeCardItems(
   headings: StoredHeading[],
-  images: StoredImage[],
+  images: StoredImage[] | StoredAlbumImage[],
   folders?: StoredNugget['folders'],
 ): CardItem[] {
   if (!folders || folders.length === 0) {
@@ -219,7 +249,7 @@ function migrateLevelMap<T>(map?: Partial<Record<string, T>>): Partial<Record<De
   return out as Partial<Record<DetailLevel, T>>;
 }
 
-export function deserializeCard(stored: StoredHeading, images: StoredImage[]): Card {
+export function deserializeCard(stored: StoredHeading, images: StoredImage[] | StoredAlbumImage[]): Card {
   // Migrate legacy levelOfDetail in settings
   const settings = stored.settings ? { ...stored.settings } : stored.settings;
   if (settings?.levelOfDetail && LEGACY_LEVEL_MAP[settings.levelOfDetail as string]) {
@@ -247,23 +277,89 @@ export function deserializeCard(stored: StoredHeading, images: StoredImage[]): C
     sourceDocuments: stored.sourceDocuments,
   };
 
-  // Merge image data back into card
+  // Merge image data back into card — detect album vs legacy format
   const matchingImages = images.filter((img) => img.headingId === stored.headingId);
   if (matchingImages.length > 0) {
-    const cardUrlMap: Partial<Record<DetailLevel, string>> = {};
-    const imageHistoryMap: Partial<Record<DetailLevel, ImageVersion[]>> = {};
+    const isAlbumFormat = 'isActive' in matchingImages[0];
 
-    for (const img of matchingImages) {
-      const lvl = (LEGACY_LEVEL_MAP[img.level as string] || img.level) as DetailLevel;
-      cardUrlMap[lvl] = img.cardUrl;
-      if (img.imageHistory?.length > 0) {
-        imageHistoryMap[lvl] = img.imageHistory;
+    if (isAlbumFormat) {
+      // New album format (StoredAlbumImage[])
+      const albumMap: Partial<Record<DetailLevel, AlbumImage[]>> = {};
+      const activeImageMap: Partial<Record<DetailLevel, string>> = {};
+
+      for (const img of matchingImages as StoredAlbumImage[]) {
+        const lvl = (LEGACY_LEVEL_MAP[img.level as string] || img.level) as DetailLevel;
+        if (!albumMap[lvl]) albumMap[lvl] = [];
+        albumMap[lvl]!.push({
+          id: img.id,
+          imageUrl: img.imageUrl,
+          storagePath: img.storagePath,
+          label: img.label,
+          isActive: img.isActive,
+          createdAt: img.createdAt,
+          sortOrder: img.sortOrder,
+        });
+        if (img.isActive && img.imageUrl) {
+          activeImageMap[lvl] = img.imageUrl;
+        }
       }
-    }
 
-    card.cardUrlMap = cardUrlMap;
-    if (Object.keys(imageHistoryMap).length > 0) {
-      card.imageHistoryMap = imageHistoryMap;
+      // Sort each album by sortOrder
+      for (const lvl of Object.keys(albumMap) as DetailLevel[]) {
+        albumMap[lvl]!.sort((a, b) => a.sortOrder - b.sortOrder);
+      }
+
+      card.albumMap = albumMap;
+      if (Object.keys(activeImageMap).length > 0) {
+        card.activeImageMap = activeImageMap;
+      }
+    } else {
+      // Legacy format (StoredImage[]) — convert to album
+      const albumMap: Partial<Record<DetailLevel, AlbumImage[]>> = {};
+      const activeImageMap: Partial<Record<DetailLevel, string>> = {};
+
+      for (const img of matchingImages as StoredImage[]) {
+        const lvl = (LEGACY_LEVEL_MAP[img.level as string] || img.level) as DetailLevel;
+        const album: AlbumImage[] = [];
+        let sortIdx = 0;
+
+        // Add history entries as non-active album items
+        if (img.imageHistory?.length > 0) {
+          for (const v of img.imageHistory) {
+            album.push({
+              id: `legacy-${stored.headingId}-${lvl}-${sortIdx}`,
+              imageUrl: v.imageUrl,
+              storagePath: '',
+              label: v.label || `Version ${sortIdx + 1}`,
+              isActive: false,
+              createdAt: v.timestamp,
+              sortOrder: sortIdx,
+            });
+            sortIdx++;
+          }
+        }
+
+        // Add current image as active
+        if (img.cardUrl) {
+          album.push({
+            id: `legacy-${stored.headingId}-${lvl}-current`,
+            imageUrl: img.cardUrl,
+            storagePath: '',
+            label: 'Current',
+            isActive: true,
+            createdAt: Date.now(),
+            sortOrder: sortIdx,
+          });
+          activeImageMap[lvl] = img.cardUrl;
+        }
+
+        if (album.length > 0) {
+          albumMap[lvl] = album;
+        }
+      }
+
+      card.albumMap = Object.keys(albumMap).length > 0 ? albumMap : undefined;
+      card.activeImageMap = Object.keys(activeImageMap).length > 0 ? activeImageMap : undefined;
     }
   }
 
@@ -279,16 +375,52 @@ export function serializeNugget(n: Nugget): StoredNugget {
     type: n.type,
     messages: n.messages,
     docChangeLog: n.docChangeLog,
-    lastDocChangeSyncIndex: n.lastDocChangeSyncIndex,
+    lastDocChangeSyncSeq: n.lastDocChangeSyncSeq,
+    sourcesLogStats: n.sourcesLogStats,
+    sourcesLog: n.sourcesLog,
     subject: n.subject,
+    subjectReviewNeeded: n.subjectReviewNeeded,
+    briefReviewNeeded: n.briefReviewNeeded,
     stylingOptions: n.stylingOptions,
     qualityReport: n.qualityReport,
+    dqafReport: n.dqafReport,
+    engagementPurpose: n.engagementPurpose,
+    lastClosedAt: n.lastClosedAt,
     createdAt: n.createdAt,
     lastModifiedAt: n.lastModifiedAt,
   };
 }
 
 export function deserializeNugget(sn: StoredNugget, cards: CardItem[], documents: UploadedFile[]): Nugget {
+  // Backfill seq on legacy events that lack it
+  const docChangeLog = sn.docChangeLog?.map((e, i) => (
+    e.seq != null ? e : { ...e, seq: i + 1 }
+  ));
+
+  // Initialize sourcesLogStats from legacy data if missing
+  let sourcesLogStats: SourcesLogStats | undefined = sn.sourcesLogStats;
+  if (!sourcesLogStats && docChangeLog && docChangeLog.length > 0) {
+    const lastTimestamp = docChangeLog.reduce((max, e) => Math.max(max, e.timestamp), 0);
+    const maxSeq = docChangeLog.reduce((max, e) => Math.max(max, e.seq), 0);
+    sourcesLogStats = {
+      logsCreated: 0,
+      logsDeleted: 0,
+      logsArchived: 0,
+      lastUpdated: lastTimestamp,
+      rawEventSeq: maxSeq,
+      lastCheckpointRawSeq: 0,
+    };
+  }
+  // Ensure existing stats have the new fields
+  if (sourcesLogStats && sourcesLogStats.rawEventSeq == null) {
+    const maxSeq = docChangeLog ? docChangeLog.reduce((max, e) => Math.max(max, e.seq), 0) : 0;
+    sourcesLogStats = {
+      ...sourcesLogStats,
+      rawEventSeq: maxSeq,
+      lastCheckpointRawSeq: sourcesLogStats.lastCheckpointRawSeq ?? 0,
+    };
+  }
+
   return {
     id: sn.id,
     name: sn.name,
@@ -296,11 +428,18 @@ export function deserializeNugget(sn: StoredNugget, cards: CardItem[], documents
     documents,
     cards,
     messages: sn.messages,
-    docChangeLog: sn.docChangeLog,
-    lastDocChangeSyncIndex: sn.lastDocChangeSyncIndex,
+    docChangeLog,
+    lastDocChangeSyncSeq: sn.lastDocChangeSyncSeq,
+    sourcesLogStats,
+    sourcesLog: sn.sourcesLog,
     subject: sn.subject,
+    subjectReviewNeeded: sn.subjectReviewNeeded,
+    briefReviewNeeded: sn.briefReviewNeeded,
     stylingOptions: sn.stylingOptions,
     qualityReport: sn.qualityReport,
+    dqafReport: sn.dqafReport,
+    engagementPurpose: sn.engagementPurpose,
+    lastClosedAt: sn.lastClosedAt,
     createdAt: sn.createdAt,
     lastModifiedAt: sn.lastModifiedAt,
   };

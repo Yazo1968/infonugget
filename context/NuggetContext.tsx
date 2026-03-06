@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react';
-import type { Nugget, UploadedFile, Card, CardItem, ChatMessage } from '../types';
+import type { Nugget, UploadedFile, Card, CardItem, ChatMessage, SourcesLogTrigger } from '../types';
 
 // ── Nugget context — nugget state, CRUD, card helpers, document mutation helpers ──
 
@@ -33,6 +33,12 @@ export interface NuggetContextValue {
   removeNuggetDocument: (docId: string) => void;
   renameNuggetDocument: (docId: string, newName: string) => void;
   toggleNuggetDocument: (docId: string) => void;
+
+  // Sources Log management (operate on selected nugget's checkpoint entries)
+  deleteDocChangeLogEntry: (entrySeq: number) => void;
+  deleteAllDocChangeLogEntries: () => void;
+  renameDocChangeLogEntry: (entrySeq: number, newLabel: string) => void;
+  createLogCheckpoint: (trigger: SourcesLogTrigger) => void;
 }
 
 export const NuggetContext = createContext<NuggetContextValue | null>(null);

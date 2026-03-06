@@ -5,6 +5,8 @@ import { useSelectionContext } from '../context/SelectionContext';
 import { Card, CardFolder, CardItem, DetailLevel, ChatMessage, Nugget, isCardFolder } from '../types';
 import { resolveEnabledDocs } from '../utils/documentResolution';
 import { getUniqueName } from '../utils/naming';
+import { manageImagesApi } from '../utils/api';
+import { createLogger } from '../utils/logger';
 import {
   flattenCards,
   findCard,
@@ -14,7 +16,10 @@ import {
   removeCardsWhere,
   removeFolder,
   allFolderNames,
+  cardNamesInScope,
 } from '../utils/cardUtils';
+
+const log = createLogger('CardOps');
 
 /** Location of a card/folder within the card tree (root-level or inside a folder). */
 export type DragLocation =
@@ -187,11 +192,16 @@ export function useCardOperations() {
   const deleteInsightsCard = useCallback(
     (cardId: string) => {
       if (!selectedNugget) return;
-      updateNugget(selectedNugget.id, (n) => ({
+      const nuggetId = selectedNugget.id;
+      updateNugget(nuggetId, (n) => ({
         ...n,
         cards: removeCard(n.cards, cardId),
         lastModifiedAt: Date.now(),
       }));
+      // Cascade-delete all album images for this card
+      manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
+        log.warn('Failed to cascade-delete card albums:', err);
+      });
       // Fall back to first remaining card (or null)
       const remaining = flattenCards(removeCard(selectedNugget.cards, cardId));
       setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
@@ -201,13 +211,20 @@ export function useCardOperations() {
 
   const deleteSelectedInsightsCards = useCallback(() => {
     if (!selectedNugget) return;
+    const nuggetId = selectedNugget.id;
     const selectedIds = new Set(flattenCards(selectedNugget.cards).filter((c) => c.selected).map((c) => c.id));
     if (selectedIds.size === 0) return;
-    updateNugget(selectedNugget.id, (n) => ({
+    updateNugget(nuggetId, (n) => ({
       ...n,
       cards: removeCardsWhere(n.cards, (c) => selectedIds.has(c.id)),
       lastModifiedAt: Date.now(),
     }));
+    // Cascade-delete albums for each deleted card
+    for (const cardId of selectedIds) {
+      manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
+        log.warn('Failed to cascade-delete card albums:', err);
+      });
+    }
     const remaining = flattenCards(removeCardsWhere(selectedNugget.cards, (c) => selectedIds.has(c.id)));
     setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
   }, [selectedNugget, updateNugget, setActiveCardId]);
@@ -256,7 +273,7 @@ export function useCardOperations() {
     (name: string) => {
       if (!selectedNugget) return;
       const newId = crypto.randomUUID();
-      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const existingNames = cardNamesInScope(selectedNugget.cards);
       const newCard: Card = {
         id: newId,
         level: 1,
@@ -280,7 +297,7 @@ export function useCardOperations() {
     (folderId: string, name: string) => {
       if (!selectedNugget) return;
       const newId = crypto.randomUUID();
-      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const existingNames = cardNamesInScope(selectedNugget.cards, folderId);
       const now = Date.now();
       const newCard: Card = {
         id: newId,
@@ -312,7 +329,7 @@ export function useCardOperations() {
       // Extract title from first # heading line, auto-increment if duplicate
       const titleMatch = content.match(/^#\s+(.+)$/m);
       const rawTitle = titleMatch ? titleMatch[1].trim() : 'Untitled Card';
-      const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const existingCardNames = cardNamesInScope(selectedNugget.cards, targetFolderId);
       const title = getUniqueName(rawTitle, existingCardNames);
 
       // Remove the title line from content body
@@ -372,7 +389,8 @@ export function useCardOperations() {
     ): { id: string; title: string }[] => {
       if (!selectedNugget || titles.length === 0) return [];
 
-      const existingNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      const targetFolderId = options?.targetFolderId;
+      const existingNames = cardNamesInScope(selectedNugget.cards, targetFolderId);
       const newCards: Card[] = [];
       const result: { id: string; title: string }[] = [];
 
@@ -399,7 +417,6 @@ export function useCardOperations() {
       }
 
       const now = Date.now();
-      const targetFolderId = options?.targetFolderId;
 
       if (targetFolderId) {
         // Insert placeholders into the specified folder
@@ -454,14 +471,11 @@ export function useCardOperations() {
       const newCards: Card[] = [];
       const result: { id: string; title: string }[] = [];
 
-      const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      // New folder — only check uniqueness among siblings being created
       for (let i = 0; i < titles.length; i++) {
         const rawTitle = titles[i];
         const level = Array.isArray(detailLevel) ? detailLevel[i] : detailLevel;
-        const uniqueName = getUniqueName(rawTitle, [
-          ...existingCardNames,
-          ...newCards.map((c) => c.text),
-        ]);
+        const uniqueName = getUniqueName(rawTitle, newCards.map((c) => c.text));
         const cardId = `card-${Math.random().toString(36).substr(2, 9)}`;
 
         newCards.push({
@@ -588,17 +602,25 @@ export function useCardOperations() {
   const deleteFolder = useCallback(
     (folderId: string) => {
       if (!selectedNugget) return;
+      const nuggetId = selectedNugget.id;
       // If active card is inside this folder, clear it
       const folder = selectedNugget.cards.find(
         (item): item is CardFolder => isCardFolder(item) && item.id === folderId,
       );
       const folderCardIds = folder ? new Set(folder.cards.map((c) => c.id)) : new Set<string>();
 
-      updateNugget(selectedNugget.id, (n) => ({
+      updateNugget(nuggetId, (n) => ({
         ...n,
         cards: removeFolder(n.cards, folderId),
         lastModifiedAt: Date.now(),
       }));
+
+      // Cascade-delete albums for each card in the folder
+      for (const cardId of folderCardIds) {
+        manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
+          log.warn('Failed to cascade-delete card albums:', err);
+        });
+      }
 
       if (activeCardId && folderCardIds.has(activeCardId)) {
         const remaining = flattenCards(removeFolder(selectedNugget.cards, folderId));
@@ -618,8 +640,8 @@ export function useCardOperations() {
 
       const now = Date.now();
       const existingFolderNames = allFolderNames(selectedNugget.cards);
-      // Check card name uniqueness against all cards in the nugget
-      const usedNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+      // Card names only need to be unique within the new folder copy
+      const usedNames: string[] = [];
 
       const newFolder: CardFolder = {
         kind: 'folder',
@@ -700,9 +722,14 @@ export function useCardOperations() {
       const card = findCard(selectedNugget.cards, cardId);
       if (!card) return;
       const targetNugget = nuggets.find((n) => n.id === targetNuggetId);
-      // Check uniqueness against all cards in the target nugget
-      const targetAllNames = flattenCards(targetNugget?.cards ?? []).map((c) => c.text);
-      const uniqueName = getUniqueName(card.text, targetAllNames);
+      // Find the target folder to scope uniqueness within it
+      const targetFirstFolder = (targetNugget?.cards ?? []).find(
+        (item): item is CardFolder => isCardFolder(item),
+      );
+      const targetScopeNames = targetFirstFolder
+        ? cardNamesInScope(targetNugget?.cards ?? [], targetFirstFolder.id)
+        : []; // New "Imported" folder — no existing names
+      const uniqueName = getUniqueName(card.text, targetScopeNames);
       const now = Date.now();
       const newCardId = `card-${Math.random().toString(36).substr(2, 9)}`;
       const copiedCard: Card = {
@@ -768,8 +795,8 @@ export function useCardOperations() {
       const targetNugget = nuggets.find((n) => n.id === targetNuggetId);
       const targetFolderNames = targetNugget ? allFolderNames(targetNugget.cards) : [];
       const now = Date.now();
-      // Check card name uniqueness against all cards in target nugget
-      const usedNames = flattenCards(targetNugget?.cards ?? []).map((c) => c.text);
+      // Cards in copied folder only need uniqueness among themselves
+      const usedNames: string[] = [];
 
       const newFolder: CardFolder = {
         kind: 'folder',

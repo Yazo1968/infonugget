@@ -4,9 +4,9 @@ import { buildExpertPriming, countWords, describeCanvas } from './promptUtils';
 // ─────────────────────────────────────────────────────────────────
 // Card Content Generation
 // ─────────────────────────────────────────────────────────────────
-// Consumed by Claude (text LLM). Output is standard markdown,
-// which the Prompt Assembler transforms to bracketed tags before
-// it reaches the image model.
+// Consumed by Claude (text LLM). Output uses headings (## ###),
+// short sentences, bullet points, numbered lists, and tables.
+// No bold, no blockquotes, no special markdown characters.
 // ─────────────────────────────────────────────────────────────────
 
 export function buildContentPrompt(
@@ -24,68 +24,71 @@ export function buildContentPrompt(
 
   if (level === 'Executive') {
     wordCountRange = '70-100';
-    scopeGuidance = `**Scope:** This is an EXECUTIVE SUMMARY. Prioritize ruthlessly — include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
-    formattingGuidance = `**Formatting (strict for Executive):**
-- Maximum one ## heading below the title
-- Prefer a tight paragraph or 2-3 bullets — nothing more
-- No tables, no numbered lists, no ###`;
+    scopeGuidance = `Scope: This is an EXECUTIVE SUMMARY. Prioritize ruthlessly - include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
+    formattingGuidance = `Formatting (strict for Executive):
+- Maximum one subheading below the title
+- Prefer 2-3 short bullet points or a few short sentences - nothing more
+- No tables, no numbered lists, no sub-sub headings`;
   } else if (level === 'Detailed') {
     wordCountRange = '450-500';
-    scopeGuidance = `**Scope:** This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships. Cover all relevant dimensions of the topic.`;
-    formattingGuidance = `**Formatting:**
-- Use bullet points for lists of features, attributes, or non-sequential items
+    scopeGuidance = `Scope: This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships. Cover all relevant dimensions of the topic.`;
+    formattingGuidance = `Formatting:
+- Use short, direct sentences - no long compound sentences
+- Whatever can be presented as bullet points, tables, or numbered lists SHOULD be - minimize prose
+- Use bullet points for features, attributes, or non-sequential items
 - Use numbered lists for sequential steps, ranked items, or ordered processes
-- Use tables when comparing items across multiple dimensions or presenting structured data
-- Use bold for key terms, metrics, and important phrases
-- Choose the format that best represents the data — do NOT flatten everything into plain paragraphs`;
+- Use tables when comparing items across multiple dimensions or presenting structured data - but only when a table genuinely fits the data
+- Choose the format that best presents each piece of information - do not force any format where it does not fit`;
   } else {
-    scopeGuidance = `**Scope:** This is a STANDARD summary. Cover the key points, important data, and primary relationships. Include enough detail to be informative but stay concise.`;
-    formattingGuidance = `**Formatting:**
-- Use bullet points for lists of features, attributes, or non-sequential items
+    scopeGuidance = `Scope: This is a STANDARD summary. Cover the key points, important data, and primary relationships. Include enough detail to be informative but stay concise.`;
+    formattingGuidance = `Formatting:
+- Use short, direct sentences - no long compound sentences
+- Whatever can be presented as bullet points, tables, or numbered lists SHOULD be - minimize prose
+- Use bullet points for features, attributes, or non-sequential items
 - Use numbered lists for sequential steps, ranked items, or ordered processes
-- Use tables only when comparing 3+ items across multiple dimensions
-- Use bold for key terms, metrics, and important phrases
-- Choose the format that best represents the data — do NOT flatten everything into plain paragraphs`;
+- Use tables only when comparing 3+ items across multiple dimensions and a table genuinely fits
+- Choose the format that best presents each piece of information - do not force any format where it does not fit`;
   }
 
   const expertPriming = buildExpertPriming(subject);
-  return `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation — [${cardTitle}]
+  return `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation - [${cardTitle}]
 Using the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content. Understand the context of this section and how it relates to the document as a whole. Use this understanding to inform your synthesis, but only include content from the target section.
 
-**WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your output words before responding. If over, cut. If under, you may add — but NEVER exceed the upper bound.**
+WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit. Count your output words before responding. If over, cut. If under, you may add - but NEVER exceed the upper bound.
 
 ${scopeGuidance}
 
-**Task:**
+Task:
 Extract and restructure the section's content into infographic-ready text within the word limit. The output should make the section's hierarchy, logic, and connections between its parts immediately clear without referring back to the source.
 
-**Requirements:**
+Requirements:
 - Make explicit any relationships that are implied in the original (cause-effect, sequence, hierarchy, comparison, part-to-whole)
-- Use concise, direct phrasing — no filler, no repetition
+- Use short, direct sentences - no filler, no repetition, no long compound sentences
+- Whatever can be presented as bullet points, tables, or numbered lists SHOULD be - minimize use of prose
 - Preserve key data points, statistics, and specific terms exactly as written
 - Do not invent information not present in the documents
 - Only number headings when the content has inherent sequential order (steps, phases, stages, ranked items). For thematic, categorical, or parallel content use descriptive headings without numbers
 
 ${formattingGuidance}
 
-**Allowed Content Formats (whitelist — use ONLY these):**
-1. **Headings** (## and ###) — section and subsection structure
-2. **Paragraphs** — continuous flowing prose composed of complete sentences. A paragraph must NEVER contain inline lists or items separated by dashes, semicolons, or slashes. If content is a series of discrete items, use a bullet list, numbered list, or table instead
-3. **Bullet lists** (\`- item\`) — for unordered sets of items, features, or attributes
-4. **Numbered lists** (\`1. item\`) — for sequential steps, ranked items, or ordered processes
-5. **Tables** — for structured data comparing items across dimensions
-6. **Bold** (\`**text**\`) — for emphasis on key terms, metrics, or phrases within any of the above
-
-No other markdown constructs are permitted: no blockquotes, no code blocks, no horizontal rules, no inline enumerations within paragraphs.
-
-**Heading Hierarchy (strict):**
-- Do NOT include the section title as a heading — it will be added separately
+Structure:
+- Content is organized as main heading, subheadings, and sub-sub headings (up to 3 levels if needed)
+- Do NOT include the section title as a heading - it will be added separately
 - Use ## for main sections within the content
 - Use ### for subsections under those (if word count permits)
-- Never skip heading levels (e.g., no jumping from ## to ####)
-- Never use # (H1) — that level is reserved for the section title
+- Never skip heading levels
+- Never use # (H1) - that level is reserved for the section title
 
-**Output:** Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
+Allowed content types (use ONLY these):
+1. Headings (## and ###) for structure
+2. Short sentences - concise and direct, never long or compound
+3. Bullet points for unordered sets of items, features, or attributes
+4. Numbered lists for sequential steps, ranked items, or ordered processes
+5. Tables when comparing items across dimensions - only when a table genuinely fits the data
+
+PROHIBITED CHARACTERS: No em dashes (\u2014), en dashes (\u2013), arrows (\u2192), check/cross marks (\u2713\u2717), blockquote markers (>), square bracket annotations, tilde (~), pipe characters (|), or asterisks (*). Use colons, periods, commas, semicolons, hyphens, parentheses, and plain subheadings instead. If the source document contains any of these characters, replace them with their allowed equivalents in your output.
+
+Output: Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
 `.trim();
 }
 

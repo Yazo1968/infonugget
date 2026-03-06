@@ -1,14 +1,12 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { Nugget, Project, CustomStyle } from '../types';
-import { StorageBackend, StoredImage } from '../utils/storage/StorageBackend';
+import { StorageBackend } from '../utils/storage/StorageBackend';
 import {
   serializeNugget,
   serializeNuggetDocument,
   serializeProject,
   serializeCardItems,
-  extractImages,
 } from '../utils/storage/serialize';
-import { flattenCards } from '../utils/cardUtils';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('Persistence');
@@ -95,19 +93,17 @@ export function usePersistence({
       const { headings: storedCards, folders } = serializeCardItems(nugget.cards, nugget.id);
       storedNugget.folders = folders;
 
-      // Collect ALL images for this nugget (flatten folders to get all Card objects)
-      const allImages: StoredImage[] = [];
-      for (const card of flattenCards(nugget.cards)) {
-        allImages.push(...extractImages(card, nugget.id));
-      }
+      // Images are now managed server-side by Edge Functions (generate-card, manage-images).
+      // Pass empty array — card_images table is NOT written from client anymore.
+      // Album data lives in the nugget JSONB (albumMap/activeImageMap on each card).
 
       // Collect documents (only ready ones)
       const storedDocs = nugget.documents
         .filter((d) => d.status === 'ready')
         .map((d) => serializeNuggetDocument(nugget.id, d));
 
-      // Atomic save: nugget + headings + images + docs in one transaction
-      await storage.saveNuggetDataAtomic(nugget.id, storedNugget, storedCards, allImages, storedDocs);
+      // Atomic save: nugget + headings + docs (images managed server-side)
+      await storage.saveNuggetDataAtomic(nugget.id, storedNugget, storedCards, [], storedDocs);
 
       // Clean up orphaned documents (outside atomic tx — acceptable, only removes stale data)
       const existingDocs = await storage.loadNuggetDocuments(nugget.id);
@@ -118,14 +114,7 @@ export function usePersistence({
         }
       }
 
-      // Clean up orphaned images (deleted from cardUrlMap but still in IndexedDB)
-      const storedImages = await storage.loadNuggetImages(nugget.id);
-      const currentImageKeys = new Set(allImages.map((img) => `${img.headingId}:${img.level}`));
-      for (const img of storedImages) {
-        if (!currentImageKeys.has(`${img.headingId}:${img.level}`)) {
-          await storage.deleteNuggetImage(nugget.id, img.headingId, img.level);
-        }
-      }
+      // Image orphan cleanup is handled server-side by Edge Functions (cascade on delete).
     }
 
     // Clean up deleted nuggets (lightweight ID enumeration, no full deserialization)

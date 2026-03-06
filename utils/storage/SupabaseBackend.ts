@@ -1,4 +1,4 @@
-import { InsightsDocument } from '../../types';
+import { DetailLevel, InsightsDocument } from '../../types';
 import { createLogger } from '../logger';
 import { supabase } from '../supabase';
 import {
@@ -6,6 +6,7 @@ import {
   AppSessionState,
   StoredFile,
   StoredHeading,
+  StoredAlbumImage,
   StoredImage,
   StoredImageVersion,
   StoredInsightsSession,
@@ -302,11 +303,25 @@ export class SupabaseBackend implements StorageBackend {
   // ── Nugget documents (per-nugget owned) ──
 
   async saveNuggetDocument(doc: StoredNuggetDocument): Promise<void> {
-    // If there's a PDF base64 payload, upload to storage first
+    // If there's a PDF base64 payload, upload to storage only if not already stored
     let pdfStoragePath: string | null = null;
     if (doc.pdfBase64) {
-      const path = this.pdfPath(doc.nuggetId, doc.docId);
-      pdfStoragePath = await this.uploadPdf(path, doc.pdfBase64);
+      // Check if this document already has a PDF in storage (avoid redundant uploads)
+      const { data: existing } = await supabase
+        .from('documents')
+        .select('pdf_storage_path')
+        .eq('nugget_id', doc.nuggetId)
+        .eq('id', doc.docId)
+        .single();
+
+      if (existing?.pdf_storage_path) {
+        // PDF already in storage — reuse existing path, skip upload
+        pdfStoragePath = existing.pdf_storage_path;
+      } else {
+        // New PDF — upload to storage
+        const path = this.pdfPath(doc.nuggetId, doc.docId);
+        pdfStoragePath = await this.uploadPdf(path, doc.pdfBase64);
+      }
     }
 
     const row: Record<string, unknown> = {
@@ -468,10 +483,14 @@ export class SupabaseBackend implements StorageBackend {
         type: nugget.type,
         messages: nugget.messages ?? null,
         doc_change_log: nugget.docChangeLog ?? null,
-        last_doc_change_sync_index: nugget.lastDocChangeSyncIndex ?? null,
+        last_doc_change_sync_index: nugget.lastDocChangeSyncSeq ?? null,
+        sources_log_stats: nugget.sourcesLogStats ?? null,
+        sources_log: nugget.sourcesLog ?? null,
         subject: nugget.subject ?? null,
         styling_options: nugget.stylingOptions ?? null,
-        quality_report: nugget.qualityReport ?? null,
+        quality_report: nugget.dqafReport ?? nugget.qualityReport ?? null,
+        engagement_purpose: nugget.engagementPurpose ?? null,
+        nugget_last_closed_at: nugget.lastClosedAt ?? null,
         folders: nugget.folders ?? null,
         created_at: nugget.createdAt,
         last_modified_at: nugget.lastModifiedAt,
@@ -498,10 +517,16 @@ export class SupabaseBackend implements StorageBackend {
       type: row.type ?? 'insights',
       messages: row.messages ?? undefined,
       docChangeLog: row.doc_change_log ?? undefined,
-      lastDocChangeSyncIndex: row.last_doc_change_sync_index ?? undefined,
+      lastDocChangeSyncSeq: row.last_doc_change_sync_index ?? undefined,
+      sourcesLogStats: row.sources_log_stats ?? undefined,
+      sourcesLog: row.sources_log ?? undefined,
       subject: row.subject ?? undefined,
       stylingOptions: row.styling_options ?? undefined,
-      qualityReport: row.quality_report ?? undefined,
+      // Discriminate DQAF v2 report (has assessmentId) from legacy QualityReport
+      qualityReport: row.quality_report && !row.quality_report.assessmentId ? row.quality_report : undefined,
+      dqafReport: row.quality_report?.assessmentId ? row.quality_report : undefined,
+      engagementPurpose: row.engagement_purpose ?? undefined,
+      lastClosedAt: row.nugget_last_closed_at ?? undefined,
       folders: row.folders ?? undefined,
       createdAt: row.created_at,
       lastModifiedAt: row.last_modified_at,
@@ -583,8 +608,22 @@ export class SupabaseBackend implements StorageBackend {
   async saveNuggetImage(image: StoredImage): Promise<void> {
     // Upload the main card image to storage
     const mainPath = this.cardImagePath(image.fileId, image.headingId, image.level);
-    let storagePath: string;
-    if (image.cardUrl.startsWith('data:') || image.cardUrl.startsWith('blob:')) {
+    let storagePath: string | null;
+    if (!image.cardUrl) {
+      // No current image (deleted) — remove the old file from storage but keep history
+      const { data: existing } = await supabase
+        .from('card_images')
+        .select('storage_path')
+        .eq('nugget_id', image.fileId)
+        .eq('card_id', image.headingId)
+        .eq('detail_level', image.level)
+        .eq('user_id', this.userId)
+        .single();
+      if (existing?.storage_path) {
+        await supabase.storage.from('card-images').remove([existing.storage_path]);
+      }
+      storagePath = null;
+    } else if (image.cardUrl.startsWith('data:') || image.cardUrl.startsWith('blob:')) {
       const urlToUpload = image.cardUrl.startsWith('blob:')
         ? await this.blobUrlToDataUrl(image.cardUrl)
         : image.cardUrl;
@@ -641,43 +680,37 @@ export class SupabaseBackend implements StorageBackend {
     }
   }
 
-  async loadNuggetImages(nuggetId: string): Promise<StoredImage[]> {
+  async loadNuggetImages(nuggetId: string): Promise<StoredAlbumImage[]> {
     const { data, error } = await supabase
       .from('card_images')
-      .select('*')
+      .select('id, nugget_id, card_id, detail_level, storage_path, is_active, label, sort_order, created_at')
       .eq('nugget_id', nuggetId)
-      .eq('user_id', this.userId);
+      .eq('user_id', this.userId)
+      .order('sort_order', { ascending: true });
     if (error) {
       log.error('loadNuggetImages failed:', error);
       throw error;
     }
     if (!data) return [];
 
-    const results: StoredImage[] = [];
+    const results: StoredAlbumImage[] = [];
     for (const row of data) {
-      const cardUrl = row.storage_path
+      const imageUrl = row.storage_path
         ? await this.getImageUrl(row.storage_path)
         : '';
 
-      const imageHistory: StoredImageVersion[] = [];
-      for (const entry of (row.image_history || []) as Array<{ imageUrl: string; timestamp: number; label: string }>) {
-        const url = entry.imageUrl.startsWith('http')
-          ? entry.imageUrl
-          : await this.getImageUrl(entry.imageUrl);
-        imageHistory.push({
-          imageUrl: url,
-          timestamp: entry.timestamp,
-          label: entry.label,
-        });
-      }
-
       results.push({
+        id: row.id,
         fileId: row.nugget_id,
         headingId: row.card_id,
-        level: row.detail_level,
-        cardUrl,
-        imageHistory,
-      } as StoredImage);
+        level: row.detail_level as DetailLevel,
+        storagePath: row.storage_path || '',
+        imageUrl,
+        isActive: row.is_active ?? false,
+        label: row.label || '',
+        sortOrder: row.sort_order ?? 0,
+        createdAt: row.created_at ? new Date(row.created_at).getTime() : Date.now(),
+      });
     }
     return results;
   }

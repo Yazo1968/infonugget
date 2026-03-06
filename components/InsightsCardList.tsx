@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Card, CardItem, CardFolder, DetailLevel, isCoverLevel, isCardFolder } from '../types';
-import { flattenCards, findCard } from '../utils/cardUtils';
+import { flattenCards, findCard, findParentFolder, cardNamesInScope } from '../utils/cardUtils';
 import { isNameTaken } from '../utils/naming';
 import { formatTimestampFull } from '../utils/formatTime';
 import { DragLocation } from '../hooks/useCardOperations';
@@ -26,7 +26,7 @@ interface InsightsCardListProps {
   onCopyMoveCard?: (cardId: string, targetNuggetId: string, mode: 'copy' | 'move') => void;
   otherNuggets?: { id: string; name: string }[];
   projectNuggets?: { projectId: string; projectName: string; nuggets: { id: string; name: string }[] }[];
-  /** The active detail level from the parent — used to look up synthesisMap/cardUrlMap for Card Info */
+  /** The active detail level from the parent — used to look up synthesisMap/activeImageMap for Card Info */
   activeDetailLevel?: DetailLevel;
   onGenerateCardImage?: (card: Card) => void;
   onReorderCards?: (fromIndex: number, toIndex: number) => void;
@@ -50,10 +50,10 @@ interface InfoContentProps {
 }
 
 const InfoContent: React.FC<InfoContentProps> = ({ card, level }) => {
-  // Image version count and last image timestamp
-  const versions = card.imageHistoryMap?.[level];
-  const versionCount = versions ? versions.length : 0;
-  const lastImageTs = versions && versions.length > 0 ? versions[versions.length - 1].timestamp : undefined;
+  // Album image count and last image timestamp
+  const album = card.albumMap?.[level];
+  const versionCount = album ? album.length : 0;
+  const lastImageTs = album && album.length > 0 ? album[album.length - 1].createdAt : undefined;
 
   // Image staleness: red if content was modified after the last image generation
   const lastModifiedTs = card.lastEditedAt && card.lastEditedAt !== card.createdAt ? card.lastEditedAt : undefined;
@@ -596,7 +596,8 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
     }
     const currentCard = findCard(cards, id);
     if (trimmed !== currentCard?.text) {
-      const siblingNames = allCards.map((h) => h.text);
+      const parentFolder = findParentFolder(cards, id);
+      const siblingNames = cardNamesInScope(cards, parentFolder?.id);
       if (isNameTaken(trimmed, siblingNames, currentCard?.text)) {
         setRenameError('A card with this name already exists');
         return;
@@ -842,7 +843,7 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
           const card = findCard(cards, contextMenu.cardId);
           if (!card) return null;
           const level = activeDetailLevel || card.detailLevel || 'Standard';
-          const _hasCard = !!card.cardUrlMap?.[level];
+          const _hasCard = !!card.activeImageMap?.[level];
           const _hasSynthesis = !!card.synthesisMap?.[level];
           return createPortal(
             <div
@@ -1628,7 +1629,7 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
                 </p>
               </div>
               {(() => {
-                const nameConflict = isNameTaken(newCardInFolderName.trim(), allCards.map((c) => c.text));
+                const nameConflict = isNameTaken(newCardInFolderName.trim(), cardNamesInScope(cards, addCardToFolderId));
                 const canSubmit = !!newCardInFolderName.trim() && !nameConflict;
                 return (
                   <>

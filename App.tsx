@@ -22,7 +22,7 @@ import AutoDeckPanel from './components/AutoDeckPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PanelTabBar from './components/PanelTabBar';
-import QualityPanel from './components/QualityPanel';
+import SubjectQualityPanel from './components/SubjectQualityPanel';
 import NuggetTabBar from './components/NuggetTabBar';
 import HeaderBar from './components/HeaderBar';
 import LogoIcon from './components/LogoIcon';
@@ -45,6 +45,8 @@ import { useAutoDeck } from './hooks/useAutoDeck';
 import { useTokenUsage, TokenUsageTotals } from './hooks/useTokenUsage';
 import { useTabManagement } from './hooks/useTabManagement';
 import { useStylingSync } from './hooks/useStylingSync';
+import { useNuggetCloseTracker } from './hooks/useNuggetCloseTracker';
+import { useFilesApiSync } from './hooks/useFilesApiSync';
 import { storage } from './components/StorageProvider';
 import {
   base64ToBlob,
@@ -55,8 +57,8 @@ import PdfUploadChoiceDialog from './components/PdfUploadChoiceDialog';
 import PdfProcessorModal from './components/PdfProcessorModal';
 import PanelRequirements from './components/PanelRequirements';
 import StyleStudioModal from './components/StyleStudioModal';
-import { SubjectEditModal } from './components/SubjectEditModal';
 import FolderPickerDialog from './components/FolderPickerDialog';
+import FootnoteBar from './components/FootnoteBar';
 
 const App: React.FC = () => {
   // ── Focused context hooks ──
@@ -65,12 +67,17 @@ const App: React.FC = () => {
     selectedDocumentId, setSelectedDocumentId,
     deleteNugget, updateNugget,
     updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+    deleteDocChangeLogEntry, deleteAllDocChangeLogEntries, renameDocChangeLogEntry, createLogCheckpoint,
   } = useNuggetContext();
   const { projects, deleteProject, updateProject } = useProjectContext();
   const { activeCard, selectEntity } = useSelectionContext();
   const { customStyles, addCustomStyle: _addCustomStyle, updateCustomStyle: _updateCustomStyle, deleteCustomStyle: _deleteCustomStyle, replaceCustomStyles } = useStyleContext();
   const { darkMode, toggleDarkMode } = useThemeContext();
   const { initialTokenUsageTotals, openProjectId, setOpenProjectId } = useAppContext();
+
+  // ── Files API lifecycle hooks ──
+  useNuggetCloseTracker(selectedNuggetId);  // Records nugget_last_closed_at on navigation
+  useFilesApiSync();                         // Re-uploads documents with null fileId on nugget open
 
   // ── Token / cost tracking (persisted to IndexedDB) ──
   const {
@@ -132,14 +139,14 @@ const App: React.FC = () => {
     handleDocChangeStartFresh,
   } = useInsightsLab(recordUsage);
 
-  // ── Document quality check ──
+  // ── Document quality check (DQAF v2) ──
   const {
-    qualityReport,
+    dqafReport,
     effectiveStatus: qualityStatus,
     isChecking: qualityIsChecking,
     checkError: qualityCheckError,
     runQualityCheck,
-    dismissReport: dismissQualityReport,
+    abortQualityCheck,
   } = useDocumentQualityCheck(selectedNugget, updateNugget, recordUsage);
 
   // ── Card operations (selection, manipulation, creation, cross-nugget, placeholders) ──
@@ -186,6 +193,8 @@ const App: React.FC = () => {
     setQuestionAnswer: autoDeckSetQuestionAnswer,
     setAllRecommended: autoDeckSetAllRecommended,
     setGeneralComment: autoDeckSetGeneralComment,
+    generateBriefingSuggestions: autoDeckGenerateSuggestions,
+    abortSuggestions: autoDeckAbortSuggestions,
   } = useAutoDeck(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
 
   // ── Ref bridge: askPdfProcessor (from useDocumentOperations) → useProjectOperations ──
@@ -194,8 +203,6 @@ const App: React.FC = () => {
   // ── Project & nugget operations (creation, duplication, copy/move, subject) ──
   const {
     setNuggetCreationProjectId,
-    subjectEditNuggetId,
-    setSubjectEditNuggetId,
     isRegeneratingSubject,
     handleCreateNugget,
     handleCreateProject,
@@ -232,14 +239,15 @@ const App: React.FC = () => {
   // Wire the ref bridge (synchronous assignment — safe for async consumers)
   askPdfProcessorRef.current = askPdfProcessor;
 
-  // ── Chat placeholder wrappers ──
-  const handleChatCreatePlaceholder = useCallback(
-    (promptText: string, detailLevel: DetailLevel): string | null => {
-      const placeholderTitle = promptText.length > 50 ? promptText.substring(0, 50) + '...' : promptText;
-      const placeholders = createPlaceholderCards([placeholderTitle], detailLevel);
-      return placeholders[0]?.id ?? null;
+  // ── Chat card generation via folder picker ──
+  // Ref to stash placeholder info so ChatPanel's fill callback can find it
+  const chatPendingPlaceholderRef = useRef<{ cardId: string; level: DetailLevel } | null>(null);
+
+  const handleChatRequestCardGeneration = useCallback(
+    (promptText: string, detailLevel: DetailLevel) => {
+      setPendingFolderSelection({ type: 'chatGenerateCard', promptText, detailLevel });
     },
-    [createPlaceholderCards],
+    [],
   );
 
   const handleChatFillPlaceholder = useCallback(
@@ -261,28 +269,16 @@ const App: React.FC = () => {
     [createPlaceholderCardsInFolder],
   );
 
-  // ── Folder picker for single-card generation (no loose cards policy) ──
+  // ── Folder picker for chat operations ──
   type PendingFolderSelection =
-    | { type: 'sourceGeneration'; headingId: string; detailLevel: DetailLevel; cardTitle: string; sourceDocName: string }
-    | { type: 'chatSaveAsCard'; message: ChatMessage; editedContent: string };
+    | { type: 'chatSaveAsCard'; message: ChatMessage; editedContent: string }
+    | { type: 'chatGenerateCard'; promptText: string; detailLevel: DetailLevel };
 
   const [pendingFolderSelection, setPendingFolderSelection] = useState<PendingFolderSelection | null>(null);
 
   const handleGenerateCardContentWrapped = useCallback(
     (headingId: string, detailLevel: DetailLevel, cardTitle: string, sourceDocName?: string, existingCardId?: string) => {
-      if (existingCardId) {
-        // Batch path — folder already created, proceed directly
-        handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
-      } else {
-        // Single card — need folder selection
-        setPendingFolderSelection({
-          type: 'sourceGeneration',
-          headingId,
-          detailLevel,
-          cardTitle,
-          sourceDocName: sourceDocName || '',
-        });
-      }
+      handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
     },
     [handleGenerateCardContent],
   );
@@ -303,26 +299,24 @@ const App: React.FC = () => {
       const pending = pendingFolderSelection;
       if (!pending) return;
 
-      if (pending.type === 'sourceGeneration') {
-        const cardSourceDocs = pending.sourceDocName ? [pending.sourceDocName] : [];
-        const placeholders = createPlaceholderCards(
-          [pending.cardTitle], pending.detailLevel,
-          { sourceDocuments: cardSourceDocs, targetFolderId: folderId },
-        );
-        const placeholderId = placeholders[0]?.id;
-        if (placeholderId) {
-          handleGenerateCardContent(
-            pending.headingId, pending.detailLevel, pending.cardTitle,
-            pending.sourceDocName, placeholderId,
-          );
-        }
-      } else if (pending.type === 'chatSaveAsCard') {
+      if (pending.type === 'chatSaveAsCard') {
         handleSaveAsCard(pending.message, pending.editedContent, folderId);
+      } else if (pending.type === 'chatGenerateCard') {
+        const placeholderTitle = pending.promptText.length > 50
+          ? pending.promptText.substring(0, 50) + '...'
+          : pending.promptText;
+        const placeholders = createPlaceholderCards([placeholderTitle], pending.detailLevel, { targetFolderId: folderId });
+        const placeholderId = placeholders[0]?.id ?? null;
+        if (placeholderId) {
+          chatPendingPlaceholderRef.current = { cardId: placeholderId, level: pending.detailLevel };
+        }
+        // Send the chat message now that the placeholder is placed in the folder
+        sendInsightsMessage(pending.promptText, true, pending.detailLevel);
       }
 
       setPendingFolderSelection(null);
     },
-    [pendingFolderSelection, createPlaceholderCards, handleGenerateCardContent, handleSaveAsCard],
+    [pendingFolderSelection, handleSaveAsCard, createPlaceholderCards, sendInsightsMessage],
   );
 
   const handleCreateFolderForPending = useCallback(
@@ -344,6 +338,7 @@ const App: React.FC = () => {
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
   const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null>(null);
+  const [qualityActiveTab, setQualityActiveTab] = useState<'subject' | 'brief' | 'assessment'>('subject');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
   // ── Unsaved-changes gating for panel/nugget switching ──
@@ -367,15 +362,6 @@ const App: React.FC = () => {
     }
     action();
   }, []);
-
-  // ── Breadcrumb navigation handlers ──
-  const handleBreadcrumbDocSelect = useCallback(
-    (docId: string) => {
-      selectEntity({ documentId: docId });
-      appGatedAction(() => setExpandedPanel('sources'));
-    },
-    [appGatedAction, selectEntity, setExpandedPanel],
-  );
 
   const handleAppDialogSave = useCallback(() => {
     const panel = appPendingDirtyPanel;
@@ -459,11 +445,9 @@ const App: React.FC = () => {
     handleReferenceImageModified,
     handleDeleteReference,
     handleInsightsImageModified,
-    handleDeleteCardImage,
-    handleDeleteCardVersions,
-    handleDeleteAllCardImages,
-    handleDownloadImage,
-    handleDownloadSelectedImages,
+    handleSetActiveImage,
+    handleDeleteAlbumImage,
+    albumActionPending,
     wrappedGenerateCard,
     wrappedExecuteBatch,
     mismatchDialog,
@@ -616,23 +600,6 @@ const App: React.FC = () => {
             />
           )}
 
-          {/* Subject edit modal */}
-          {subjectEditNuggetId &&
-            (() => {
-              const nugget = nuggets.find((n) => n.id === subjectEditNuggetId);
-              if (!nugget) return null;
-              return (
-                <SubjectEditModal
-                  nuggetId={nugget.id}
-                  nuggetName={nugget.name}
-                  currentSubject={nugget.subject || ''}
-                  isRegenerating={isRegeneratingSubject}
-                  onSave={handleSaveSubject}
-                  onRegenerate={handleRegenerateSubject}
-                  onClose={() => setSubjectEditNuggetId(null)}
-                />
-              );
-            })()}
 
           {/* App-level unsaved changes dialog (for nugget/panel switching) */}
           {appPendingAction && appPendingDirtyPanel && (
@@ -656,9 +623,7 @@ const App: React.FC = () => {
           >
             {/* Header bar — always visible */}
             <HeaderBar
-              expandedPanel={expandedPanel}
               onReturnToLanding={handleReturnToLanding}
-              onBreadcrumbDocSelect={handleBreadcrumbDocSelect}
               usageTotals={usageTotals}
               resetUsage={resetUsage}
             />
@@ -719,27 +684,48 @@ const App: React.FC = () => {
                     <div className="fixed inset-0 z-[106] bg-black/20 cursor-not-allowed" />
                   )}
 
-                  {/* Quality Check Panel */}
+                  {/* Brief & Quality Panel */}
                   <ErrorBoundary name="Quality">
-                    <QualityPanel
+                    <SubjectQualityPanel
                       isOpen={expandedPanel === 'quality'}
+                      activeTab={qualityActiveTab}
+                      onTabChange={setQualityActiveTab}
                       tabBarRef={tabBarRef}
                       onToggle={() =>
                         appGatedAction(() => setExpandedPanel((prev) => (prev === 'quality' ? null : 'quality')))
                       }
-                      qualityReport={qualityReport}
+                      nuggetId={selectedNugget.id}
+                      nuggetName={selectedNugget.name}
+                      currentSubject={selectedNugget.subject || ''}
+                      isRegeneratingSubject={isRegeneratingSubject}
+                      subjectReviewNeeded={!!selectedNugget.subjectReviewNeeded}
+                      onSaveSubject={handleSaveSubject}
+                      onRegenerateSubject={handleRegenerateSubject}
+                      onDismissSubjectReview={(id) => updateNugget(id, (n) => ({ ...n, subjectReviewNeeded: false }))}
+                      briefReviewNeeded={!!selectedNugget.briefReviewNeeded}
+                      onDismissBriefReview={(id) => updateNugget(id, (n) => ({ ...n, briefReviewNeeded: false }))}
+                      sourcesLog={selectedNugget.sourcesLog || []}
+                      sourcesLogStats={selectedNugget.sourcesLogStats ?? { logsCreated: 0, logsDeleted: 0, logsArchived: 0, lastUpdated: 0, rawEventSeq: 0, lastCheckpointRawSeq: 0 }}
+                      hasPendingChanges={(selectedNugget.sourcesLogStats?.rawEventSeq ?? 0) > (selectedNugget.sourcesLogStats?.lastCheckpointRawSeq ?? 0)}
+                      onDeleteLogEntry={deleteDocChangeLogEntry}
+                      onDeleteAllLogEntries={deleteAllDocChangeLogEntries}
+                      onRenameLogEntry={renameDocChangeLogEntry}
+                      onCreateLogEntry={() => createLogCheckpoint('manual')}
+                      briefing={selectedNugget.briefing}
+                      onBriefingChange={(briefing) => updateNugget(selectedNugget.id, (n) => ({ ...n, briefing, briefReviewNeeded: false }))}
+                      documents={nuggetDocs}
+                      subject={selectedNugget.subject}
+                      onGenerateSuggestions={autoDeckGenerateSuggestions}
+                      onAbortSuggestions={autoDeckAbortSuggestions}
+                      dqafReport={dqafReport}
                       effectiveStatus={qualityStatus}
                       isChecking={qualityIsChecking}
                       checkError={qualityCheckError}
                       onRunCheck={runQualityCheck}
-                      onDismiss={() => {
-                        dismissQualityReport();
-                        setExpandedPanel('sources');
-                      }}
+                      onAbortCheck={abortQualityCheck}
                       onFixDocuments={() => {
                         setExpandedPanel('sources');
                       }}
-                      documents={nuggetDocs}
                     />
                   </ErrorBoundary>
 
@@ -784,10 +770,13 @@ const App: React.FC = () => {
                       hasConversation={insightsHasConversation}
                       onDocChangeContinue={handleDocChangeContinue}
                       onDocChangeStartFresh={handleDocChangeStartFresh}
-                      onCreatePlaceholder={handleChatCreatePlaceholder}
                       onFillPlaceholderCard={handleChatFillPlaceholder}
                       onRemovePlaceholderCard={removePlaceholderCard}
+                      onRequestCardGeneration={handleChatRequestCardGeneration}
+                      externalPlaceholderRef={chatPendingPlaceholderRef}
                       onInitiateChat={initiateInsightsChat}
+                      qualityStatus={qualityStatus}
+                      onViewLog={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
                     />
                   </ErrorBoundary>
 
@@ -811,6 +800,8 @@ const App: React.FC = () => {
                       onSetAllRecommended={autoDeckSetAllRecommended}
                       onSetGeneralComment={autoDeckSetGeneralComment}
                       onRetryFromReview={autoDeckRetryFromReview}
+                      briefing={selectedNugget?.briefing}
+                      onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
                     />
                   </ErrorBoundary>
 
@@ -873,8 +864,6 @@ const App: React.FC = () => {
                             onImageModified={handleInsightsImageModified}
                             contentDirty={false}
                             currentContent={activeCard?.synthesisMap?.[activeCard?.detailLevel || activeLogicTab] || ''}
-                            onDownloadImage={handleDownloadImage}
-                            onDownloadSelectedImages={handleDownloadSelectedImages}
                             referenceImage={referenceImage}
                             onStampReference={handleStampReference}
                             useReferenceImage={useReferenceImage}
@@ -886,9 +875,9 @@ const App: React.FC = () => {
                             manifestCards={manifestCards}
                             onExecuteBatch={wrappedExecuteBatch}
                             onCloseManifest={() => setManifestCards(null)}
-                            onDeleteCardImage={handleDeleteCardImage}
-                            onDeleteCardVersions={handleDeleteCardVersions}
-                            onDeleteAllCardImages={handleDeleteAllCardImages}
+                            onSetActiveImage={handleSetActiveImage}
+                            onDeleteAlbumImage={handleDeleteAlbumImage}
+                            albumActionPending={albumActionPending}
                             onUsage={recordUsage}
                             onOpenStyleStudio={() => setShowStyleStudio(true)}
                           />
@@ -950,6 +939,18 @@ const App: React.FC = () => {
                 </div>
               )}
             </main>
+
+            {/* Footnote bar — surfaces actionable notices */}
+            <FootnoteBar
+              sourcesLogStats={selectedNugget?.sourcesLogStats}
+              subjectReviewNeeded={selectedNugget?.subjectReviewNeeded}
+              briefReviewNeeded={selectedNugget?.briefReviewNeeded}
+              qualityStatus={qualityStatus}
+              onOpenSourcesLog={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
+              onOpenSubjectEdit={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
+              onOpenBriefEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
+              onOpenQualityPanel={() => appGatedAction(() => { setQualityActiveTab('assessment'); setExpandedPanel('quality'); })}
+            />
 
             {/* Footer */}
             <footer className="shrink-0 flex items-center justify-center py-1.5 border-t border-zinc-100 dark:border-zinc-700 bg-white dark:bg-zinc-900 relative z-[102]">

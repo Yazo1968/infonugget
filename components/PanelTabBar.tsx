@@ -2,7 +2,7 @@ import React, { forwardRef } from 'react';
 
 type PanelId = 'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality';
 
-type QualityStatus = 'green' | 'amber' | 'red' | null;
+type QualityStatus = 'green' | 'amber' | 'red' | 'stale' | null;
 
 interface TabConfig {
   id: PanelId;
@@ -32,7 +32,7 @@ const TABS: TabConfig[] = [
   },
   {
     id: 'quality',
-    label: 'Check',
+    label: 'Brief & Quality',
     requiresNugget: true,
     // Default blue — overridden dynamically based on qualityStatus
     color: { dark: 'rgb(51,115,196)', light: 'rgb(51,115,196)' },
@@ -57,7 +57,7 @@ const TABS: TabConfig[] = [
   },
   {
     id: 'auto-deck',
-    label: 'Deck',
+    label: 'Auto-Deck',
     requiresNugget: true,
     color: { dark: 'rgb(84,148,218)', light: 'rgb(84,148,218)' },
     dimColor: { dark: 'rgb(45,82,125)', light: 'rgb(45,82,125)' },
@@ -99,6 +99,10 @@ const QUALITY_COLORS: Record<string, { color: { dark: string; light: string }; d
   red: {
     color: { dark: 'rgb(200,50,50)', light: 'rgb(200,50,50)' },
     dimColor: { dark: 'rgb(110,28,28)', light: 'rgb(110,28,28)' },
+  },
+  stale: {
+    color: { dark: 'rgb(210,160,30)', light: 'rgb(190,145,25)' },
+    dimColor: { dark: 'rgb(115,88,16)', light: 'rgb(105,80,14)' },
   },
 };
 

@@ -51,7 +51,7 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
     ref,
   ) => {
     const { darkMode } = useThemeContext();
-    const { selectedDocumentId, setSelectedDocumentId, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument } = useNuggetContext();
+    const { selectedDocumentId, setSelectedDocumentId, selectedNugget, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument } = useNuggetContext();
     const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
       isOpen,
       defaultWidth: Math.min(window.innerWidth * 0.6, 1000),

@@ -3,7 +3,7 @@ import { withGeminiRetry, PRO_IMAGE_CONFIG, callGeminiProxy } from './ai';
 import { buildModificationPrompt, buildContentModificationPrompt } from './prompts/imageGeneration';
 
 interface ModificationRequest {
-  originalImageUrl: string; // data URL of the original image
+  originalImageUrl: string; // data URL or signed HTTP URL of the original image
   redlineDataUrl: string; // data URL of the redline overlay (empty string if no spatial annotations)
   instructions: string; // synthesized numbered instruction list
   cardText: string | null; // card title context for the prompt
@@ -43,9 +43,8 @@ export async function executeModification(
 ): Promise<ModificationResult> {
   const { originalImageUrl, redlineDataUrl, instructions, cardText, aspectRatio, resolution } = request;
 
-  // Extract base64 data from data URLs
-  const originalBase64 = extractBase64(originalImageUrl);
-  const originalMime = extractMime(originalImageUrl);
+  // Resolve image data — handles both data URLs and HTTP(S) signed URLs
+  const { base64: originalBase64, mimeType: originalMime } = await resolveImageData(originalImageUrl);
   const hasRedline = !!redlineDataUrl;
 
   const systemPrompt = buildModificationPrompt(instructions, cardText, hasRedline);
@@ -120,7 +119,7 @@ export async function executeModification(
  * with the new content while preserving the visual style of the reference image.
  */
 interface ContentModificationRequest {
-  originalImageUrl: string; // reference image for style continuity
+  originalImageUrl: string; // data URL or signed HTTP URL — reference image for style continuity
   content: string; // the updated synthesis content
   cardText: string | null;
   style?: string;
@@ -135,8 +134,8 @@ export async function executeContentModification(
 ): Promise<ModificationResult> {
   const { originalImageUrl, content, cardText, style, palette, aspectRatio, resolution } = request;
 
-  const originalBase64 = extractBase64(originalImageUrl);
-  const originalMime = extractMime(originalImageUrl);
+  // Resolve image data — handles both data URLs and HTTP(S) signed URLs
+  const { base64: originalBase64, mimeType: originalMime } = await resolveImageData(originalImageUrl);
 
   const systemPrompt = buildContentModificationPrompt(content, cardText, style, palette);
 
@@ -191,6 +190,35 @@ export async function executeContentModification(
 }
 
 // --- Helpers ---
+
+/**
+ * Convert an image URL to { base64, mimeType }.
+ * Handles both data URLs (data:image/png;base64,...) and HTTP(S) URLs
+ * (e.g. signed Supabase Storage URLs) by fetching and converting.
+ */
+async function resolveImageData(url: string): Promise<{ base64: string; mimeType: string }> {
+  // Data URL — extract directly
+  if (url.startsWith('data:')) {
+    return { base64: extractBase64(url), mimeType: extractMime(url) };
+  }
+  // HTTP(S) URL — fetch and convert to base64
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image: ${res.status}`);
+    const blob = await res.blob();
+    const mimeType = blob.type || 'image/png';
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i]);
+    }
+    const base64 = btoa(binary);
+    return { base64, mimeType };
+  }
+  // Fallback — assume raw base64
+  return { base64: url, mimeType: 'image/png' };
+}
 
 export function extractBase64(dataUrl: string): string {
   const commaIndex = dataUrl.indexOf(',');
