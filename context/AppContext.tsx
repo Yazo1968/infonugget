@@ -7,6 +7,10 @@ import {
   InitialPersistedState,
   ChatMessage,
   DocChangeEvent,
+  DocChangeMagnitude,
+  SourcesLogStats,
+  SourcesLogEntry,
+  SourcesLogTrigger,
   CustomStyle,
   CardItem,
 } from '../types';
@@ -18,11 +22,122 @@ import { ProjectContext, useProjectContext } from './ProjectContext';
 import { SelectionContext, useSelectionContext } from './SelectionContext';
 import { StyleContext, useStyleContext } from './StyleContext';
 
+// ── Sources Log helpers ──
+const SOURCES_LOG_CAP = 20;
+
+/** Default stats when none exist on the nugget */
+function getDefaultStats(nugget: Nugget): SourcesLogStats {
+  return {
+    logsCreated: nugget.sourcesLogStats?.logsCreated ?? 0,
+    logsDeleted: nugget.sourcesLogStats?.logsDeleted ?? 0,
+    logsArchived: nugget.sourcesLogStats?.logsArchived ?? 0,
+    lastUpdated: nugget.sourcesLogStats?.lastUpdated ?? 0,
+    rawEventSeq: nugget.sourcesLogStats?.rawEventSeq ?? 0,
+    lastCheckpointRawSeq: nugget.sourcesLogStats?.lastCheckpointRawSeq ?? 0,
+  };
+}
+
+/** Opposite toggle type for cancellation */
+const TOGGLE_OPPOSITE: Record<string, string> = {
+  enabled: 'disabled',
+  disabled: 'enabled',
+};
+
+/**
+ * Append a raw doc change event to a nugget's internal tracking log.
+ * Uses rawEventSeq for monotonic seq assignment. Does NOT create checkpoint entries.
+ *
+ * Toggle cancellation: when logging an 'enabled' or 'disabled' event, if an
+ * un-checkpointed opposite toggle for the same document exists, the two cancel
+ * out — the previous event is removed and no new event is added. This prevents
+ * noise from repeated activate/deactivate cycles.
+ *
+ * Pure function — safe to call from any context.
+ */
+export function appendDocChangeEvent(
+  nugget: Nugget,
+  eventBase: Omit<DocChangeEvent, 'seq'>,
+): Pick<Nugget, 'docChangeLog' | 'sourcesLogStats' | 'subjectReviewNeeded' | 'briefReviewNeeded'> {
+  const stats = getDefaultStats(nugget);
+  const log = [...(nugget.docChangeLog || [])];
+
+  // Toggle cancellation: enabled ↔ disabled
+  const opposite = TOGGLE_OPPOSITE[eventBase.type];
+  if (opposite) {
+    const lastCheckpointSeq = stats.lastCheckpointRawSeq;
+    // Find the most recent un-checkpointed opposite toggle for the same doc
+    let cancelIdx = -1;
+    for (let i = log.length - 1; i >= 0; i--) {
+      const e = log[i];
+      if (e.docId === eventBase.docId && e.type === opposite && e.seq > lastCheckpointSeq) {
+        cancelIdx = i;
+        break;
+      }
+    }
+    if (cancelIdx !== -1) {
+      // Cancel out: remove the previous event, don't add a new one.
+      // Also roll back rawEventSeq so the pending-changes count stays accurate.
+      log.splice(cancelIdx, 1);
+      stats.rawEventSeq = Math.max(stats.lastCheckpointRawSeq, stats.rawEventSeq - 1);
+      const stillHasPendingChanges = stats.rawEventSeq > stats.lastCheckpointRawSeq;
+      return { docChangeLog: log, sourcesLogStats: stats, subjectReviewNeeded: stillHasPendingChanges ? nugget.subjectReviewNeeded : false, briefReviewNeeded: stillHasPendingChanges ? nugget.briefReviewNeeded : false };
+    }
+  }
+
+  stats.rawEventSeq += 1;
+  const event: DocChangeEvent = { ...eventBase, seq: stats.rawEventSeq };
+  log.push(event);
+  return { docChangeLog: log, sourcesLogStats: stats, subjectReviewNeeded: true, briefReviewNeeded: true };
+}
+
+/**
+ * Create a Sources Log checkpoint entry from pending raw events.
+ * Returns null if there are no pending changes to checkpoint.
+ * Pure function — safe to call from any context.
+ */
+export function createSourcesLogCheckpoint(
+  nugget: Nugget,
+  trigger: SourcesLogTrigger,
+): Pick<Nugget, 'sourcesLog' | 'sourcesLogStats'> | null {
+  const stats = getDefaultStats(nugget);
+  const rawLog = nugget.docChangeLog || [];
+
+  // Get raw events not yet consumed into a checkpoint
+  const pending = rawLog.filter((e) => e.seq > stats.lastCheckpointRawSeq);
+  if (pending.length === 0) return null;
+
+  // Create checkpoint entry
+  stats.logsCreated += 1;
+  const entry: SourcesLogEntry = {
+    seq: stats.logsCreated,
+    trigger,
+    timestamp: Date.now(),
+    changes: pending.map((e) => ({
+      type: e.type,
+      docName: e.docName,
+      oldName: e.oldName,
+      magnitude: e.magnitude,
+    })),
+  };
+
+  // Add to sourcesLog with cap
+  const sourcesLog = [...(nugget.sourcesLog || []), entry];
+  if (sourcesLog.length > SOURCES_LOG_CAP) {
+    const overflow = sourcesLog.length - SOURCES_LOG_CAP;
+    stats.logsArchived += overflow;
+    sourcesLog.splice(0, overflow);
+  }
+
+  // Advance checkpoint marker
+  stats.lastCheckpointRawSeq = Math.max(...pending.map((e) => e.seq));
+  stats.lastUpdated = Date.now();
+
+  return { sourcesLog, sourcesLogStats: stats };
+}
+
 // ── Context shape ──
 interface AppContextValue {
   // Core state
-  isProjectsPanelOpen: boolean;
-  setIsProjectsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   activeCardId: string | null;
   setActiveCardId: React.Dispatch<React.SetStateAction<string | null>>;
 
@@ -102,8 +217,6 @@ interface AppContextValue {
 
 // Minimal context for members not covered by any focused context
 interface AppContextRemainder {
-  isProjectsPanelOpen: boolean;
-  setIsProjectsPanelOpen: React.Dispatch<React.SetStateAction<boolean>>;
   openProjectId: string | null;
   setOpenProjectId: React.Dispatch<React.SetStateAction<string | null>>;
   initialTokenUsageTotals?: Record<string, number>;
@@ -129,7 +242,6 @@ export const AppProvider: React.FC<{
   initialState?: InitialPersistedState;
 }> = ({ children, initialState }) => {
   // Core state
-  const [isProjectsPanelOpen, setIsProjectsPanelOpen] = useState(true);
   const [openProjectId, setOpenProjectId] = useState<string | null>(initialState?.openProjectId ?? null);
   const [activeCardId, setActiveCardId] = useState<string | null>(initialState?.activeCardId ?? null);
 
@@ -377,18 +489,17 @@ export const AppProvider: React.FC<{
   const addNuggetDocument = useCallback(
     (doc: UploadedFile) => {
       if (!selectedNuggetId) return;
-      const event: DocChangeEvent = { type: 'added', docId: doc.id, docName: doc.name, timestamp: Date.now() };
       setNuggets((prev) =>
-        prev.map((n) =>
-          n.id === selectedNuggetId
-            ? {
-                ...n,
-                documents: [...n.documents, doc],
-                docChangeLog: [...(n.docChangeLog || []), event],
-                lastModifiedAt: Date.now(),
-              }
-            : n,
-        ),
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const logUpdate = appendDocChangeEvent(n, { type: 'added', docId: doc.id, docName: doc.name, timestamp: Date.now() });
+          return {
+            ...n,
+            documents: [...n.documents, doc],
+            ...logUpdate,
+            lastModifiedAt: Date.now(),
+          };
+        }),
       );
     },
     [selectedNuggetId],
@@ -397,17 +508,42 @@ export const AppProvider: React.FC<{
   const updateNuggetDocument = useCallback(
     (docId: string, updated: UploadedFile) => {
       if (!selectedNuggetId) return;
-      const event: DocChangeEvent = { type: 'updated', docId, docName: updated.name, timestamp: Date.now() };
       setNuggets((prev) =>
         prev.map((n) => {
           if (n.id !== selectedNuggetId) return n;
           // Only log if the doc was already fully processed (skip placeholder→ready transitions)
           const existing = n.documents.find((d) => d.id === docId);
           const shouldLog = existing && existing.status === 'ready' && updated.status === 'ready';
+          if (!shouldLog) {
+            return {
+              ...n,
+              documents: n.documents.map((d) => (d.id === docId ? updated : d)),
+              lastModifiedAt: Date.now(),
+            };
+          }
+          // Compute magnitude for enriched logging
+          const existingHeadings = (existing.structure || []).map((h) => h.text);
+          const updatedHeadings = (updated.structure || []).map((h) => h.text);
+          const magnitude: DocChangeMagnitude = {
+            charCountBefore: existing.content?.length ?? 0,
+            charCountAfter: updated.content?.length ?? 0,
+            headingCountBefore: existingHeadings.length,
+            headingCountAfter: updatedHeadings.length,
+            headingTextChanged:
+              existingHeadings.length !== updatedHeadings.length ||
+              existingHeadings.some((t, i) => t !== updatedHeadings[i]),
+          };
+          const logUpdate = appendDocChangeEvent(n, {
+            type: 'updated',
+            docId,
+            docName: updated.name,
+            timestamp: Date.now(),
+            magnitude,
+          });
           return {
             ...n,
             documents: n.documents.map((d) => (d.id === docId ? updated : d)),
-            ...(shouldLog ? { docChangeLog: [...(n.docChangeLog || []), event] } : {}),
+            ...logUpdate,
             lastModifiedAt: Date.now(),
           };
         }),
@@ -423,16 +559,16 @@ export const AppProvider: React.FC<{
         prev.map((n) => {
           if (n.id !== selectedNuggetId) return n;
           const doc = n.documents.find((d) => d.id === docId);
-          const event: DocChangeEvent = {
+          const logUpdate = appendDocChangeEvent(n, {
             type: 'removed',
             docId,
             docName: doc?.name || 'Unknown',
             timestamp: Date.now(),
-          };
+          });
           return {
             ...n,
             documents: n.documents.filter((d) => d.id !== docId),
-            docChangeLog: [...(n.docChangeLog || []), event],
+            ...logUpdate,
             lastModifiedAt: Date.now(),
           };
         }),
@@ -448,19 +584,19 @@ export const AppProvider: React.FC<{
         prev.map((n) => {
           if (n.id !== selectedNuggetId) return n;
           const doc = n.documents.find((d) => d.id === docId);
-          const event: DocChangeEvent = {
+          const logUpdate = appendDocChangeEvent(n, {
             type: 'renamed',
             docId,
             docName: newName,
             oldName: doc?.name,
             timestamp: Date.now(),
-          };
+          });
           return {
             ...n,
             documents: n.documents.map((d) =>
               d.id === docId ? { ...d, name: newName, lastRenamedAt: Date.now(), version: (d.version ?? 1) + 1 } : d,
             ),
-            docChangeLog: [...(n.docChangeLog || []), event],
+            ...logUpdate,
             lastModifiedAt: Date.now(),
           };
         }),
@@ -477,34 +613,111 @@ export const AppProvider: React.FC<{
       const doc = nugget?.documents.find((d) => d.id === docId);
       const wasEnabled = doc?.enabled !== false;
 
-      const event: DocChangeEvent = {
-        type: wasEnabled ? 'disabled' : 'enabled',
-        docId,
-        docName: doc?.name || 'Unknown',
-        timestamp: Date.now(),
-      };
       setNuggets((prev) =>
-        prev.map((n) =>
-          n.id === selectedNuggetId
-            ? {
-                ...n,
-                documents: n.documents.map((d) =>
-                  d.id === docId
-                    ? {
-                        ...d,
-                        enabled: !(d.enabled !== false),
-                        ...(wasEnabled ? { lastDisabledAt: Date.now() } : { lastEnabledAt: Date.now() }),
-                      }
-                    : d,
-                ),
-                docChangeLog: [...(n.docChangeLog || []), event],
-                lastModifiedAt: Date.now(),
-              }
-            : n,
-        ),
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const logUpdate = appendDocChangeEvent(n, {
+            type: wasEnabled ? 'disabled' : 'enabled',
+            docId,
+            docName: doc?.name || 'Unknown',
+            timestamp: Date.now(),
+          });
+          return {
+            ...n,
+            documents: n.documents.map((d) =>
+              d.id === docId
+                ? {
+                    ...d,
+                    enabled: !(d.enabled !== false),
+                    ...(wasEnabled ? { lastDisabledAt: Date.now() } : { lastEnabledAt: Date.now() }),
+                  }
+                : d,
+            ),
+            ...logUpdate,
+            lastModifiedAt: Date.now(),
+          };
+        }),
       );
     },
-    [selectedNuggetId, nuggets],
+    [selectedNuggetId, nuggets, appendDocChangeEvent],
+  );
+
+  // ── Sources Log management operations (operate on checkpoint entries, not raw events) ──
+
+  const deleteDocChangeLogEntry = useCallback(
+    (entrySeq: number) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const log = (n.sourcesLog || []).filter((e) => e.seq !== entrySeq);
+          const removed = (n.sourcesLog || []).length - log.length;
+          if (removed === 0) return n;
+          const stats = getDefaultStats(n);
+          stats.logsDeleted += removed;
+          return {
+            ...n,
+            sourcesLog: log,
+            sourcesLogStats: stats,
+            lastModifiedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [selectedNuggetId],
+  );
+
+  const deleteAllDocChangeLogEntries = useCallback(() => {
+    if (!selectedNuggetId) return;
+    setNuggets((prev) =>
+      prev.map((n) => {
+        if (n.id !== selectedNuggetId) return n;
+        const count = (n.sourcesLog || []).length;
+        if (count === 0) return n;
+        const stats = getDefaultStats(n);
+        stats.logsDeleted += count;
+        return {
+          ...n,
+          sourcesLog: [],
+          sourcesLogStats: stats,
+          lastModifiedAt: Date.now(),
+        };
+      }),
+    );
+  }, [selectedNuggetId]);
+
+  const renameDocChangeLogEntry = useCallback(
+    (entrySeq: number, newLabel: string) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          return {
+            ...n,
+            sourcesLog: (n.sourcesLog || []).map((e) =>
+              e.seq === entrySeq ? { ...e, userLabel: newLabel } : e,
+            ),
+            lastModifiedAt: Date.now(),
+          };
+        }),
+      );
+    },
+    [selectedNuggetId],
+  );
+
+  const createLogCheckpoint = useCallback(
+    (trigger: SourcesLogTrigger) => {
+      if (!selectedNuggetId) return;
+      setNuggets((prev) =>
+        prev.map((n) => {
+          if (n.id !== selectedNuggetId) return n;
+          const update = createSourcesLogCheckpoint(n, trigger);
+          if (!update) return n; // no pending changes
+          return { ...n, ...update, lastModifiedAt: Date.now() };
+        }),
+      );
+    },
+    [selectedNuggetId],
   );
 
   // ── Project helpers ──
@@ -595,12 +808,14 @@ export const AppProvider: React.FC<{
       addNugget, deleteNugget, updateNugget,
       updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
       addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+      deleteDocChangeLogEntry, deleteAllDocChangeLogEntries, renameDocChangeLogEntry, createLogCheckpoint,
     }),
     [
       nuggets, selectedNuggetId, selectedNugget, selectedDocumentId, selectedDocument,
       addNugget, deleteNugget, updateNugget,
       updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
       addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
+      deleteDocChangeLogEntry, deleteAllDocChangeLogEntries, renameDocChangeLogEntry, createLogCheckpoint,
     ],
   );
 
@@ -635,13 +850,11 @@ export const AppProvider: React.FC<{
 
   const remainderValue = useMemo<AppContextRemainder>(
     () => ({
-      isProjectsPanelOpen,
-      setIsProjectsPanelOpen,
       openProjectId,
       setOpenProjectId,
       initialTokenUsageTotals: initialState?.tokenUsageTotals,
     }),
-    [isProjectsPanelOpen, openProjectId, initialState?.tokenUsageTotals],
+    [openProjectId, initialState?.tokenUsageTotals],
   );
 
   return (

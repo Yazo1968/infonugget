@@ -1,9 +1,8 @@
 import { useState, useCallback } from 'react';
-import JSZip from 'jszip';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
-import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage } from '../types';
-import { findCard, findParentFolder, flattenCards, mapCards, mapCardById } from '../utils/cardUtils';
+import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage, AlbumImage } from '../types';
+import { findCard, flattenCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
 import { manageImagesApi } from '../utils/api';
 import { createLogger } from '../utils/logger';
@@ -47,6 +46,7 @@ export function useImageOperations({
   const [mismatchDialog, setMismatchDialog] = useState<{
     resolve: (decision: 'disable' | 'skip' | 'cancel') => void;
   } | null>(null);
+  const [albumActionPending, setAlbumActionPending] = useState<string | null>(null);
 
   // ── Zoom ──
 
@@ -58,7 +58,7 @@ export function useImageOperations({
         cardId: activeCard?.id || null,
         cardText: activeCard?.text || null,
         palette: settings.palette || null,
-        imageHistory: activeCard?.imageHistoryMap?.[activeLogicTab],
+        album: activeCard?.albumMap?.[activeLogicTab],
         aspectRatio: settings.aspectRatio,
         resolution: settings.resolution,
       });
@@ -73,7 +73,7 @@ export function useImageOperations({
   // ── Reference image ──
 
   const handleStampReference = useCallback(() => {
-    const cardUrl = activeCard?.cardUrlMap?.[activeLogicTab];
+    const cardUrl = activeCard?.activeImageMap?.[activeLogicTab];
     if (!cardUrl) return;
     setReferenceImage({ url: cardUrl, settings: { ...menuDraftOptions } });
     setUseReferenceImage(true);
@@ -96,12 +96,25 @@ export function useImageOperations({
       const card = findCard(selectedNugget.cards, cardId);
       const level = card?.detailLevel || activeLogicTab;
 
+      // Build updated album: deactivate existing, add modification as new active entry
+      const existingAlbum = card?.albumMap?.[level] || [];
+      const deactivated = existingAlbum.map((img) => ({ ...img, isActive: false }));
+      const newItem: AlbumImage = {
+        id: `mod-${Date.now()}`,
+        imageUrl: newImageUrl,
+        storagePath: '',
+        label: `Modification ${deactivated.filter((i) => i.label.startsWith('Modification')).length + 1}`,
+        isActive: true,
+        createdAt: Date.now(),
+        sortOrder: deactivated.length,
+      };
+
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
         cards: mapCardById(n.cards, cardId, (c) => ({
           ...c,
-          cardUrlMap: { ...(c.cardUrlMap || {}), [level]: newImageUrl },
-          imageHistoryMap: { ...(c.imageHistoryMap || {}), [level]: history },
+          albumMap: { ...(c.albumMap || {}), [level]: [...deactivated, newItem] },
+          activeImageMap: { ...(c.activeImageMap || {}), [level]: newImageUrl },
         })),
         lastModifiedAt: Date.now(),
       }));
@@ -109,161 +122,148 @@ export function useImageOperations({
     [selectedNugget, updateNugget, activeLogicTab],
   );
 
-  const handleDeleteCardImage = useCallback(() => {
-    if (!activeCardId || !selectedNugget) return;
-    const level = activeLogicTab;
-    const cardId = activeCardId;
-    const nuggetId = selectedNugget.id;
-    // Optimistic local update: clear current image, preserve history
-    updateNugget(nuggetId, (n) => ({
-      ...n,
-      cards: mapCardById(n.cards, cardId, (c) => {
-        const newUrlMap = { ...(c.cardUrlMap || {}) };
-        delete newUrlMap[level];
-        return { ...c, cardUrlMap: newUrlMap };
-      }),
-      lastModifiedAt: Date.now(),
-    }));
-    // Persist to backend via Edge Function
-    manageImagesApi({ action: 'delete_active', nuggetId, cardId, detailLevel: level }).catch((err) => {
-      log.warn('Failed to delete active image via API:', err);
-    });
-  }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
+  // ── Album browsing ──
 
-  const handleDeleteCardVersions = useCallback(() => {
-    if (!activeCardId || !selectedNugget) return;
-    const level = activeLogicTab;
-    const nuggetId = selectedNugget.id;
-    const cardId = activeCardId;
-    const cardUpdater = (c: Card) => {
-      const newUrlMap = { ...(c.cardUrlMap || {}) };
-      delete newUrlMap[level];
-      const newHistoryMap = { ...(c.imageHistoryMap || {}) };
-      delete newHistoryMap[level];
-      const newPlanMap = { ...(c.visualPlanMap || {}) };
-      delete newPlanMap[level];
-      const newPromptMap = { ...(c.lastPromptMap || {}) };
-      delete newPromptMap[level];
-      const newGenContentMap = { ...(c.lastGeneratedContentMap || {}) };
-      delete newGenContentMap[level];
-      return {
-        ...c,
-        cardUrlMap: newUrlMap,
-        imageHistoryMap: newHistoryMap,
-        visualPlanMap: newPlanMap,
-        lastPromptMap: newPromptMap,
-        lastGeneratedContentMap: newGenContentMap,
-      };
-    };
-    // Optimistic local update
-    updateNugget(nuggetId, (n) => ({
-      ...n,
-      cards: mapCardById(n.cards, cardId, cardUpdater),
-      lastModifiedAt: Date.now(),
-    }));
-    // Persist via Edge Function (deletes storage files + DB row)
-    manageImagesApi({ action: 'delete_versions', nuggetId, cardId, detailLevel: level }).catch((err) => {
-      log.warn('Failed to delete versions via API:', err);
-    });
-  }, [activeCardId, selectedNugget, activeLogicTab, updateNugget]);
+  const handleSetActiveImage = useCallback(
+    async (imageId: string) => {
+      if (!activeCardId || !selectedNugget) return;
+      const level = activeLogicTab;
+      const cardId = activeCardId;
+      const nuggetId = selectedNugget.id;
+      const card = findCard(selectedNugget.cards, cardId);
+      const album = card?.albumMap?.[level] || [];
+      const targetImage = album.find((img) => img.id === imageId);
+      if (!targetImage || targetImage.isActive) return;
 
-  const handleDeleteAllCardImages = useCallback(() => {
-    if (!selectedNugget) return;
-    const level = activeLogicTab;
-    const nuggetId = selectedNugget.id;
-    // Optimistic local update: clear all cards' image data at this level
-    updateNugget(nuggetId, (n) => ({
-      ...n,
-      cards: mapCards(n.cards, (c) => {
-        const newUrlMap = { ...(c.cardUrlMap || {}) };
-        delete newUrlMap[level];
-        const newHistoryMap = { ...(c.imageHistoryMap || {}) };
-        delete newHistoryMap[level];
-        const newPlanMap = { ...(c.visualPlanMap || {}) };
-        delete newPlanMap[level];
-        const newPromptMap = { ...(c.lastPromptMap || {}) };
-        delete newPromptMap[level];
-        const newGenContentMap = { ...(c.lastGeneratedContentMap || {}) };
-        delete newGenContentMap[level];
-        return {
+      // Optimistic: toggle isActive flags + update activeImageMap
+      updateNugget(nuggetId, (n) => ({
+        ...n,
+        cards: mapCardById(n.cards, cardId, (c) => ({
           ...c,
-          cardUrlMap: newUrlMap,
-          imageHistoryMap: newHistoryMap,
-          visualPlanMap: newPlanMap,
-          lastPromptMap: newPromptMap,
-          lastGeneratedContentMap: newGenContentMap,
-        };
-      }),
-      lastModifiedAt: Date.now(),
-    }));
-    // Persist via Edge Function (deletes all storage files + DB rows at this level)
-    manageImagesApi({ action: 'delete_all', nuggetId, detailLevel: level }).catch((err) => {
-      log.warn('Failed to delete all images via API:', err);
-    });
-  }, [selectedNugget, activeLogicTab, updateNugget]);
+          albumMap: {
+            ...(c.albumMap || {}),
+            [level]: (c.albumMap?.[level] || []).map((img) => ({
+              ...img,
+              isActive: img.id === imageId,
+            })),
+          },
+          activeImageMap: { ...(c.activeImageMap || {}), [level]: targetImage.imageUrl },
+        })),
+        lastModifiedAt: Date.now(),
+      }));
 
-  // ── Downloads ──
+      try {
+        const response = await manageImagesApi({
+          action: 'set_active',
+          nuggetId,
+          cardId,
+          detailLevel: level,
+          imageId,
+        });
+        // Reconcile with server response (fresh signed URLs)
+        if (response.album) {
+          updateNugget(nuggetId, (n) => ({
+            ...n,
+            cards: mapCardById(n.cards, cardId, (c) => ({
+              ...c,
+              albumMap: { ...(c.albumMap || {}), [level]: response.album! },
+              activeImageMap: {
+                ...(c.activeImageMap || {}),
+                [level]: response.activeImageUrl || targetImage.imageUrl,
+              },
+            })),
+          }));
+        }
+      } catch (err) {
+        log.warn('Failed to set active image via API:', err);
+      }
+    },
+    [activeCardId, selectedNugget, activeLogicTab, updateNugget],
+  );
 
-  const downloadDataUrl = useCallback((dataUrl: string, filename: string) => {
-    const a = document.createElement('a');
-    a.href = dataUrl;
-    a.download = filename;
-    a.click();
-  }, []);
+  const handleDeleteAlbumImage = useCallback(
+    async (imageId: string) => {
+      if (!activeCardId || !selectedNugget) return;
+      const level = activeLogicTab;
+      const cardId = activeCardId;
+      const nuggetId = selectedNugget.id;
+      const card = findCard(selectedNugget.cards, cardId);
+      const album = card?.albumMap?.[level] || [];
+      const targetImage = album.find((img) => img.id === imageId);
+      if (!targetImage) return;
 
-  const handleDownloadImage = useCallback(() => {
-    const url = activeCard?.cardUrlMap?.[activeLogicTab];
-    if (!url) return;
-    const slug = activeCard!.text
-      .replace(/[^a-zA-Z0-9]+/g, '-')
-      .replace(/^-|-$/g, '')
-      .toLowerCase()
-      .slice(0, 40);
-    downloadDataUrl(url, `${slug}-${activeLogicTab.toLowerCase()}.png`);
-  }, [activeCard, activeLogicTab, downloadDataUrl]);
+      setAlbumActionPending(imageId);
 
-  const handleDownloadSelectedImages = useCallback(async () => {
-    if (!selectedNugget || !activeCardId) return;
+      // Optimistic: remove image, auto-promote if was active
+      const remaining = album.filter((img) => img.id !== imageId);
+      let newActiveUrl: string | undefined;
+      if (targetImage.isActive && remaining.length > 0) {
+        const sorted = [...remaining].sort((a, b) => b.sortOrder - a.sortOrder);
+        sorted[0] = { ...sorted[0], isActive: true };
+        newActiveUrl = sorted[0].imageUrl;
+        // Update remaining array with the promoted item
+        const promotedId = sorted[0].id;
+        remaining.forEach((img, i) => {
+          if (img.id === promotedId) remaining[i] = { ...img, isActive: true };
+        });
+      } else if (!targetImage.isActive) {
+        newActiveUrl = card?.activeImageMap?.[level];
+      }
 
-    // Find the folder containing the active card
-    const parentFolder = findParentFolder(selectedNugget.cards, activeCardId);
-    if (!parentFolder) {
-      // Card is at root level — fall back to single card download
-      handleDownloadImage();
-      return;
-    }
+      updateNugget(nuggetId, (n) => ({
+        ...n,
+        cards: mapCardById(n.cards, cardId, (c) => {
+          const newAlbumMap = { ...(c.albumMap || {}) };
+          if (remaining.length > 0) {
+            newAlbumMap[level] = remaining;
+          } else {
+            delete newAlbumMap[level];
+          }
+          const newActiveMap = { ...(c.activeImageMap || {}) };
+          if (newActiveUrl) {
+            newActiveMap[level] = newActiveUrl;
+          } else if (remaining.length === 0) {
+            delete newActiveMap[level];
+          }
+          return { ...c, albumMap: newAlbumMap, activeImageMap: newActiveMap };
+        }),
+        lastModifiedAt: Date.now(),
+      }));
 
-    // Collect all cards in the folder that have an image at the current detail level
-    const cardsWithImages = parentFolder.cards.filter(
-      (c) => c.cardUrlMap?.[activeLogicTab],
-    );
-    if (cardsWithImages.length === 0) return;
+      try {
+        const response = await manageImagesApi({
+          action: 'delete_image',
+          nuggetId,
+          cardId,
+          detailLevel: level,
+          imageId,
+        });
+        // Reconcile with server response
+        if (response.album) {
+          updateNugget(nuggetId, (n) => ({
+            ...n,
+            cards: mapCardById(n.cards, cardId, (c) => ({
+              ...c,
+              albumMap: {
+                ...(c.albumMap || {}),
+                [level]: response.album!.length > 0 ? response.album! : undefined as any,
+              },
+              activeImageMap: {
+                ...(c.activeImageMap || {}),
+                [level]: response.activeImageUrl ?? '',
+              },
+            })),
+          }));
+        }
+      } catch (err) {
+        log.warn('Failed to delete album image via API:', err);
+      } finally {
+        setAlbumActionPending(null);
+      }
+    },
+    [activeCardId, selectedNugget, activeLogicTab, updateNugget],
+  );
 
-    const slugify = (text: string) =>
-      text
-        .replace(/[^a-zA-Z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .toLowerCase()
-        .slice(0, 40);
-
-    // Build zip
-    const zip = new JSZip();
-    for (const card of cardsWithImages) {
-      const dataUrl = card.cardUrlMap![activeLogicTab]!;
-      // Strip "data:image/png;base64," prefix to get raw base64
-      const base64 = dataUrl.replace(/^data:image\/\w+;base64,/, '');
-      const filename = `${slugify(card.text)}-${activeLogicTab.toLowerCase()}.png`;
-      zip.file(filename, base64, { base64: true });
-    }
-
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const blobUrl = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = blobUrl;
-    a.download = `${slugify(parentFolder.name)}.zip`;
-    a.click();
-    URL.revokeObjectURL(blobUrl);
-  }, [selectedNugget, activeCardId, activeLogicTab, handleDownloadImage]);
 
   // ── Generation wrappers (mismatch detection) ──
 
@@ -314,12 +314,10 @@ export function useImageOperations({
     handleDeleteReference,
     // Card image CRUD
     handleInsightsImageModified,
-    handleDeleteCardImage,
-    handleDeleteCardVersions,
-    handleDeleteAllCardImages,
-    // Downloads
-    handleDownloadImage,
-    handleDownloadSelectedImages,
+    // Album browsing
+    handleSetActiveImage,
+    handleDeleteAlbumImage,
+    albumActionPending,
     // Generation wrappers
     wrappedGenerateCard,
     wrappedExecuteBatch,

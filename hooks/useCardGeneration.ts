@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { useAbortController } from './useAbortController';
-import { Card, DetailLevel, StylingOptions, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { Card, DetailLevel, StylingOptions, AlbumImage, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard, cleanCardTitle } from '../utils/cardUtils';
 import { callClaude, uploadToFilesAPI } from '../utils/ai';
@@ -82,7 +82,7 @@ export function useCardGeneration(
     if (!selectedNugget) return false;
     const allCards = flattenCards(selectedNugget.cards);
     const card = allCards[0];
-    if (!card?.cardUrlMap?.[activeLogicTab]) return false;
+    if (!card?.activeImageMap?.[activeLogicTab]) return false;
     if (!card.lastGeneratedContentMap?.[activeLogicTab]) return false;
     const content = card.synthesisMap?.[card.detailLevel || 'Standard'] || '';
     return content !== card.lastGeneratedContentMap[activeLogicTab];
@@ -326,7 +326,7 @@ export function useCardGeneration(
         const response = await generateCardApi({
           nuggetId: selectedNugget!.id,
           cardId: card.id,
-          cardTitle: card.text,
+          cardTitle: cleanCardTitle(card.text),
           detailLevel: currentLevel as DetailLevel,
           settings,
           subject: selectedNugget?.subject,
@@ -337,32 +337,28 @@ export function useCardGeneration(
           skipSynthesis: true, // Content already synthesized
         }, signal);
 
-        // Update local state with the server response (signed URL, not data URL)
+        // Update local state with the server response (album model)
+        // The server already wrote albumMap/activeImageMap to the nugget JSONB,
+        // but we update in-memory state so the UI reflects changes immediately.
         updateNuggetCard(card.id, (c) => {
-          const existingHistory = c.imageHistoryMap?.[currentLevel] || [];
-          const prevUrl = c.cardUrlMap?.[currentLevel];
-          const updatedHistory = [...existingHistory];
-          if (
-            prevUrl &&
-            (updatedHistory.length === 0 || updatedHistory[updatedHistory.length - 1].imageUrl !== prevUrl)
-          ) {
-            updatedHistory.push({
-              imageUrl: prevUrl,
-              timestamp: Date.now(),
-              label: updatedHistory.length === 0 ? 'Original' : `Generation ${updatedHistory.length}`,
-            });
-          }
-          updatedHistory.push({
+          const existingAlbum = c.albumMap?.[currentLevel] || [];
+          // Deactivate existing items
+          const deactivated = existingAlbum.map((img) => ({ ...img, isActive: false }));
+          // Append the new image as active
+          const newAlbumItem: AlbumImage = {
+            id: response.imageId,
             imageUrl: response.imageUrl,
-            timestamp: Date.now(),
-            label: `Generation ${updatedHistory.length + 1}`,
-          });
-          while (updatedHistory.length > 10) updatedHistory.shift();
+            storagePath: response.storagePath,
+            label: `Generation ${deactivated.length + 1}`,
+            isActive: true,
+            createdAt: Date.now(),
+            sortOrder: deactivated.length,
+          };
           return {
             ...c,
-            cardUrlMap: { ...(c.cardUrlMap || {}), [currentLevel]: response.imageUrl },
+            albumMap: { ...(c.albumMap || {}), [currentLevel]: [...deactivated, newAlbumItem] },
+            activeImageMap: { ...(c.activeImageMap || {}), [currentLevel]: response.imageUrl },
             isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
-            imageHistoryMap: { ...(c.imageHistoryMap || {}), [currentLevel]: updatedHistory },
             lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: response.synthesisContent },
             visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: response.visualPlan },
           };
@@ -448,15 +444,28 @@ export function useCardGeneration(
   // ── Image modification handler ──
 
   const handleImageModified = useCallback(
-    (cardId: string, newImageUrl: string, history: ImageVersion[]) => {
+    (cardId: string, newImageUrl: string, history: import('../types').ImageVersion[]) => {
       const card = findCard(selectedNugget?.cards ?? [], cardId);
       const level = card?.detailLevel || 'Standard';
       const currentContent = card?.synthesisMap?.[level] || '';
 
+      // Build updated album: deactivate existing, add modification as new active entry
+      const existingAlbum = card?.albumMap?.[level] || [];
+      const deactivated = existingAlbum.map((img) => ({ ...img, isActive: false }));
+      const newItem: AlbumImage = {
+        id: `mod-${Date.now()}`,
+        imageUrl: newImageUrl,
+        storagePath: '', // Modification results are local until next server roundtrip
+        label: `Modification ${deactivated.filter((i) => i.label.startsWith('Modification')).length + 1}`,
+        isActive: true,
+        createdAt: Date.now(),
+        sortOrder: deactivated.length,
+      };
+
       updateNuggetCard(cardId, (c) => ({
         ...c,
-        cardUrlMap: { ...(c.cardUrlMap || {}), [level]: newImageUrl },
-        imageHistoryMap: { ...(c.imageHistoryMap || {}), [level]: history },
+        albumMap: { ...(c.albumMap || {}), [level]: [...deactivated, newItem] },
+        activeImageMap: { ...(c.activeImageMap || {}), [level]: newImageUrl },
         lastGeneratedContentMap: {
           ...(c.lastGeneratedContentMap || {}),
           [level]: currentContent || c.lastGeneratedContentMap?.[level],

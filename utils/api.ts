@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase';
 import { createLogger } from './logger';
-import { StylingOptions, DetailLevel, UploadedFile, QualityReport, BookmarkNode } from '../types';
+import { StylingOptions, DetailLevel, UploadedFile, QualityReport, DQAFReport, BookmarkNode, AlbumImage } from '../types';
 
 const log = createLogger('API');
 
@@ -17,6 +17,7 @@ const GENERATE_CARD_URL = `${SUPABASE_URL}/functions/v1/generate-card`;
 const MANAGE_IMAGES_URL = `${SUPABASE_URL}/functions/v1/manage-images`;
 const CHAT_MESSAGE_URL = `${SUPABASE_URL}/functions/v1/chat-message`;
 const AUTO_DECK_URL = `${SUPABASE_URL}/functions/v1/auto-deck`;
+const DOCUMENT_QUALITY_URL = `${SUPABASE_URL}/functions/v1/document-quality`;
 
 /** Get a fresh auth token for Edge Function calls. */
 async function getAuthToken(): Promise<string> {
@@ -73,6 +74,7 @@ export interface GenerateCardRequest {
 
 export interface GenerateCardResponse {
   success: boolean;
+  imageId: string;
   imageUrl: string;
   storagePath: string;
   synthesisContent: string;
@@ -115,18 +117,17 @@ export async function generateCardApi(
 // ─────────────────────────────────────────────────────────────────
 
 export interface ManageImagesRequest {
-  action: 'delete_active' | 'delete_versions' | 'delete_all' | 'restore_version' | 'get_history';
+  action: 'set_active' | 'delete_image' | 'delete_album' | 'delete_card_albums' | 'delete_all_albums' | 'get_album';
   nuggetId: string;
   cardId?: string;
-  detailLevel: string;
-  versionIndex?: number;
+  detailLevel?: string;
+  imageId?: string;
 }
 
 export interface ManageImagesResponse {
   success?: boolean;
-  imageUrl?: string;
-  currentUrl?: string | null;
-  history?: Array<{ imageUrl: string; timestamp: number; label: string }>;
+  album?: AlbumImage[];
+  activeImageUrl?: string | null;
   deletedCount?: number;
 }
 
@@ -179,7 +180,7 @@ export interface ChatMessageRequest {
   detailLevel?: DetailLevel;
   conversationHistory?: ChatMessageHistoryEntry[];
   subject?: string;
-  qualityReport?: QualityReport;
+  qualityReport?: QualityReport | DQAFReport;
   documents: ChatMessageDocument[];
 }
 
@@ -230,7 +231,7 @@ export interface AutoDeckRequest {
   briefing?: import('../types').AutoDeckBriefing;
   lod?: import('../types').AutoDeckLod;
   subject?: string;
-  qualityReport?: QualityReport;
+  qualityReport?: QualityReport | DQAFReport;
   documents?: Array<{
     id: string;
     name: string;
@@ -290,6 +291,62 @@ export async function autoDeckApi(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(body.error || `auto-deck failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// document-quality API (DQAF v2)
+// ─────────────────────────────────────────────────────────────────
+
+export interface DocumentQualityDocument {
+  id: string;
+  name: string;
+  fileId?: string;
+  content?: string;
+  sourceType?: string;
+  bookmarks?: Array<{ level: number; text: string; page?: number; wordCount?: number }>;
+}
+
+export interface DocumentQualityRequest {
+  documents: DocumentQualityDocument[];
+  engagementPurpose: string;
+  /** Optional nugget ID — used server-side to update last_api_call_at for Files API cleanup. */
+  nuggetId?: string;
+}
+
+export interface DocumentQualityResponse {
+  success: boolean;
+  report: DQAFReport;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    cacheReadTokens: number;
+    cacheWriteTokens: number;
+  };
+}
+
+/**
+ * Call the document-quality Edge Function.
+ * Runs the full 3-stage DQAF assessment: relevance profiling, structural checks, KPI computation.
+ * Two Claude calls internally (per-doc + cross-doc), KPIs computed server-side.
+ */
+export async function documentQualityApi(
+  request: DocumentQualityRequest,
+  signal?: AbortSignal,
+): Promise<DocumentQualityResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(DOCUMENT_QUALITY_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `document-quality failed: ${res.status}`);
   }
 
   return res.json();

@@ -1,37 +1,39 @@
 import { useState, useCallback, useMemo } from 'react';
 import { CLAUDE_MODEL } from '../utils/constants';
-import { Nugget, QualityReport, TopicCluster, QualityConflict } from '../types';
-import { callClaude } from '../utils/ai';
-import { buildQualityCheckPrompt } from '../utils/prompts/qualityCheck';
-import { buildTocSystemPrompt } from '../utils/pdfBookmarks';
+import { Nugget, DQAFReport } from '../types';
+import { documentQualityApi } from '../utils/api';
 import { resolveEnabledDocs } from '../utils/documentResolution';
+import { useAbortController } from './useAbortController';
 import { RecordUsageFn } from './useTokenUsage';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('QualityCheck');
 
 // ─────────────────────────────────────────────────────────────────
-// Document Quality Check Hook
+// Document Quality Assessment Framework (DQAF) Hook
 // ─────────────────────────────────────────────────────────────────
-// Manages the quality check lifecycle: amber detection, AI analysis,
-// report storage, and dismiss/proceed workflow.
+// Manages the DQAF assessment lifecycle:
+//   - Engagement purpose validation
+//   - Edge Function call (3-stage assessment)
+//   - Report storage on nugget
+//   - Effective status computation (green/amber/red/stale/null)
 // ─────────────────────────────────────────────────────────────────
 
-export type QualityStatus = 'green' | 'amber' | 'red' | null;
+export type QualityStatus = 'green' | 'amber' | 'red' | 'stale' | null;
 
 interface UseDocumentQualityCheckResult {
-  /** The full quality report (if any) */
-  qualityReport: QualityReport | undefined;
-  /** Computed 3-state: green | amber | red | null (no docs) */
+  /** The full DQAF report (if any) */
+  dqafReport: DQAFReport | undefined;
+  /** Computed 5-state: green | amber | red | stale | null (no docs) */
   effectiveStatus: QualityStatus;
-  /** Whether an AI check is currently running */
+  /** Whether an assessment is currently running */
   isChecking: boolean;
   /** Error message from the last failed check (cleared on next run) */
   checkError: string | null;
-  /** Trigger the AI quality check */
-  runQualityCheck: () => Promise<void>;
-  /** Dismiss the report warnings and proceed */
-  dismissReport: () => void;
+  /** Trigger the DQAF assessment (requires engagement purpose) */
+  runQualityCheck: (engagementPurpose: string) => Promise<void>;
+  /** Abort a running assessment */
+  abortQualityCheck: () => void;
 }
 
 export function useDocumentQualityCheck(
@@ -41,8 +43,9 @@ export function useDocumentQualityCheck(
 ): UseDocumentQualityCheckResult {
   const [isChecking, setIsChecking] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const { create: createAbort, clear: clearAbort, isAbortError, abort } = useAbortController();
 
-  const qualityReport = selectedNugget?.qualityReport;
+  const dqafReport = selectedNugget?.dqafReport;
 
   // Compute effective status from report + docChangeLog
   const effectiveStatus = useMemo((): QualityStatus => {
@@ -50,223 +53,124 @@ export function useDocumentQualityCheck(
 
     const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
     if (enabledDocs.length === 0) return null;
-    if (enabledDocs.length === 1) return 'green';
 
-    if (!qualityReport) return 'amber'; // never checked
+    // Check for legacy report (has qualityReport but no dqafReport) → treat as stale
+    if (!dqafReport && selectedNugget.qualityReport) return 'stale';
 
-    const currentLogLength = selectedNugget.docChangeLog?.length ?? 0;
-    const lastCheckIndex = qualityReport.docChangeLogIndexAtCheck ?? 0;
-    if (currentLogLength > lastCheckIndex) return 'amber'; // docs changed since last check
+    // Never checked
+    if (!dqafReport) return 'stale';
 
-    return qualityReport.status;
-  }, [selectedNugget, qualityReport]);
+    // Docs changed since last assessment
+    const currentMaxSeq = selectedNugget.sourcesLogStats?.rawEventSeq ?? (selectedNugget.docChangeLog?.length ?? 0);
+    const lastCheckSeq = dqafReport.docChangeLogSeqAtCheck ?? 0;
+    if (currentMaxSeq > lastCheckSeq) return 'stale';
 
-  const runQualityCheck = useCallback(async () => {
+    // Map verdict to status
+    switch (dqafReport.overallVerdict) {
+      case 'ready': return 'green';
+      case 'conditional': return 'amber';
+      case 'not_ready': return 'red';
+      default: return 'stale';
+    }
+  }, [selectedNugget, dqafReport]);
+
+  const runQualityCheck = useCallback(async (engagementPurpose: string) => {
     if (!selectedNugget) return;
-
-    const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
-
-    // Single doc or no docs → auto-green
-    if (enabledDocs.length <= 1) {
-      const report: QualityReport = {
-        status: 'green',
-        clusters: enabledDocs.length === 1
-          ? [{
-              subject: enabledDocs[0].name,
-              description: 'Single document — no cross-document analysis needed.',
-              documentIds: [enabledDocs[0].id],
-              isolated: false,
-            }]
-          : [],
-        conflicts: [],
-        hasUnrelatedDocs: false,
-        dismissed: false,
-        lastCheckTimestamp: Date.now(),
-        docChangeLogIndexAtCheck: selectedNugget.docChangeLog?.length ?? 0,
-      };
-      updateNugget(selectedNugget.id, (n) => ({ ...n, qualityReport: report }));
+    if (!engagementPurpose.trim()) {
+      setCheckError('An engagement purpose statement is required to run the assessment.');
       return;
     }
+
+    const enabledDocs = resolveEnabledDocs(selectedNugget.documents);
+    if (enabledDocs.length === 0) return;
 
     setIsChecking(true);
     setCheckError(null);
 
+    const controller = createAbort();
+
     try {
-      // Build system blocks
-      const systemPrompt = buildQualityCheckPrompt(enabledDocs.map((d) => d.name));
+      // Map documents for the API — flatten BookmarkNode[] to flat structure
+      const documents = enabledDocs.map((d) => ({
+        id: d.id,
+        name: d.name,
+        fileId: d.fileId,
+        content: d.content,
+        sourceType: d.sourceType,
+        bookmarks: d.bookmarks?.map((b) => ({
+          level: b.level,
+          text: b.title,
+          page: b.page,
+          wordCount: b.wordCount,
+        })),
+      }));
 
-      // Always use truncated text summaries — never Files API references.
-      // Documents this large (4M+ tokens) exceed the 200K context window regardless
-      // of delivery method. The quality check only needs topic-level understanding.
-      const MAX_CHARS_PER_DOC = 12_000;
+      log.info(`Running DQAF assessment for ${documents.length} document(s)`);
 
-      const systemBlocks: Array<{ text: string; cache: boolean }> = [
-        { text: systemPrompt, cache: false },
-      ];
+      const response = await documentQualityApi(
+        { documents, engagementPurpose: engagementPurpose.trim(), nuggetId: selectedNugget.id },
+        controller.signal,
+      );
 
-      const docSections: string[] = [];
-      for (const d of enabledDocs) {
-        let excerpt: string | null = null;
-
-        if (d.content) {
-          excerpt = d.content.length > MAX_CHARS_PER_DOC
-            ? d.content.slice(0, MAX_CHARS_PER_DOC) + '\n\n[... document truncated for analysis ...]'
-            : d.content;
-        } else if (d.sourceType === 'native-pdf' && d.bookmarks?.length) {
-          excerpt = buildTocSystemPrompt(d.bookmarks, d.name);
-        }
-
-        if (excerpt) {
-          docSections.push(`--- Document: ${d.name} ---\n${excerpt}\n--- End Document ---`);
-        } else {
-          docSections.push(`--- Document: ${d.name} ---\n[No content preview available]\n--- End Document ---`);
-        }
+      // Record token usage
+      if (response.usage) {
+        recordUsage?.({
+          provider: 'claude',
+          model: CLAUDE_MODEL,
+          inputTokens: response.usage.inputTokens ?? 0,
+          outputTokens: response.usage.outputTokens ?? 0,
+          cacheReadTokens: response.usage.cacheReadTokens ?? 0,
+          cacheWriteTokens: response.usage.cacheWriteTokens ?? 0,
+        });
       }
 
-      if (docSections.length > 0) {
-        systemBlocks.push({ text: `Documents:\n\n${docSections.join('\n\n')}`, cache: true });
-      }
+      const currentMaxSeq = selectedNugget.sourcesLogStats?.rawEventSeq ?? (selectedNugget.docChangeLog?.length ?? 0);
 
-      // Build messages — simple text request, no Files API references
-      const messages = [{
-        role: 'user' as const,
-        content: 'Analyze the documents provided and return the quality report JSON as specified in your instructions.',
-      }];
-
-      const { text, usage } = await callClaude('', {
-        systemBlocks,
-        messages,
-        maxTokens: 4096,
-      });
-
-      recordUsage?.({
-        provider: 'claude',
-        model: CLAUDE_MODEL,
-        inputTokens: usage?.input_tokens ?? 0,
-        outputTokens: usage?.output_tokens ?? 0,
-        cacheReadTokens: usage?.cache_read_input_tokens ?? 0,
-        cacheWriteTokens: usage?.cache_creation_input_tokens ?? 0,
-      });
-
-      // Parse the JSON response
-      const parsed = parseQualityResponse(text, enabledDocs);
-      const currentLogLength = selectedNugget.docChangeLog?.length ?? 0;
-
-      const hasIssues = parsed.hasUnrelatedDocs || parsed.conflicts.length > 0;
-
-      const report: QualityReport = {
-        status: hasIssues ? 'red' : 'green',
-        clusters: parsed.clusters,
-        conflicts: parsed.conflicts,
-        hasUnrelatedDocs: parsed.hasUnrelatedDocs,
-        dismissed: false,
+      // Stamp the report with client-side metadata
+      const report: DQAFReport = {
+        ...response.report,
         lastCheckTimestamp: Date.now(),
-        docChangeLogIndexAtCheck: currentLogLength,
+        docChangeLogSeqAtCheck: currentMaxSeq,
+        // Map verdict → legacy status for backward compat (FootnoteBar, PanelTabBar)
+        status: response.report.overallVerdict === 'ready'
+          ? 'green'
+          : response.report.overallVerdict === 'conditional'
+            ? 'amber'
+            : 'red',
       };
 
-      updateNugget(selectedNugget.id, (n) => ({ ...n, qualityReport: report }));
+      updateNugget(selectedNugget.id, (n) => ({
+        ...n,
+        dqafReport: report,
+        engagementPurpose: engagementPurpose.trim(),
+      }));
+
+      log.info(`DQAF assessment complete: verdict=${report.overallVerdict}, docs=${report.documentCountSubmitted}`);
     } catch (err) {
-      log.error('Analysis failed:', err);
+      if (isAbortError(err)) {
+        log.info('DQAF assessment aborted by user');
+        return;
+      }
+      log.error('DQAF assessment failed:', err);
       const msg = err instanceof Error ? err.message : String(err);
       setCheckError(msg);
     } finally {
+      clearAbort();
       setIsChecking(false);
     }
-  }, [selectedNugget, updateNugget, recordUsage]);
+  }, [selectedNugget, updateNugget, recordUsage, createAbort, clearAbort, isAbortError]);
 
-  const dismissReport = useCallback(() => {
-    if (!selectedNugget || !qualityReport) return;
-    updateNugget(selectedNugget.id, (n) => ({
-      ...n,
-      qualityReport: n.qualityReport
-        ? { ...n.qualityReport, dismissed: true }
-        : undefined,
-    }));
-  }, [selectedNugget, qualityReport, updateNugget]);
+  const abortQualityCheck = useCallback(() => {
+    abort();
+    setIsChecking(false);
+  }, [abort]);
 
   return {
-    qualityReport,
+    dqafReport,
     effectiveStatus,
     isChecking,
     checkError,
     runQualityCheck,
-    dismissReport,
+    abortQualityCheck,
   };
-}
-
-// ─────────────────────────────────────────────────────────────────
-// Response Parser
-// ─────────────────────────────────────────────────────────────────
-
-interface ParsedQualityResult {
-  clusters: TopicCluster[];
-  conflicts: QualityConflict[];
-  hasUnrelatedDocs: boolean;
-}
-
-function parseQualityResponse(
-  text: string,
-  enabledDocs: Array<{ id: string; name: string }>,
-): ParsedQualityResult {
-  // Extract JSON from the response — handles fences, preamble text, etc.
-  let jsonStr = text.trim();
-
-  // Try extracting from markdown fences first (```json ... ``` or ``` ... ```)
-  const fenceMatch = jsonStr.match(/```(?:json)?\s*\n?([\s\S]*?)\n?\s*```/);
-  if (fenceMatch) {
-    jsonStr = fenceMatch[1].trim();
-  } else {
-    // Try to find a top-level JSON object anywhere in the text
-    const braceStart = jsonStr.indexOf('{');
-    if (braceStart > 0) {
-      jsonStr = jsonStr.slice(braceStart);
-    }
-    // Trim trailing text after the last closing brace
-    const braceEnd = jsonStr.lastIndexOf('}');
-    if (braceEnd >= 0 && braceEnd < jsonStr.length - 1) {
-      jsonStr = jsonStr.slice(0, braceEnd + 1);
-    }
-  }
-
-  const raw = JSON.parse(jsonStr);
-
-  // Build name → id lookup
-  const nameToId = new Map<string, string>();
-  for (const d of enabledDocs) {
-    nameToId.set(d.name.toLowerCase(), d.id);
-  }
-
-  const findDocId = (name: string): string => {
-    const id = nameToId.get(name.toLowerCase());
-    if (id) return id;
-    // Fuzzy: try partial match
-    for (const [key, val] of nameToId) {
-      if (key.includes(name.toLowerCase()) || name.toLowerCase().includes(key)) return val;
-    }
-    return name; // fallback to name as ID
-  };
-
-  // Parse clusters
-  const clusters: TopicCluster[] = (raw.clusters || []).map((c: any) => ({
-    subject: c.subject || 'Unknown',
-    description: c.description || '',
-    documentIds: (c.documentNames || []).map((n: string) => findDocId(n)),
-    isolated: !!c.isolated,
-  }));
-
-  // Parse conflicts
-  const conflicts: QualityConflict[] = (raw.conflicts || []).map((c: any) => ({
-    description: c.description || '',
-    entries: (c.entries || []).map((e: any) => ({
-      documentId: findDocId(e.documentName || ''),
-      documentName: e.documentName || '',
-      claim: e.claim || '',
-      location: e.location || '',
-    })),
-    recommendation: c.recommendation || '',
-  }));
-
-  const hasUnrelatedDocs = clusters.some((c) => c.isolated);
-
-  return { clusters, conflicts, hasUnrelatedDocs };
 }

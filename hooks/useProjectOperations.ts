@@ -72,8 +72,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
   const [showProjectCreation, setShowProjectCreation] = useState(false);
   const [projectCreationChainToNugget, setProjectCreationChainToNugget] = useState(false);
 
-  // ── Subject edit modal state ──
-  const [subjectEditNuggetId, setSubjectEditNuggetId] = useState<string | null>(null);
+  // ── Subject regeneration state ──
   const [isRegeneratingSubject, setIsRegeneratingSubject] = useState(false);
 
   // ── Subject auto-generation on first upload ──
@@ -282,7 +281,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
               addToast({
                 type: 'info',
                 message: `Subject: ${subject}`,
-                detail: 'Edit via nugget menu > Subject',
+                detail: 'Edit via Sources Manager > Subject',
                 duration: 8000,
               });
             } catch (err) {
@@ -290,7 +289,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
               addToast({
                 type: 'warning',
                 message: 'Could not auto-generate subject',
-                detail: 'You can set it manually via the nugget menu > Subject.',
+                detail: 'You can set it manually via Sources Manager > Subject.',
                 duration: 8000,
               });
             }
@@ -500,7 +499,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
 
   const handleSaveSubject = useCallback(
     (nuggetId: string, subject: string) => {
-      updateNugget(nuggetId, (n) => ({ ...n, subject, lastModifiedAt: Date.now() }));
+      updateNugget(nuggetId, (n) => ({ ...n, subject, subjectReviewNeeded: false, lastModifiedAt: Date.now() }));
     },
     [updateNugget],
   );
@@ -521,7 +520,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
       setIsRegeneratingSubject(true);
       try {
         const subject = await generateSubject(readyDocs, recordUsage);
-        updateNugget(nuggetId, (n) => ({ ...n, subject, lastModifiedAt: Date.now() }));
+        updateNugget(nuggetId, (n) => ({ ...n, subject, subjectReviewNeeded: false, lastModifiedAt: Date.now() }));
         addToast({ type: 'success', message: 'Subject regenerated successfully.', duration: 4000 });
       } catch (err) {
         log.warn('Subject regeneration failed:', err);
@@ -581,7 +580,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         addToast({
           type: 'info',
           message: `Subject: ${subject}`,
-          detail: 'Edit via nugget menu > Subject',
+          detail: 'Edit via Sources Manager > Subject',
           duration: 8000,
         });
       } catch (err) {
@@ -589,7 +588,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         addToast({
           type: 'warning',
           message: 'Could not auto-generate subject',
-          detail: 'You can set it manually via the nugget menu > Subject.',
+          detail: 'You can set it manually via Sources Manager > Subject.',
           duration: 8000,
         });
       }
@@ -607,9 +606,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
     setShowProjectCreation,
     projectCreationChainToNugget,
     setProjectCreationChainToNugget,
-    // Subject edit modal state
-    subjectEditNuggetId,
-    setSubjectEditNuggetId,
+    // Subject regeneration state
     isRegeneratingSubject,
     // Callbacks
     handleCreateNugget,

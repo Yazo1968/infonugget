@@ -5,27 +5,30 @@ import {
   AutoDeckLod,
   AutoDeckSession,
   AutoDeckStatus,
+  BriefingSuggestions,
   Card,
   ParsedPlan,
   ReviewCardState,
+  UploadedFile,
 } from '../types';
-import { flattenCards } from '../utils/cardUtils';
+import { flattenCards, cardNamesInScope } from '../utils/cardUtils';
 import { CLAUDE_MODEL } from '../utils/constants';
 import { RecordUsageFn } from './useTokenUsage';
 import {
   parsePlannerResponse,
   parseFinalizerResponse,
   parseProducerResponse,
+  parseBriefingMarkdownResponse,
   ProducedCard,
 } from '../utils/autoDeck/parsers';
-import { AUTO_DECK_LOD_LEVELS, AUTO_DECK_LIMITS, countWords } from '../utils/autoDeck/constants';
+import { AUTO_DECK_LOD_LEVELS, AUTO_DECK_LIMITS, BRIEFING_SUGGESTION_COUNT, BRIEFING_LIMITS, countWords } from '../utils/autoDeck/constants';
 import { getUniqueName } from '../utils/naming';
 import { estimateTokens } from '../utils/tokenEstimation';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
 import { useAbortController } from './useAbortController';
 import { resolveOrderedDocs } from '../utils/documentResolution';
-import { autoDeckApi } from '../utils/api';
+import { autoDeckApi, chatMessageApi, ChatMessageDocument } from '../utils/api';
 
 const log = createLogger('AutoDeck');
 
@@ -49,12 +52,13 @@ export function useAutoDeck(
     removePlaceholderCard: (cardId: string, detailLevel: import('../types').DetailLevel) => void;
   },
 ) {
-  const { selectedNugget, updateNugget } = useNuggetContext();
+  const { selectedNugget, updateNugget, createLogCheckpoint } = useNuggetContext();
 
   const { addToast } = useToast();
 
   const [session, setSession] = useState<AutoDeckSession | null>(null);
   const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();
+  const { create: createSuggestAbort, abort: abortSuggest, clear: clearSuggestAbort, isAbortError: isSuggestAbortError } = useAbortController();
 
   // ── Helpers ──
 
@@ -86,6 +90,9 @@ export function useAutoDeck(
         addToast({ message: 'No documents selected for Auto-Deck.', type: 'error' });
         return;
       }
+
+      // Create a Sources Log checkpoint — captures document state at Auto-Deck start
+      createLogCheckpoint('auto_deck');
 
       // Create new session
       const sessionId = `autodeck-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
@@ -145,7 +152,7 @@ export function useAutoDeck(
           briefing,
           lod,
           subject: selectedNugget?.subject,
-          qualityReport: selectedNugget?.qualityReport,
+          qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           totalWordCount,
         }, abortController.signal);
@@ -220,7 +227,7 @@ export function useAutoDeck(
         clearAbort();
       }
     },
-    [selectedNugget, recordUsage, addToast],
+    [selectedNugget, recordUsage, addToast, createLogCheckpoint],
   );
 
   /**
@@ -267,7 +274,7 @@ export function useAutoDeck(
         briefing: session.briefing,
         lod: session.lod,
         subject: selectedNugget?.subject,
-        qualityReport: selectedNugget?.qualityReport,
+        qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
         documents: apiDocs,
         totalWordCount,
         revision: {
@@ -516,7 +523,7 @@ export function useAutoDeck(
           briefing: session.briefing,
           lod: session.lod,
           subject: selectedNugget?.subject,
-          qualityReport: selectedNugget?.qualityReport,
+          qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           planCards: batch,
           batchContext,
@@ -550,9 +557,9 @@ export function useAutoDeck(
         }
       }
 
-      // If placeholders were NOT used, create cards the legacy way
+      // If placeholders were NOT used, create cards the legacy way (root level)
       if (!placeholderFns || placeholderMap.size === 0) {
-        const existingCardNames = flattenCards(selectedNugget.cards).map((c) => c.text);
+        const existingCardNames = cardNamesInScope(selectedNugget.cards);
         const newCards: Card[] = allProducedCards.map((pc) => {
           const uniqueName = getUniqueName(pc.title, [
             ...existingCardNames,
@@ -719,6 +726,96 @@ export function useAutoDeck(
     });
   }, []);
 
+  // ── Briefing suggestions (pre-session, one-shot call) ──
+
+  const generateBriefingSuggestions = useCallback(
+    async (
+      subject: string | undefined,
+      documents: UploadedFile[],
+      totalWordCount: number,
+    ): Promise<BriefingSuggestions> => {
+      const controller = createSuggestAbort();
+      try {
+        // Map documents to ChatMessageDocument format (fileId enables Files API on server)
+        const chatDocs: ChatMessageDocument[] = documents.map((d) => ({
+          name: d.name,
+          fileId: d.fileId,
+          sourceType: d.sourceType,
+          ...(d.content ? { content: d.content } : {}),
+        }));
+
+        // Build a natural-language prompt that produces structured markdown tables
+        const docList = documents.map((d) => `- ${d.name}`).join('\n');
+        const subjectLine = subject ? `The subject/topic is: "${subject}".` : '';
+        const prompt = [
+          `I have ${documents.length} document(s) totaling ~${totalWordCount.toLocaleString()} words:`,
+          docList,
+          '',
+          subjectLine,
+          '',
+          `Based on the actual content of these documents, suggest ${BRIEFING_SUGGESTION_COUNT} options for EACH of the following 5 briefing fields for a presentation deck. Each option must have a short label (2–5 words) and a brief description sentence.`,
+          '',
+          'The 5 fields and their description-sentence word limits:',
+          `1. **Objective** — Why are we making this deck? (${BRIEFING_LIMITS.objective.min}–${BRIEFING_LIMITS.objective.max} words per description)`,
+          `2. **Audience** — Who will view this deck? (${BRIEFING_LIMITS.audience.min}–${BRIEFING_LIMITS.audience.max} words per description)`,
+          `3. **Type** — What kind of deck is this? (${BRIEFING_LIMITS.type.min}–${BRIEFING_LIMITS.type.max} words per description)`,
+          `4. **Focus** — What should the deck emphasize? (${BRIEFING_LIMITS.focus.min}–${BRIEFING_LIMITS.focus.max} words per description)`,
+          `5. **Tone** — What tone/style should the deck use? (${BRIEFING_LIMITS.tone.min}–${BRIEFING_LIMITS.tone.max} words per description)`,
+          '',
+          'Format your response as markdown with a ## heading per field, and a table with columns | Label | Brief |',
+          'Example:',
+          '## 1. Objective',
+          '| Label | Brief |',
+          '|---|---|',
+          '| **Capital Raise** | Secure Series A funding by demonstrating market traction and growth potential |',
+          '',
+          'Important:',
+          '- Base every suggestion on the actual document content — not generic options.',
+          '- Labels should be concise and distinct from each other.',
+          '- Description sentences should be specific to these documents.',
+          '- Do NOT include any other commentary — just the 5 sections with tables.',
+        ].join('\n');
+
+        const response = await chatMessageApi(
+          {
+            action: 'send_message',
+            userText: prompt,
+            documents: chatDocs,
+            subject,
+            conversationHistory: [],
+          },
+          controller.signal,
+        );
+
+        recordUsage?.({
+          provider: 'claude',
+          model: CLAUDE_MODEL,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
+        });
+
+        const result = parseBriefingMarkdownResponse(response.responseText);
+        if (result.status !== 'ok') {
+          throw new Error(result.error);
+        }
+        return result.suggestions;
+      } catch (err: any) {
+        if (isSuggestAbortError(err)) throw err;
+        log.error('Briefing suggestions failed:', err);
+        throw err;
+      } finally {
+        clearSuggestAbort();
+      }
+    },
+    [recordUsage],
+  );
+
+  const abortSuggestions = useCallback(() => {
+    abortSuggest();
+  }, []);
+
   return {
     session,
     // Actions
@@ -733,5 +830,8 @@ export function useAutoDeck(
     setQuestionAnswer,
     setAllRecommended,
     setGeneralComment,
+    // Briefing suggestions
+    generateBriefingSuggestions,
+    abortSuggestions,
   };
 }

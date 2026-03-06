@@ -19,5 +19,5 @@
     "strictNullChecks": true,
     "noEmit": true
   },
-  "exclude": ["Prompting revision plan"]
+  "exclude": ["Prompting revision plan", "supabase/functions"]
 }

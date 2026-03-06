@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { UploadedFile, AutoDeckBriefing, AutoDeckLod, AutoDeckSession } from '../types';
 import { useThemeContext } from '../context/ThemeContext';
@@ -6,7 +6,6 @@ import PanelRequirements from './PanelRequirements';
 import {
   AUTO_DECK_LOD_LEVELS,
   AUTO_DECK_LIMITS,
-  BRIEFING_LIMITS,
   estimateCardCount,
   countWords,
   LodConfig,
@@ -32,6 +31,9 @@ interface AutoDeckPanelProps {
   onSetGeneralComment: (comment: string) => void;
   onRetryFromReview: () => void;
   tabBarRef?: React.RefObject<HTMLElement | null>;
+  // Briefing (read from nugget, edited via Brief & Quality panel)
+  briefing?: AutoDeckBriefing;
+  onOpenBriefTab?: () => void;
 }
 
 // ── Component ──
@@ -52,6 +54,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   onSetGeneralComment,
   onRetryFromReview,
   tabBarRef,
+  briefing: propBriefing,
+  onOpenBriefTab,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -61,19 +65,11 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     anchorRef: tabBarRef,
   });
 
-  // ── Configuration state ──
-  const [briefing, setBriefing] = useState<AutoDeckBriefing>({
-    audience: '',
-    type: '',
-    objective: '',
-    tone: '',
-    focus: '',
-  });
+  // ── Configuration state (deck generation params only) ──
   const [selectedLod, setSelectedLod] = useState<AutoDeckLod | null>(null);
   const [cardMin, setCardMin] = useState<string>('');
   const [cardMax, setCardMax] = useState<string>('');
   const [includeCover, setIncludeCover] = useState(false);
-  const [includeSectionTitles, setIncludeSectionTitles] = useState(false);
   const [includeClosing, setIncludeClosing] = useState(false);
 
   // Available documents (have content)
@@ -82,22 +78,13 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   // Reset config when session resets
   useEffect(() => {
     if (!session) {
-      setBriefing({ audience: '', type: '', objective: '', tone: '', focus: '' });
       setSelectedLod(null);
       setCardMin('');
       setCardMax('');
       setIncludeCover(false);
-      setIncludeSectionTitles(false);
       setIncludeClosing(false);
     }
   }, [session]);
-
-
-  // ── Briefing field handler ──
-  const updateBriefing = useCallback((field: keyof typeof BRIEFING_LIMITS, value: string) => {
-    const limit = BRIEFING_LIMITS[field];
-    setBriefing((prev) => ({ ...prev, [field]: value.slice(0, limit) }));
-  }, []);
 
   // ── Derived values ──
   const selectedDocs = availableDocs.filter((d) => d.enabled !== false);
@@ -105,10 +92,11 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   const estimate = selectedLod ? estimateCardCount(totalWordCount, selectedLod) : null;
 
   const status = session?.status ?? 'configuring';
+  const hasBriefing = propBriefing?.objective?.trim() || propBriefing?.audience?.trim() || propBriefing?.type?.trim();
   const canGenerate =
-    briefing.audience.trim() &&
-    briefing.type.trim() &&
-    briefing.objective.trim() &&
+    propBriefing?.objective?.trim() &&
+    propBriefing?.audience?.trim() &&
+    propBriefing?.type?.trim() &&
     selectedLod &&
     selectedDocs.length > 0;
   const includedCount = session?.reviewState
@@ -118,19 +106,18 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   // ── Handlers ──
 
   const handleGenerate = useCallback(async () => {
-    if (!canGenerate || !selectedLod) return;
+    if (!canGenerate || !selectedLod || !propBriefing) return;
     const parsedMin = cardMin ? Math.max(5, Math.min(50, parseInt(cardMin, 10))) : undefined;
     const parsedMax = cardMax ? Math.max(5, Math.min(50, parseInt(cardMax, 10))) : undefined;
     const cleanBriefing: AutoDeckBriefing = {
-      audience: briefing.audience.trim(),
-      type: briefing.type.trim(),
-      objective: briefing.objective.trim(),
-      ...(briefing.tone?.trim() ? { tone: briefing.tone.trim() } : {}),
-      ...(briefing.focus?.trim() ? { focus: briefing.focus.trim() } : {}),
+      audience: propBriefing.audience.trim(),
+      type: propBriefing.type.trim(),
+      objective: propBriefing.objective.trim(),
+      ...(propBriefing.tone?.trim() ? { tone: propBriefing.tone.trim() } : {}),
+      ...(propBriefing.focus?.trim() ? { focus: propBriefing.focus.trim() } : {}),
       ...(parsedMin ? { minCards: parsedMin } : {}),
       ...(parsedMax ? { maxCards: parsedMax } : {}),
       ...(includeCover ? { includeCover: true } : {}),
-      ...(includeSectionTitles ? { includeSectionTitles: true } : {}),
       ...(includeClosing ? { includeClosing: true } : {}),
     };
     await onStartPlanning(
@@ -140,12 +127,11 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     );
   }, [
     canGenerate,
-    briefing,
+    propBriefing,
     selectedLod,
     cardMin,
     cardMax,
     includeCover,
-    includeSectionTitles,
     includeClosing,
     selectedDocs,
     onStartPlanning,
@@ -160,90 +146,111 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   const hintColor = darkMode ? '#64748b' : '#94a3b8';
   const labelColor = darkMode ? '#94a3b8' : '#64748b';
 
-  // ── Briefing field renderer ──
-  const renderBriefingField = (field: keyof typeof BRIEFING_LIMITS, label: string, hint: string, required: boolean) => {
-    const value = briefing[field] || '';
-    const limit = BRIEFING_LIMITS[field];
-    const charCount = value.length;
-    const isNearLimit = charCount > limit * 0.85;
-
-    return (
-      <div style={{ marginBottom: '14px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '4px' }}>
-          <label style={{ fontSize: '12px', fontWeight: 600, color: labelColor }}>
-            {label}
-            {required && <span style={{ color: darkMode ? '#f87171' : '#dc2626', marginLeft: '2px' }}>*</span>}
-          </label>
-          <span
-            style={{
-              fontSize: '10px',
-              color: isNearLimit ? (darkMode ? '#fbbf24' : '#d97706') : hintColor,
-              fontVariantNumeric: 'tabular-nums',
-            }}
-          >
-            {charCount}/{limit}
-          </span>
-        </div>
-        <input
-          type="text"
-          value={value}
-          onChange={(e) => updateBriefing(field, e.target.value)}
-          placeholder={hint}
-          maxLength={limit}
-          className="focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50"
-          style={{
-            width: '100%',
-            padding: '8px 10px',
-            borderRadius: '6px',
-            border: `1px solid ${inputBorder}`,
-            backgroundColor: inputBg,
-            color: inputColor,
-            fontSize: '13px',
-            boxSizing: 'border-box',
-          }}
-        />
-      </div>
-    );
-  };
+  // ── Briefing summary fields ──
+  const briefingFields = [
+    { key: 'objective' as const, label: 'Objective' },
+    { key: 'audience' as const, label: 'Audience' },
+    { key: 'type' as const, label: 'Type' },
+    { key: 'tone' as const, label: 'Tone' },
+    { key: 'focus' as const, label: 'Focus' },
+  ];
 
   // ── Render views ──
 
   const renderConfigView = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
     <div style={{ padding: '20px', overflowY: 'auto', flex: 1 }}>
-      {/* Briefing fields */}
+    <div className="max-w-2xl mx-auto">
+      {/* ── Briefing summary (read-only) ── */}
       <div style={{ marginBottom: '20px' }}>
         <div
           style={{
-            fontSize: '12px',
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: labelColor,
-            marginBottom: '12px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '10px',
           }}
         >
-          Briefing
+          <div
+            style={{
+              fontSize: '12px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: labelColor,
+            }}
+          >
+            Deck Briefing
+          </div>
+          {onOpenBriefTab && (
+            <button
+              onClick={onOpenBriefTab}
+              style={{
+                fontSize: '11px',
+                color: darkMode ? '#4db8e0' : '#2289b5',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: 0,
+              }}
+            >
+              {hasBriefing ? 'Edit Brief' : 'Set Brief'}
+            </button>
+          )}
         </div>
-        {renderBriefingField(
-          'audience',
-          'Audience',
-          'Who will view this? e.g. Board of directors, New employees, Potential investors',
-          true,
+
+        {hasBriefing ? (
+          <div
+            style={{
+              padding: '12px 16px',
+              borderRadius: '8px',
+              border: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+              backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'white',
+            }}
+          >
+            {briefingFields.map(({ key, label }) => {
+              const value = propBriefing?.[key]?.trim();
+              if (!value) return null;
+              return (
+                <div key={key} style={{ marginBottom: '6px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 600, color: labelColor }}>{label}: </span>
+                  <span style={{ fontSize: '12px', color: inputColor }}>{value}</span>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: '16px',
+              borderRadius: '8px',
+              border: `2px dashed ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: '12px', color: hintColor, marginBottom: '6px' }}>
+              No briefing set yet
+            </div>
+            {onOpenBriefTab && (
+              <button
+                onClick={onOpenBriefTab}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: darkMode ? '#1d7ca8' : '#2289b5',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Set Brief
+              </button>
+            )}
+          </div>
         )}
-        {renderBriefingField(
-          'type',
-          'Type',
-          'What kind of presentation? e.g. Educational, Pitch, Status update, Training',
-          true,
-        )}
-        {renderBriefingField(
-          'objective',
-          'Objective',
-          'What should they take away? e.g. Approve the budget, Understand the new policy',
-          true,
-        )}
-        {renderBriefingField('tone', 'Tone', 'How should it sound? e.g. Formal, Conversational, Urgent', false)}
-        {renderBriefingField('focus', 'Focus', 'What to prioritize? e.g. Cost data, Timeline, Risk factors', false)}
       </div>
 
       {/* LOD selector */}
@@ -451,12 +458,6 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
                 hint: 'Title slide with deck overview',
               },
               {
-                checked: includeSectionTitles,
-                onChange: setIncludeSectionTitles,
-                label: 'Section title cards',
-                hint: 'Divider cards for main sections',
-              },
-              {
                 checked: includeClosing,
                 onChange: setIncludeClosing,
                 label: 'Closing card',
@@ -521,6 +522,13 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
       >
         Generate Plan
       </button>
+      {!canGenerate && !hasBriefing && selectedDocs.length > 0 && (
+        <div style={{ fontSize: '11px', color: hintColor, textAlign: 'center', marginTop: '6px' }}>
+          Set a briefing to enable generation
+        </div>
+      )}
+    </div>
+    </div>
     </div>
   );
 
@@ -574,6 +582,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     if (!session?.conflicts) return null;
     return (
       <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+      <div className="max-w-2xl mx-auto">
         {/* Alert banner */}
         <div
           style={{
@@ -684,6 +693,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           Back to Configuration
         </button>
       </div>
+      </div>
     );
   };
 
@@ -755,6 +765,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
 
         {/* Scrollable content */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>
+        <div className="max-w-2xl mx-auto">
           {/* Card list (read-only with checkboxes) */}
           <div style={{ marginBottom: '20px' }}>
             <div
@@ -988,6 +999,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
               }}
             />
           </div>
+        </div>
         </div>
 
         {/* Sticky bottom bar */}
@@ -1263,6 +1275,10 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
         @keyframes autodeck-pulse {
           0%, 100% { transform: scale(0.8); opacity: 0.5; }
           50% { transform: scale(1.2); opacity: 1; }
+        }
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
         }
       `}</style>
     </>

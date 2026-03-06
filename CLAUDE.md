@@ -40,9 +40,10 @@ The app is transitioning from client-side AI calls to server-side Edge Function 
 | `manage-images` | `manageImagesApi()` | Image CRUD (delete, restore, history) |
 | `chat-message` | `chatMessageApi()` | Chat + card content via Claude (prompt building server-side) |
 | `auto-deck` | `autoDeckApi()` | Plan/revise/finalize/produce (prompt building server-side) |
+| `document-quality` | `documentQualityApi()` | DQAF v2 assessment: 3-stage quality pipeline (profiling, checks, KPIs) |
 
-**Already migrated** to new APIs: card image generation, chat, auto-deck.
-**Still using old proxies** (`callClaude` via `claude-proxy`): content synthesis (Phase 1), quality check, document operations.
+**Already migrated** to new APIs: card image generation, chat, auto-deck, document quality assessment.
+**Still using old proxies** (`callClaude` via `claude-proxy`): content synthesis (Phase 1), document operations.
 
 ### 3-Phase Card Pipeline
 Content Synthesis (Claude, client-side) → Layout Planning + Image Generation + Storage (server-side via `generate-card`). See `hooks/useCardGeneration.ts`. Images are stored as signed Supabase Storage URLs (not blob URLs).
@@ -53,14 +54,30 @@ Content Synthesis (Claude, client-side) → Layout Planning + Image Generation +
 ### Document Ownership
 Documents belong to individual nuggets. Each has `sourceType`: `'markdown'` or `'native-pdf'`.
 
-### Quality Check System
-`hooks/useDocumentQualityCheck.ts` — runs document quality analysis via Claude. Returns `QualityReport` with topic clusters, conflicts, and effective status (`null`/`'green'`/`'amber'`/`'red'`). Rendered in `components/QualityPanel.tsx` as a side panel overlay.
+### Document Quality Assessment Framework (DQAF v2)
+`hooks/useDocumentQualityCheck.ts` — runs DQAF assessment via `documentQualityApi()` → `document-quality` Edge Function. Three-stage pipeline:
+- **Stage 1**: Relevance Profiling — 5-dimension profiling (Objective 30%, Focus 25%, Audience 20%, Type 15%, Tone 10%), Score A per doc, Score B per pair
+- **Stage 2**: Pass 1 (6 per-doc structural checks P1-01–P1-06) + Pass 2 (5 cross-doc checks P2-02–P2-06)
+- **Stage 3**: KPI computation in code (not AI) — documentRelevanceRate, internalIntegrityRate, crossDocumentConsistencyScore, versionConfidenceRate, structuralCoherenceRate, overallSetReadinessScore
+
+Requires `engagementPurpose` field on Nugget. Returns `DQAFReport` with verdicts (ready/conditional/not_ready). Effective status: `null`/`'green'`/`'amber'`/`'red'`/`'stale'`. Rendered in `components/QualityPanel.tsx` as a 4-section dashboard panel with internal sidebar (Set Overview, Per Document Detail, Conflicts & Flags, Document Register).
+
+Legacy `QualityReport` type kept as `@deprecated` — old reports auto-detected as stale.
 
 ### Annotation Workbench
 `components/workbench/` — Canvas-based image annotation and modification system. Components: `AnnotationWorkbench.tsx`, `AnnotationToolbar.tsx`, `AnnotationEditorPopover.tsx`, `CanvasRenderer.ts`. Annotation types: pin, arrow, rectangle, sketch, text, zoom. Uses `hooks/useAnnotations.ts` (state) and `hooks/useVersionHistory.ts` (image version stack, max 10). Modification executed via `utils/modificationEngine.ts` → Gemini.
 
-### 6-Panel Layout
-Flex row: Projects | Sources | Chat | Auto-Deck | Cards | Assets. First 4 panels use strip buttons + portal overlays (`createPortal` to `document.body`). Shared logic in `hooks/usePanelOverlay.ts`. `expandedPanel` values: `'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality'`.
+### Sources Log & Subject Review
+Document changes (add, remove, enable, disable, content update) are tracked via `appendDocChangeEvent()` in `AppContext.tsx`. Each event increments `rawEventSeq` on the nugget's `sourcesLogStats`. Pending changes shown in `FootnoteBar` and `SourcesLogModal`.
+
+**Toggle cancellation**: Enable/disable events for the same document cancel each other when un-checkpointed (e.g., disable then re-enable = no net change). On cancellation, `rawEventSeq` is decremented and the opposite event is removed from the log.
+
+**Subject review flag** (`subjectReviewNeeded` on Nugget): Set to `true` by `appendDocChangeEvent` on real changes. Cleared by saving or regenerating the subject, or by clicking "Keep" in `SubjectEditModal`. On toggle cancellation with no remaining pending changes, the flag also clears. Independent from the sources log — checkpointing the log does NOT clear the subject flag.
+
+**FootnoteBar** (`components/FootnoteBar.tsx`): Thin dynamic notice bar between workspace and footer. Notices: pending source changes (amber), subject review needed (amber), quality stale (amber), quality issues (red). Each notice is clickable — opens the relevant modal/panel. Renders nothing when no notices exist.
+
+### 5-Panel Accordion Layout
+Dashboard (when no project open) or workspace with 5 mutually exclusive panels controlled by `PanelTabBar` strip buttons. Only one panel open at a time. Panels: Sources | Chat | Auto-Deck | Cards & Assets | Quality. Portal overlays (`createPortal` to `document.body`). Shared logic in `hooks/usePanelOverlay.ts`. `expandedPanel` values: `'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null`.
 
 ### Auth Flow & Entry Point
 `index.tsx` renders: `AuthProvider` → `AuthGate` (local function, not a separate file). AuthGate handles three pre-auth states:
@@ -78,7 +95,7 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx` (project cards, crea
 - **Database**: PostgreSQL with RLS — tables: `profiles`, `projects`, `nuggets`, `documents`, `card_images`, `app_state`, `token_usage`, `custom_styles`. All rows scoped to `auth.uid() = user_id`.
 - **Storage**: Two buckets: `pdfs` (native PDF files), `card-images` (generated card images). Path prefix: `{user_id}/`.
 - **Edge Functions (proxies)**: `claude-proxy` (Messages API), `claude-files-proxy` (Files API), `gemini-proxy` (Gemini SDK with key rotation). Used for direct AI calls.
-- **Edge Functions (pipelines)**: `generate-card`, `manage-images`, `chat-message`, `auto-deck`. Handle full pipelines server-side. Called via `utils/api.ts`.
+- **Edge Functions (pipelines)**: `generate-card`, `manage-images`, `chat-message`, `auto-deck`, `document-quality`. Handle full pipelines server-side. Called via `utils/api.ts`.
 - **Storage Backend**: `utils/storage/SupabaseBackend.ts` implements `StorageBackend` interface. Cards stored as JSONB on nuggets table. Images uploaded to Storage bucket with signed URLs.
 - **Supabase Client**: `utils/supabase.ts` — singleton `createClient` using `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`.
 
@@ -160,14 +177,15 @@ Modals: `PdfUploadChoiceDialog`, `PdfProcessorModal`, `StyleStudioModal`, `Subje
 - `components/AutoDeckPanel.tsx` — Auto-Deck briefing and review
 - `components/PdfProcessorModal.tsx` — PDF processor (viewer + bookmarks + actions)
 - `components/StyleStudioModal.tsx` — Visual style configuration
-- `components/projects-panel/` — Decomposed sidebar: `ProjectsList`, `NuggetsList`, `DocumentsList`, kebab menus, `ConfirmDeleteDialog`
+- `components/FootnoteBar.tsx` — Dynamic workspace status notices (pending source changes, subject review, quality issues)
+- `components/SourcesLogModal.tsx` — Sources Log history modal
 - `components/workbench/` — Annotation system: `AnnotationWorkbench`, `AnnotationToolbar`, `AnnotationEditorPopover`, `CanvasRenderer`
 
 ### Hooks
 - `hooks/useCardGeneration.ts` — 3-phase pipeline (synthesis client-side, rest server-side)
 - `hooks/useInsightsLab.ts` — Chat via `chatMessageApi`
 - `hooks/useAutoDeck.ts` — Auto-Deck via `autoDeckApi`
-- `hooks/useDocumentQualityCheck.ts` — Quality analysis via `callClaude`
+- `hooks/useDocumentQualityCheck.ts` — DQAF v2 assessment via `documentQualityApi`
 - `hooks/useCardOperations.ts` — Card/folder CRUD
 - `hooks/useDocumentOperations.ts` — Document CRUD, content generation
 - `hooks/useProjectOperations.ts` — Project/nugget creation, duplication, copy/move
@@ -181,11 +199,11 @@ Modals: `PdfUploadChoiceDialog`, `PdfProcessorModal`, `StyleStudioModal`, `Subje
 - `hooks/useAbortController.ts` — Shared abort lifecycle
 
 ### Utils
-- `utils/api.ts` — Backend Edge Function wrappers (generateCardApi, chatMessageApi, autoDeckApi, manageImagesApi)
+- `utils/api.ts` — Backend Edge Function wrappers (generateCardApi, chatMessageApi, autoDeckApi, manageImagesApi, documentQualityApi)
 - `utils/ai.ts` — Legacy AI clients, retry logic, Files API helpers, PRO_IMAGE_CONFIG, DEFAULT_STYLING
 - `utils/constants.ts` — Model names, retry config, token budgets
 - `utils/cardUtils.ts` — Tree-manipulation utilities for CardItem[]
-- `utils/prompts/` — Prompt builders: `contentGeneration`, `coverGeneration`, `documentConversion`, `imageGeneration`, `promptUtils`, `qualityCheck`
+- `utils/prompts/` — Prompt builders: `contentGeneration`, `coverGeneration`, `documentConversion`, `imageGeneration`, `promptUtils`
 - `utils/autoDeck/` — Auto-deck parsers (`parsers.ts`) and constants (`constants.ts`)
 - `utils/modificationEngine.ts` — Image modifications via Gemini (annotation workbench)
 - `utils/redline.ts` — Redline map generation from annotations
@@ -208,20 +226,18 @@ Modals: `PdfUploadChoiceDialog`, `PdfProcessorModal`, `StyleStudioModal`, `Subje
 - `context/ThemeContext.tsx` — Theme provider
 
 ### Types
-- `types.ts` — All interfaces. Key types: `Card`, `CardFolder`, `CardItem`, `Nugget`, `Project`, `Document`, `StylingOptions`, `DetailLevel`, `QualityReport`, `TopicCluster`, `QualityConflict`, `Annotation` (union), `AutoDeckBriefing`, `ParsedPlan`, `PlannedCard`
+- `types.ts` — All interfaces. Key types: `Card`, `CardFolder`, `CardItem`, `Nugget` (includes `subjectReviewNeeded`, `sourcesLogStats`, `docChangeLog`, `engagementPurpose`, `dqafReport`), `Project`, `Document`, `StylingOptions`, `DetailLevel`, `DQAFReport`, `DQAFDocumentAssessment`, `DQAFKPIs`, `DQAFCrossDocFinding`, `DQAFCompatibilityRecord`, `DQAFProductionNotice`, `Annotation` (union), `AutoDeckBriefing`, `ParsedPlan`, `PlannedCard`, `SourcesLogStats`, `DocChangeEvent`. Legacy: `QualityReport` (@deprecated)
 
 ## Z-Index Stacking (highest → lowest)
 
-- Modals/Dialogs: `z-[120]`
 - Folder context menu: `z-[130]`
+- Modals/Dialogs: `z-[120]`
 - Main Header: `z-[110]`
-- Projects panel: `z-[108]` (strip `z-20`)
-- Sources panel: `z-[107]` (strip `z-10`)
 - Quality panel / Hard lock overlay: `z-[106]`
 - Chat panel: `z-[105]` (strip `z-[2]`)
 - Auto-Deck panel: `z-[104]` (strip `z-[1]`)
 - Cards/Assets: `z-[103]`
-- Footer: `z-[102]`
+- FootnoteBar / Footer: `z-[102]`
 
 ## Code Modification Safety
 

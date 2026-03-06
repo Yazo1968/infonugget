@@ -7,6 +7,9 @@ import {
   DocChangeEvent,
   SourceOrigin,
   QualityReport,
+  DQAFReport,
+  SourcesLogStats,
+  SourcesLogEntry,
 } from '../../types';
 
 // ── Stored types (what lives in the database) ──
@@ -61,12 +64,27 @@ export interface StoredImageVersion {
   label: string;
 }
 
+/** @deprecated Legacy format — kept for backward compat with IndexedDB. Use StoredAlbumImage. */
 export interface StoredImage {
   fileId: string;
   headingId: string;
   level: DetailLevel;
   cardUrl: string;
   imageHistory: StoredImageVersion[];
+}
+
+/** Album-based image storage — one row per image in the card_images table. */
+export interface StoredAlbumImage {
+  id: string;
+  fileId: string;       // nuggetId
+  headingId: string;    // cardId
+  level: DetailLevel;
+  storagePath: string;
+  imageUrl: string;     // signed URL (hydrated on load)
+  isActive: boolean;
+  label: string;
+  sortOrder: number;
+  createdAt: number;
 }
 
 export interface StoredInsightsSession {
@@ -80,13 +98,23 @@ export interface StoredNugget {
   type: NuggetType;
   messages?: ChatMessage[];
   docChangeLog?: DocChangeEvent[];
-  lastDocChangeSyncIndex?: number;
+  lastDocChangeSyncSeq?: number;
+  sourcesLogStats?: SourcesLogStats;
+  sourcesLog?: SourcesLogEntry[];
   subject?: string;
+  subjectReviewNeeded?: boolean;
+  briefReviewNeeded?: boolean;
   stylingOptions?: StylingOptions;
   createdAt: number;
   lastModifiedAt: number;
-  /** Document quality check report — clusters, conflicts, warnings */
+  /** @deprecated Use dqafReport instead */
   qualityReport?: QualityReport;
+  /** DQAF v2 assessment report — full 3-stage quality assessment */
+  dqafReport?: DQAFReport;
+  /** Engagement purpose statement for DQAF assessment */
+  engagementPurpose?: string;
+  /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
+  lastClosedAt?: string;
   /** CardFolder metadata for nuggets that contain card folders. */
   folders?: Array<{
     id: string;
@@ -220,7 +248,7 @@ export interface StorageBackend {
   // Nugget images (keyed by nuggetId)
   saveNuggetImage(image: StoredImage): Promise<void>;
   saveNuggetImages(images: StoredImage[]): Promise<void>;
-  loadNuggetImages(nuggetId: string): Promise<StoredImage[]>;
+  loadNuggetImages(nuggetId: string): Promise<StoredAlbumImage[] | StoredImage[]>;
   deleteNuggetImages(nuggetId: string): Promise<void>;
   deleteNuggetImage(fileId: string, headingId: string, level: string): Promise<void>;
 

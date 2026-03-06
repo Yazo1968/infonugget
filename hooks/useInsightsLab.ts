@@ -20,7 +20,7 @@ const log = createLogger('InsightsLab');
  * - Messages: proper multi-turn conversation (incrementally cached)
  */
 export function useInsightsLab(recordUsage?: RecordUsageFn) {
-  const { selectedNugget, appendNuggetMessage, setNuggets, selectedNuggetId } = useNuggetContext();
+  const { selectedNugget, appendNuggetMessage, setNuggets, selectedNuggetId, createLogCheckpoint } = useNuggetContext();
   const [isLoading, setIsLoading] = useState(false);
   const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();
 
@@ -88,7 +88,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
             isCardContent: m.isCardContent,
           })),
           subject: selectedNugget.subject,
-          qualityReport: selectedNugget.qualityReport,
+          qualityReport: selectedNugget.dqafReport ?? selectedNugget.qualityReport,
           documents: resolvedDocs,
         }, controller.signal);
 
@@ -117,11 +117,23 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
           cacheWriteTokens: response.usage.cacheWriteTokens,
         });
 
+        // Sanitize prohibited characters when this is card content
+        let responseText = response.responseText;
+        if (isCardRequest) {
+          responseText = responseText
+            .replace(/[\u2014\u2013]/g, '-')   // em dash, en dash -> hyphen
+            .replace(/\u2192/g, '->')           // arrow -> text arrow
+            .replace(/[\u2713\u2714\u2717\u2718]/g, '') // check/cross marks
+            .replace(/\*+/g, '')                // strip asterisks
+            .replace(/~/g, '')                  // strip tildes
+            .replace(/^>\s?/gm, '');            // strip blockquote markers
+        }
+
         // Create assistant message
         const assistantMessage: ChatMessage = {
           id: Math.random().toString(36).substr(2, 9),
           role: 'assistant',
-          content: response.responseText,
+          content: responseText,
           timestamp: Date.now(),
           isCardContent: isCardRequest,
           detailLevel: isCardRequest ? detailLevel : undefined,
@@ -184,7 +196,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         return {
           ...n,
           messages: [],
-          lastDocChangeSyncIndex: (n.docChangeLog || []).length,
+          lastDocChangeSyncSeq: n.sourcesLogStats?.logsCreated ?? (n.docChangeLog || []).length,
           lastModifiedAt: Date.now(),
         };
       }),
@@ -197,8 +209,8 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
   const pendingDocChanges: DocChangeEvent[] = useMemo(() => {
     if (!selectedNugget || selectedNugget.type !== 'insights') return [];
     const log = selectedNugget.docChangeLog || [];
-    const syncIdx = selectedNugget.lastDocChangeSyncIndex ?? 0;
-    return log.slice(syncIdx);
+    const syncSeq = selectedNugget.lastDocChangeSyncSeq ?? 0;
+    return log.filter((e) => e.seq > syncSeq);
   }, [selectedNugget]);
 
   /** Whether the chat has any messages (i.e. agent was already informed of some document state) */
@@ -235,9 +247,20 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         case 'disabled':
           entry.events.push('Disabled (excluded from context)');
           break;
-        case 'updated':
-          entry.events.push('Content updated');
+        case 'updated': {
+          let desc = 'Content updated';
+          if (e.magnitude) {
+            const charDelta = e.magnitude.charCountAfter - e.magnitude.charCountBefore;
+            const charLabel = charDelta >= 0 ? `+${charDelta}` : `${charDelta}`;
+            const headingDelta = e.magnitude.headingCountAfter - e.magnitude.headingCountBefore;
+            const parts: string[] = [`${charLabel} chars`];
+            if (headingDelta !== 0) parts.push(`${headingDelta >= 0 ? '+' : ''}${headingDelta} headings`);
+            if (e.magnitude.headingTextChanged) parts.push('heading text changed');
+            desc += ` (${parts.join(', ')})`;
+          }
+          entry.events.push(desc);
           break;
+        }
         case 'toc_updated':
           entry.events.push('Table of Contents updated');
           break;
@@ -268,6 +291,9 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         return;
       }
 
+      // Create a Sources Log checkpoint — captures pending changes at continuation point
+      createLogCheckpoint('chat_continued');
+
       // Inject a system message into the nugget's message history
       const systemMsg: ChatMessage = {
         id: Math.random().toString(36).substr(2, 9),
@@ -276,13 +302,13 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         timestamp: Date.now(),
       };
 
-      // Add system message to nugget + advance sync index
+      // Add system message to nugget + advance sync seq
       appendNuggetMessage(systemMsg);
 
-      // Advance the sync index
-      const newSyncIdx = (selectedNugget.docChangeLog || []).length;
+      // Advance the sync seq to the highest seq among consumed events
+      const maxSeq = changes.reduce((max, e) => Math.max(max, e.seq), 0);
       setNuggets((prev) =>
-        prev.map((n) => (n.id === selectedNugget.id ? { ...n, lastDocChangeSyncIndex: newSyncIdx } : n)),
+        prev.map((n) => (n.id === selectedNugget.id ? { ...n, lastDocChangeSyncSeq: maxSeq } : n)),
       );
 
       // Build the updated messages array including the system message
@@ -292,7 +318,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
       // Now send the user message with the updated history
       await sendMessage(text, isCardRequest, detailLevel, updatedMessages);
     },
-    [selectedNugget, pendingDocChanges, sendMessage, buildChangeSummary, appendNuggetMessage, setNuggets],
+    [selectedNugget, pendingDocChanges, sendMessage, buildChangeSummary, appendNuggetMessage, setNuggets, createLogCheckpoint],
   );
 
   /**
@@ -313,6 +339,9 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
 
     const resolvedDocs = resolveDocumentContext();
     if (resolvedDocs.length === 0) return;
+
+    // Create a Sources Log checkpoint — captures document state at chat start
+    createLogCheckpoint('chat_initiated');
 
     setIsLoading(true);
     const controller = createAbort();
@@ -360,7 +389,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
       clearAbort();
       setIsLoading(false);
     }
-  }, [selectedNugget, isLoading, resolveDocumentContext, appendNuggetMessage, recordUsage, setNuggets, createAbort, clearAbort, isAbortError]);
+  }, [selectedNugget, isLoading, resolveDocumentContext, appendNuggetMessage, recordUsage, setNuggets, createAbort, clearAbort, isAbortError, createLogCheckpoint]);
 
   return {
     messages: selectedNugget?.messages || [],

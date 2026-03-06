@@ -1,10 +1,11 @@
 import { useState, useCallback, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
+import { appendDocChangeEvent } from '../context/AppContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { CLAUDE_MODEL } from '../utils/constants';
 import { BookmarkNode, Card, DetailLevel, Heading, UploadedFile, Nugget, isCoverLevel } from '../types';
-import { flattenCards } from '../utils/cardUtils';
+import { flattenCards, cardNamesInScope, findParentFolder } from '../utils/cardUtils';
 import { getUniqueName } from '../utils/naming';
 import {
   callClaude,
@@ -130,10 +131,13 @@ export function useDocumentOperations({
           directText = directText.replace(/^\s*#{1,6}\s+[^\n]*\n*/, '').trimStart();
           directText = `# ${cardTitle}\n\n${directText}`;
 
-          // Check uniqueness against all cards in the nugget (nugget-wide)
+          // Scope uniqueness to the card's parent folder (or root)
+          const parentFolder = existingCardId
+            ? findParentFolder(selectedNugget.cards, existingCardId)
+            : undefined;
           const uniqueCardName = getUniqueName(
             cardTitle,
-            flattenCards(selectedNugget.cards).map((c) => c.text),
+            cardNamesInScope(selectedNugget.cards, parentFolder?.id),
           );
 
           if (existingCardId) {
@@ -404,15 +408,12 @@ export function useDocumentOperations({
       // Log TOC update for chat notification
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
-        docChangeLog: [
-          ...(n.docChangeLog || []),
-          {
-            type: 'toc_updated' as const,
-            docId,
-            docName: doc.name,
-            timestamp: Date.now(),
-          },
-        ],
+        ...appendDocChangeEvent(n, {
+          type: 'toc_updated' as const,
+          docId,
+          docName: doc.name,
+          timestamp: Date.now(),
+        }),
         lastModifiedAt: Date.now(),
       }));
     },

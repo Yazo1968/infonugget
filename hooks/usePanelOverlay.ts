@@ -34,7 +34,7 @@ export interface PanelOverlayState {
 
 /**
  * Shared hook that manages the portal-based overlay panel pattern used by
- * ProjectsPanel, SourcesPanel, ChatPanel, and AutoDeckPanel.
+ * SourcesPanel, ChatPanel, and AutoDeckPanel.
  *
  * Encapsulates:
  * - Instant show/hide (no animation)

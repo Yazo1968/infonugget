@@ -4,7 +4,7 @@
  * Rules (like Windows file explorer):
  *  - No two projects can share a name
  *  - No two nuggets within the same project can share a name
- *  - No two cards (headings) within the same nugget can share a name
+ *  - No two cards within the same folder (or root level) can share a name
  *  - No two documents within the same nugget can share a name
  *
  * All comparisons are case-insensitive.

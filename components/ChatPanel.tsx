@@ -26,7 +26,11 @@ interface ChatPanelProps {
   onCreatePlaceholder?: (title: string, detailLevel: DetailLevel) => string | null;
   onFillPlaceholderCard?: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
   onRemovePlaceholderCard?: (cardId: string, detailLevel: DetailLevel) => void;
+  onRequestCardGeneration?: (promptText: string, detailLevel: DetailLevel) => void;
+  externalPlaceholderRef?: React.MutableRefObject<{ cardId: string; level: DetailLevel } | null>;
   onInitiateChat?: () => void;
+  qualityStatus?: 'green' | 'amber' | 'red' | 'stale' | null;
+  onViewLog?: () => void;
 }
 
 const ChatPanel: React.FC<ChatPanelProps> = ({
@@ -47,7 +51,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   onCreatePlaceholder,
   onFillPlaceholderCard,
   onRemovePlaceholderCard,
+  onRequestCardGeneration,
+  externalPlaceholderRef,
   onInitiateChat,
+  qualityStatus,
+  onViewLog,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -81,19 +89,31 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   // Track placeholder card created for the in-flight "Generate Card" request
   const pendingPlaceholderRef = useRef<{ cardId: string; level: DetailLevel } | null>(null);
 
-  // Auto-save card content as card when a new card message arrives
+  // Auto-save card content as card when a NEW card message arrives during this session.
+  // Skip messages that already exist when the component mounts or when messages are first loaded.
   const autoSavedRef = useRef<Set<string>>(new Set());
+  const initializedRef = useRef(false);
   useEffect(() => {
+    if (!initializedRef.current) {
+      // First run: seed with all existing message IDs so we don't auto-save restored messages
+      for (const msg of messages) {
+        autoSavedRef.current.add(msg.id);
+      }
+      initializedRef.current = true;
+      return;
+    }
     for (const msg of messages) {
       if (msg.isCardContent && msg.role === 'assistant' && !msg.savedAsCardId && !autoSavedRef.current.has(msg.id)) {
         autoSavedRef.current.add(msg.id);
 
-        const pending = pendingPlaceholderRef.current;
+        // Check external (folder-picker flow) placeholder first, then internal
+        const pending = externalPlaceholderRef?.current || pendingPlaceholderRef.current;
         if (pending && onFillPlaceholderCard) {
           // Fill the existing placeholder with real content + extract H1 as title
           const titleMatch = msg.content.match(/^#\s+(.+)$/m);
           const newTitle = titleMatch ? titleMatch[1].trim() : undefined;
           onFillPlaceholderCard(pending.cardId, pending.level, msg.content, newTitle);
+          if (externalPlaceholderRef?.current) externalPlaceholderRef.current = null;
           pendingPlaceholderRef.current = null;
         } else {
           // Fallback: no placeholder exists, create card directly
@@ -101,16 +121,19 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         }
       }
     }
-  }, [messages, onSaveAsCard, onFillPlaceholderCard]);
+  }, [messages, onSaveAsCard, onFillPlaceholderCard, externalPlaceholderRef]);
 
   // Clean up placeholder if loading ends without a card being filled (error case)
   const prevLoadingRef = useRef(false);
   useEffect(() => {
-    if (prevLoadingRef.current && !isLoading && pendingPlaceholderRef.current) {
+    const activePlaceholder = externalPlaceholderRef?.current || pendingPlaceholderRef.current;
+    if (prevLoadingRef.current && !isLoading && activePlaceholder) {
       // Give a brief delay so the auto-save effect can run first
       const timer = setTimeout(() => {
-        if (pendingPlaceholderRef.current) {
-          onRemovePlaceholderCard?.(pendingPlaceholderRef.current.cardId, pendingPlaceholderRef.current.level);
+        const current = externalPlaceholderRef?.current || pendingPlaceholderRef.current;
+        if (current) {
+          onRemovePlaceholderCard?.(current.cardId, current.level);
+          if (externalPlaceholderRef?.current) externalPlaceholderRef.current = null;
           pendingPlaceholderRef.current = null;
         }
       }, 200);
@@ -169,7 +192,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         setShowDocChangeNotice(true);
         return;
       }
-      // Create placeholder card before sending so it appears instantly with a spinner
+      // Route through folder picker if available
+      if (onRequestCardGeneration) {
+        onRequestCardGeneration(text, level);
+        setInputText('');
+        return;
+      }
+      // Fallback: create placeholder directly (no folder selection)
       if (onCreatePlaceholder) {
         const placeholderId = onCreatePlaceholder(text, level);
         if (placeholderId) {
@@ -179,7 +208,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       onSendMessage(text, true, level);
       setInputText('');
     },
-    [inputText, isLoading, onSendMessage, pendingDocChanges, hasConversation, onDocChangeContinue, onCreatePlaceholder],
+    [inputText, isLoading, onSendMessage, pendingDocChanges, hasConversation, onDocChangeContinue, onCreatePlaceholder, onRequestCardGeneration],
   );
 
   const handleKeyDown = useCallback(
@@ -603,6 +632,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                             {/* Content */}
                             {renderMarkdown(body)}
 
+                            {/* Quality warning — UI-only, not part of message content */}
+                            {qualityStatus === 'red' && (
+                              <p style={{ color: '#dc2626', fontStyle: 'italic', fontSize: '12px', marginTop: '8px' }}>
+                                There are issues identified in the documents used in this chat, revising the sources is recommended
+                              </p>
+                            )}
+
                             {/* Hover actions — timestamp, copy, add as card */}
                             <div className="flex items-center gap-2.5 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
                               <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
@@ -871,6 +907,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                     onDocChangeStartFresh?.();
                   }}
                   onCancel={() => setShowDocChangeNotice(false)}
+                  onViewLog={onViewLog}
                 />
               )}
 
@@ -973,9 +1010,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                           {/* Divider */}
                           <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
 
-                          {/* Title/Takeaway card options */}
+                          {/* Takeaway card option */}
                           {[
-                            { level: 'TitleCard' as DetailLevel, label: 'Title Card', desc: 'Title + Subtitle' },
                             {
                               level: 'TakeawayCard' as DetailLevel,
                               label: 'Takeaway Card',

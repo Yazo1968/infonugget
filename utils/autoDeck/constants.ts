@@ -46,15 +46,19 @@ export const AUTO_DECK_LIMITS = {
   minCards: 3,
 } as const;
 
-// ── Briefing field limits ──
+// ── Briefing field word limits ──
 
-export const BRIEFING_LIMITS = {
-  audience: 100,
-  type: 80,
-  objective: 150,
-  tone: 80,
-  focus: 120,
-} as const;
+/** Word limits per briefing field: [min, max]. */
+export const BRIEFING_LIMITS: Record<string, { min: number; max: number }> = {
+  objective: { min: 15, max: 25 },
+  audience: { min: 10, max: 15 },
+  type: { min: 10, max: 15 },
+  focus: { min: 20, max: 25 },
+  tone: { min: 3, max: 5 },
+};
+
+/** Number of AI suggestions to generate per briefing field. */
+export const BRIEFING_SUGGESTION_COUNT = 7;
 
 // ── Helpers ──
 

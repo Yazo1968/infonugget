@@ -1,4 +1,4 @@
-import { ParsedPlan, PlanQuestion, ConflictItem, AutoDeckLod } from '../../types';
+import { ParsedPlan, PlanQuestion, ConflictItem, AutoDeckLod, BriefingSuggestions, BriefingSuggestionOption, BriefingFieldName } from '../../types';
 import { createLogger } from '../logger';
 
 const log = createLogger('AutoDeckParser');
@@ -211,6 +211,129 @@ export interface ProducedCard {
 }
 
 type ProducerResult = { status: 'ok'; cards: ProducedCard[] } | { status: 'error'; error: string };
+
+// ── Briefing suggestions parser ──
+
+export type SuggestBriefingResult =
+  | { status: 'ok'; suggestions: BriefingSuggestions }
+  | { status: 'error'; error: string };
+
+const BRIEFING_FIELDS: BriefingFieldName[] = ['objective', 'audience', 'type', 'focus', 'tone'];
+
+export function parseSuggestBriefingResponse(raw: string): SuggestBriefingResult {
+  const extracted = extractJson(raw);
+  const attempts: { label: string; text: string }[] = [
+    { label: 'strict', text: extracted },
+    { label: 'repaired', text: repairJsonControlChars(extracted) },
+  ];
+
+  let lastError = '';
+  for (const attempt of attempts) {
+    try {
+      const json = JSON.parse(attempt.text);
+
+      const suggestions: BriefingSuggestions = {
+        objective: [], audience: [], type: [], focus: [], tone: [],
+      };
+
+      for (const field of BRIEFING_FIELDS) {
+        const arr = json[field];
+        if (!Array.isArray(arr) || arr.length === 0) {
+          lastError = `Field "${field}" missing or empty in response.`;
+          continue;
+        }
+        suggestions[field] = arr
+          .map((item: any): BriefingSuggestionOption => ({
+            label: String(item.label || '').trim(),
+            text: String(item.text || '').trim(),
+          }))
+          .filter((opt) => opt.label && opt.text);
+      }
+
+      const filledFields = BRIEFING_FIELDS.filter((f) => suggestions[f].length > 0);
+      if (filledFields.length < 3) {
+        lastError = `Only ${filledFields.length}/5 fields had valid options.`;
+        continue;
+      }
+
+      if (attempt.label !== 'strict') {
+        log.warn(`Briefing suggestions JSON recovered via ${attempt.label} parse`);
+      }
+
+      return { status: 'ok', suggestions };
+    } catch (err: any) {
+      lastError = err.message;
+    }
+  }
+
+  return { status: 'error', error: `Failed to parse briefing suggestions: ${lastError}` };
+}
+
+/**
+ * Parse a markdown chat response containing briefing suggestion tables
+ * into the structured BriefingSuggestions format.
+ *
+ * Expects sections like:
+ *   ## 1. Objective — ...
+ *   | Label | Brief |
+ *   |---|---|
+ *   | **Capital Raise** | Secure funding by... |
+ */
+export function parseBriefingMarkdownResponse(raw: string): SuggestBriefingResult {
+  const suggestions: BriefingSuggestions = {
+    objective: [], audience: [], type: [], focus: [], tone: [],
+  };
+
+  // Field name mapping — match common variations in headings
+  const fieldMap: Record<string, BriefingFieldName> = {
+    objective: 'objective', audience: 'audience', type: 'type',
+    focus: 'focus', tone: 'tone', format: 'type',
+  };
+
+  // Split into sections by ## headings
+  const sections = raw.split(/^##\s+/m).filter(Boolean);
+
+  for (const section of sections) {
+    // Extract field name from the heading line (e.g. "1. Objective — Why are we making this deck?")
+    const headingLine = section.split('\n')[0].toLowerCase();
+    const matchedField = BRIEFING_FIELDS.find((f) => headingLine.includes(f))
+      || Object.entries(fieldMap).find(([key]) => headingLine.includes(key))?.[1];
+
+    if (!matchedField) continue;
+
+    // Parse table rows: | **Label** | Brief text |
+    const rows = section.split('\n').filter((line) => {
+      const trimmed = line.trim();
+      // Must start with | and contain at least 2 pipes, skip header/separator rows
+      return trimmed.startsWith('|') && trimmed.split('|').length >= 3
+        && !trimmed.match(/^\|\s*-+\s*\|/) && !trimmed.match(/^\|\s*Label\s*\|/i);
+    });
+
+    for (const row of rows) {
+      const cells = row.split('|').map((c) => c.trim()).filter(Boolean);
+      if (cells.length >= 2) {
+        // Strip bold markers from label
+        const label = cells[0].replace(/\*\*/g, '').trim();
+        const text = cells.slice(1).join(' | ').trim();
+        if (label && text) {
+          suggestions[matchedField].push({ label, text });
+        }
+      }
+    }
+  }
+
+  const filledFields = BRIEFING_FIELDS.filter((f) => suggestions[f].length > 0);
+  if (filledFields.length < 3) {
+    return {
+      status: 'error',
+      error: `Only ${filledFields.length}/5 briefing fields found in response. Expected markdown tables with ## headings.`,
+    };
+  }
+
+  return { status: 'ok', suggestions };
+}
+
+// ── Producer response parser ──
 
 export function parseProducerResponse(raw: string): ProducerResult {
   const extracted = extractJson(raw);
