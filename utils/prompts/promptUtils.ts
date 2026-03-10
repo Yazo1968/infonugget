@@ -41,7 +41,7 @@ export function buildExpertPriming(subject?: string): string {
 // Prompt Utilities for gemini-3.1-flash-image-preview
 // ─────────────────────────────────────────────────────────────────
 // Structured prompt format using XML-delimited sections
-// (<role>, <design_system>, <layout_brief>, <rules>, <content>)
+// (<role>, <design_system>, <rules>, <content>)
 // for clear separation of style, layout, and content concerns.
 // Content preserved in native markdown (headings, bullets).
 // ─────────────────────────────────────────────────────────────────
@@ -65,148 +65,17 @@ export function buildExpertPriming(subject?: string): string {
  */
 export function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
-  // Strip horizontal rules
-  content = content.replace(/^---+$/gm, '');
   // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, '');
-  // Strip bold/italic markers but keep text
-  content = content.replace(/\*\*(.+?)\*\*/g, '$1');
-  content = content.replace(/\*(.+?)\*/g, '$1');
-  // Preserve bullet markers (- and *) and numbered lists as-is
   // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, '\n\n');
   content = content.trim();
-  return `<content>\nTitle: ${cardTitle}\n\n${content}\n</content>`;
+  return `Title: ${cardTitle}\n\n${content}`;
 }
 
 /** @deprecated Use prepareContentBlock instead. Kept for backward compat with imageGeneration.ts. */
 export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
   return prepareContentBlock(synthesisContent, cardTitle);
-}
-
-// ─────────────────────────────────────────────────────────────────
-// B2: Sanitize Planner Output
-// ─────────────────────────────────────────────────────────────────
-// Safety net that strips any residual toxic patterns from the
-// planner's output before it reaches the image model. Catches
-// font names, point sizes, hex colors, and key-value patterns
-// that the planner was told not to produce but might anyway.
-// ─────────────────────────────────────────────────────────────────
-
-// Known font families that should never appear in planner output
-const FONT_NAMES = [
-  'Montserrat',
-  'Inter',
-  'Roboto',
-  'Open Sans',
-  'Lato',
-  'Poppins',
-  'Raleway',
-  'Nunito',
-  'Source Sans',
-  'Work Sans',
-  'DM Sans',
-  'Playfair Display',
-  'Merriweather',
-  'Lora',
-  'Georgia',
-  'Garamond',
-  'PT Serif',
-  'Libre Baskerville',
-  'Source Serif',
-  'Crimson Text',
-  'Source Code Pro',
-  'Fira Code',
-  'JetBrains Mono',
-  'IBM Plex Mono',
-  'IBM Plex Sans',
-  'Helvetica',
-  'Arial',
-  'Verdana',
-  'Tahoma',
-  'Trebuchet',
-  // Additional fonts from STYLE_FONTS
-  'Bebas Neue',
-  'Orbitron',
-  'Rajdhani',
-  'Oswald',
-  'Impact',
-  'Arial Black',
-  'DIN Condensed',
-  'Pacifico',
-  'Comic Sans MS',
-  'Rubik',
-  'Quicksand',
-  'Futura',
-  'Courier New',
-];
-
-export function sanitizePlannerOutput(plannerText: string): string {
-  let text = plannerText;
-
-  // ── Strip markdown formatting (leakage vectors for image model) ──
-
-  // Remove heading markers
-  text = text.replace(/^#{1,6}\s+/gm, '');
-
-  // Remove bold markers
-  text = text.replace(/\*\*(.+?)\*\*/g, '$1');
-
-  // Remove italic markers
-  text = text.replace(/\*(.+?)\*/g, '$1');
-
-  // Remove horizontal rules
-  text = text.replace(/^---+$/gm, '');
-
-  // Remove numbered list prefixes but keep the text
-  text = text.replace(/^\d+\.\s+/gm, '');
-
-  // Remove bullet dashes but keep the text
-  text = text.replace(/^[\s]*[-*]\s+/gm, '');
-
-  // ── Strip toxic payload patterns ──
-
-  // Remove lines that are purely font specifications
-  // Pattern: "Title: FontName Bold, 42pt, ..."
-  text = text.replace(
-    /^.*?:\s*(?:(?:Montserrat|Inter|Roboto|Open Sans|Lato|Poppins|Raleway|Nunito|Helvetica|Arial|Bebas Neue|Orbitron|Rajdhani|Oswald|Impact|DIN Condensed|Pacifico|Comic Sans MS|Rubik|Quicksand|Futura|Courier New|IBM Plex Sans|IBM Plex Mono)\s+(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)\s*,?\s*\d+(?:-\d+)?pt).*$/gim,
-    '',
-  );
-
-  // Remove standalone point size specs (e.g., "36pt", "22-28pt", "36-48pt")
-  text = text.replace(/\b\d{1,3}(?:-\d{1,3})?pt\b/gi, '');
-
-  // Remove hex color codes (#RRGGBB or #RGB)
-  text = text.replace(/#[0-9A-Fa-f]{3,8}\b/g, '');
-
-  // Remove known font names when they appear as nouns (not inside content)
-  for (const font of FONT_NAMES) {
-    // Replace font name when it appears in a typography/font context
-    // Use word boundary to avoid partial matches
-    const escaped = font.replace(/\s+/g, '\\s+');
-    text = text.replace(
-      new RegExp(`\\b${escaped}\\b\\s*(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)?`, 'gi'),
-      '',
-    );
-  }
-
-  // Remove font weight + size combos that slipped through (e.g., "Bold, 42pt")
-  text = text.replace(/\b(?:Bold|SemiBold|Regular|Medium|Light)\s*,?\s*\d+(?:-\d+)?pt/gi, '');
-
-  // Remove pixel values (e.g., "24px", "1920x1080")
-  text = text.replace(/\b\d{2,4}x\d{2,4}\b/g, '');
-  text = text.replace(/\b\d+px\b/gi, '');
-
-  // Clean up orphaned commas, colons, and dashes from removed content
-  text = text.replace(/,\s*,/g, ',');
-  text = text.replace(/:\s*$/gm, '');
-  text = text.replace(/:\s*,/g, ':');
-
-  // Collapse excessive whitespace
-  text = text.replace(/[ \t]{2,}/g, ' ');
-  text = text.replace(/\n{3,}/g, '\n\n');
-
-  return text.trim();
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -571,11 +440,14 @@ function detectPaletteStyleConflict(style: string, palette: StylingOptions['pale
 }
 
 /**
- * Builds a compact design system block using XML delimiters.
- * Replaces the old narrative style block with structured key-value format
- * that Gemini can parse more reliably.
+ * Builds a plain-text style block for the image prompt.
+ * No XML tags — just style identity, palette (hex), typography, canvas.
  */
 export function buildDesignSystemBlock(settings: StylingOptions): string {
+  return buildStyleBlock(settings);
+}
+
+export function buildStyleBlock(settings: StylingOptions): string {
   const identity = STYLE_IDENTITIES[settings.style] || '';
   const styleDesc = identity
     ? `${settings.style} — ${identity}`
@@ -586,12 +458,10 @@ export function buildDesignSystemBlock(settings: StylingOptions): string {
   const typeLine = pFontDesc === sFontDesc
     ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
     : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
-  return `<design_system>
-Style: ${styleDesc}
+  return `${styleDesc}
 Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
 ${typeLine}
-Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}
-</design_system>`;
+Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}`;
 }
 
 /** @deprecated Use buildDesignSystemBlock instead. Kept for backward compat. */
@@ -600,46 +470,33 @@ export function buildNarrativeStyleBlock(settings: StylingOptions): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// S7 / B3: Prompt Assembler
+// Prompt Assembler — 4-Section Template
 // ─────────────────────────────────────────────────────────────────
-// Composes the complete image-model prompt with XML-delimited sections:
-// 1. <role> — expert identity & domain context
-// 2. <design_system> — style, palette (hex), typography, canvas
-// 3. <layout_brief> — planner keywords or auto-layout
-// 4. <rules> — rendering constraints
-// 5. <content> — native markdown with headings & bullets
+// Subject → Instructions (static) → Style (injected) → Content (as-is)
 // ─────────────────────────────────────────────────────────────────
 
 export function assembleRendererPrompt(
   cardTitle: string,
   synthesisContent: string,
   settings: StylingOptions,
-  plannerOutput?: string,
   referenceNote?: string,
   subject?: string,
 ): string {
-  const domainClause = subject
-    ? ` Domain: "${subject}" — use domain-appropriate visual metaphors and iconography.`
-    : '';
-  const role = `<role>Expert Information Designer. Create a visually striking infographic.${domainClause}</role>`;
-  const designSystem = buildDesignSystemBlock(settings);
-  let layoutBlock: string;
-  if (plannerOutput) {
-    const cleanPlan = sanitizePlannerOutput(plannerOutput);
-    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
-  } else {
-    layoutBlock = `<layout_brief>\nAuto: choose the spatial arrangement that best fits the content hierarchy — grids, flowing sections, or radial layouts as appropriate.\n</layout_brief>`;
-  }
-  let refBlock = '';
-  if (referenceNote) refBlock = `\n\n${referenceNote}`;
-  const rules = `<rules>
-- The style described in design_system is non-negotiable and overrides any visual suggestions in layout_brief
-- Render ALL text from content section — never omit any heading, bullet, statistic, or detail
-- Adapt layout density rather than dropping content — reduce whitespace, add rows, use denser arrangement
-- Use ## headings for section titles and - bullets for list items to determine visual weight
-- All text must be legible with high contrast against its background
-- Do NOT render any XML tags, markdown syntax (##, -, *), or structural markers as visible text
-</rules>`;
+  const subjectLine = subject || 'Not specified';
+  const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
-  return `${role}\n\n${designSystem}${refBlock}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
+  let refLine = '';
+  if (referenceNote) refLine = `\n\n${referenceNote}`;
+
+  return `• Subject:
+${subjectLine}
+
+• Instructions:
+Generate a slide for this content showing the relations, hierarchy, flow, logic to make the content fully understandable by the viewer. When applicable use charts (bar, column, radar, tornado, graph or any other suitable chart), use infographics, use stats, timelines, diagrams (hierarchy, flow...etc.). Use the content given and do not assume, extrapolate or infer content other than the content provided.
+
+• Style:
+${styleBlock}${refLine}
+
+• Content:
+${contentBlock}`;
 }

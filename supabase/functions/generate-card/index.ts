@@ -120,9 +120,6 @@ function isCoverLevel(level: string): boolean {
   return level === "TitleCard" || level === "TakeawayCard" || level === "DirectContent";
 }
 
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
-}
 
 function describeCanvas(ar: string): string {
   if (ar === "9:16") return "portrait — taller than wide";
@@ -250,7 +247,7 @@ interface StylingOptions {
   resolution: string;
 }
 
-function buildDesignSystemBlock(settings: StylingOptions): string {
+function buildStyleBlock(settings: StylingOptions): string {
   const identity = STYLE_IDENTITIES[settings.style] || "";
   const styleDesc = identity
     ? `${settings.style} — ${identity}`
@@ -261,88 +258,48 @@ function buildDesignSystemBlock(settings: StylingOptions): string {
   const typeLine = pFontDesc === sFontDesc
     ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
     : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
-  return `<design_system>
-Style: ${styleDesc}
+  return `${styleDesc}
 Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
 ${typeLine}
-Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}
-</design_system>`;
+Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}`;
 }
 
 function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
-  // Strip horizontal rules
-  content = content.replace(/^---+$/gm, "");
   // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, "");
-  // Strip bold/italic markers but keep text
-  content = content.replace(/\*\*(.+?)\*\*/g, "$1");
-  content = content.replace(/\*(.+?)\*/g, "$1");
-  // Preserve bullet markers (- and *) and numbered lists as-is
   // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  return `<content>\nTitle: ${cardTitle}\n\n${content}\n</content>`;
+  return `Title: ${cardTitle}\n\n${content}`;
 }
 
 function prepareCoverContentBlock(coverContent: string): string {
   let content = coverContent;
-  // Strip bold/italic markers but keep text
-  content = content.replace(/\*\*(.+?)\*\*/g, "$1");
-  content = content.replace(/\*(.+?)\*/g, "$1");
+  // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  // Keep markdown headings (#, ##) and bullets (- ) as-is
-  return `<content>\n${content}\n</content>`;
+  return content;
 }
 
-const FONT_NAMES = ["Montserrat","Inter","Roboto","Open Sans","Lato","Poppins","Raleway","Nunito","Source Sans","Work Sans","DM Sans","Playfair Display","Merriweather","Lora","Georgia","Garamond","PT Serif","Libre Baskerville","Source Serif","Crimson Text","Source Code Pro","Fira Code","JetBrains Mono","IBM Plex Mono","IBM Plex Sans","Helvetica","Arial","Verdana","Tahoma","Trebuchet","Bebas Neue","Orbitron","Rajdhani","Oswald","Impact","Arial Black","DIN Condensed","Pacifico","Comic Sans MS","Rubik","Quicksand","Futura","Courier New"];
-
-function sanitizePlannerOutput(plannerText: string): string {
-  let text = plannerText;
-  text = text.replace(/^#{1,6}\s+/gm, "");
-  text = text.replace(/\*\*(.+?)\*\*/g, "$1");
-  text = text.replace(/\*(.+?)\*/g, "$1");
-  text = text.replace(/^---+$/gm, "");
-  text = text.replace(/^\d+\.\s+/gm, "");
-  text = text.replace(/^[\s]*[-*]\s+/gm, "");
-  text = text.replace(/#[0-9A-Fa-f]{3,8}\b/g, "");
-  for (const font of FONT_NAMES) {
-    const escaped = font.replace(/\s+/g, "\\s+");
-    text = text.replace(new RegExp(`\\b${escaped}\\b\\s*(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)?`, "gi"), "");
-  }
-  text = text.replace(/\b\d{1,3}(?:-\d{1,3})?pt\b/gi, "");
-  text = text.replace(/\b\d{2,4}x\d{2,4}\b/g, "");
-  text = text.replace(/\b\d+px\b/gi, "");
-  text = text.replace(/[ \t]{2,}/g, " ");
-  text = text.replace(/\n{3,}/g, "\n\n");
-  return text.trim();
-}
-
-function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, plannerOutput?: string, referenceNote?: string, subject?: string): string {
-  const domainClause = subject ? ` Domain: "${subject}" — use domain-appropriate visual metaphors and iconography.` : "";
-  const role = `<role>Expert Information Designer. Create a visually striking infographic.${domainClause}</role>`;
-  const designSystem = buildDesignSystemBlock(settings);
-  let layoutBlock: string;
-  if (plannerOutput) {
-    const cleanPlan = sanitizePlannerOutput(plannerOutput);
-    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
-  } else {
-    layoutBlock = `<layout_brief>\nAuto: choose the spatial arrangement that best fits the content hierarchy — grids, flowing sections, or radial layouts as appropriate.\n</layout_brief>`;
-  }
-  let refBlock = "";
-  if (referenceNote) refBlock = `\n\n${referenceNote}`;
-  const rules = `<rules>
-- The style described in design_system is non-negotiable and overrides any visual suggestions in layout_brief
-- Render ONLY text from the content section — never omit any heading, bullet, statistic, or detail, but also never add, invent, infer, or elaborate text that is not explicitly present in the content section
-- The layout_brief describes spatial structure only — do NOT render any words or phrases from the layout_brief as visible text on the image
-- Adapt layout density rather than dropping content — reduce whitespace, add rows, use denser arrangement
-- Use ## headings for section titles and - bullets for list items to determine visual weight
-- All text must be legible with high contrast against its background
-- Do NOT render any XML tags, markdown syntax (##, -, *), or structural markers as visible text
-</rules>`;
+function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, subject?: string): string {
+  const subjectLine = subject || "Not specified";
+  const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
-  return `${role}\n\n${designSystem}${refBlock}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
+  let refLine = "";
+  if (referenceNote) refLine = `\n\n${referenceNote}`;
+
+  return `• Subject:
+${subjectLine}
+
+• Instructions:
+Generate a slide for this content showing the relations, hierarchy, flow, logic to make the content fully understandable by the viewer. When applicable use charts (bar, column, radar, tornado, graph or any other suitable chart), use infographics, use stats, timelines, diagrams (hierarchy, flow...etc.). Use the content given and do not assume, extrapolate or infer content other than the content provided.
+
+• Style:
+${styleBlock}${refLine}
+
+• Content:
+${contentBlock}`;
 }
 
 function buildContentPrompt(cardTitle: string, level: string, subject?: string): string {
@@ -377,87 +334,28 @@ function buildCoverContentPrompt(cardTitle: string, coverType: string, subject?:
   return `${expertPriming ? expertPriming + "\n\n" : ""}Cover Slide Content — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section.\n\n**Task:** Generate content for a TAKEAWAY CARD SLIDE. Use "${cardTitle}" as the title.\n\n**Output format (strict):**\n# [Title — 2-8 words]\n- [Takeaway bullet 1]\n- [Takeaway bullet 2]\n- [Takeaway bullet 3 (optional)]\n\n**WORD COUNT:** 40-60 words total. Hard limit.\n\n**Output:** Return ONLY the cover content starting with #. No preamble.`.trim();
 }
 
-function buildPlannerPrompt(cardTitle: string, synthesisContent: string, aspectRatio: string, previousPlan?: string, subject?: string): string {
-  const wordCount = countWords(synthesisContent);
-  const canvasDescription = describeCanvas(aspectRatio);
-  let diversityClause = "";
-  if (previousPlan) {
-    diversityClause = `\nPREVIOUS CONCEPT (do not repeat): ${previousPlan.slice(0, 400)}\n`;
-  }
-  const domainContext = subject ? `\nDomain: "${subject}"\n` : "";
-  return `LAYOUT BRIEF — [${cardTitle}]${domainContext}
-Canvas: ${aspectRatio} (${canvasDescription}), ~${wordCount} words
-${diversityClause}
-CONTENT:
----
-${synthesisContent}
----
-
-Produce a concise layout brief (80-120 words) as bullet points covering:
-
-DATA RELATIONSHIPS: What connects to what? (e.g., cause-effect, comparison, sequence, hierarchy)
-CONTENT GROUPINGS: Which items belong together? Reference all content items.
-LAYOUT TYPE: Single keyword (e.g., timeline, comparison-grid, radial, flow-chart, stacked-sections, dashboard)
-FOCAL HIERARCHY: Rank content by importance (most → least prominent)
-
-FORMAT: Short bullet points and keywords only. No prose paragraphs, no visual descriptions of how things should look, no descriptions of shapes/decorations/backgrounds.
-
-FORBIDDEN: colors, fonts, sizes, positions, container descriptions, prose narratives about visual appearance. Focus on data logic and content structure only.
-
-CRITICAL: Do NOT elaborate, expand, or invent details beyond what is explicitly stated in the content. Describe structure and relationships using ONLY concepts and terms that appear in the content above. If the content mentions a concept without detail, reference it by name only — do NOT fill in specifics from domain knowledge.`.trim();
+function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, subject?: string): string {
+  return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, subject);
 }
 
-function buildCoverPlannerPrompt(cardTitle: string, coverContent: string, style: string, aspectRatio: string, coverType: string): string {
-  const canvasDescription = describeCanvas(aspectRatio);
-  const coverKind = coverType === "TitleCard" ? "Title Card" : "Takeaway Card";
-  return `COVER LAYOUT BRIEF — [${cardTitle}]
-
-Type: ${coverKind}
-Canvas: ${aspectRatio} (${canvasDescription})
-
-CONTENT:
----
-${coverContent}
----
-
-Produce a concise layout brief (60-80 words) as bullet points:
-
-COMPOSITION: Where does the title sit? (e.g., centered, upper-third, left-aligned)
-FOCAL POINT: What draws the eye first?
-TEXT HIERARCHY: Title → subtitle → tagline/bullets ordering
-DECORATIVE APPROACH: Keywords only (e.g., geometric-shapes, gradient-fill, minimal-lines)
-
-This is a cover slide — NOT a data infographic. No charts, grids, or multi-section layouts.
-
-FORMAT: Short bullet points and keywords only. No prose paragraphs.
-FORBIDDEN: font names, sizes, colors, pixel values, detailed visual descriptions.`.trim();
-}
-
-function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, visualPlan?: string, subject?: string): string {
-  return assembleRendererPrompt(cardTitle, contentToMap, settings, visualPlan, undefined, subject);
-}
-
-function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, visualPlan?: string, coverType?: string): string {
-  const role = `<role>Expert cover slide designer. Create a bold, brand-forward cover slide — NOT a data infographic. No charts, data grids, or multi-section layouts. The title must be the largest, most dominant text. Fill the entire canvas — no empty white areas.</role>`;
-  const designSystem = buildDesignSystemBlock(settings);
-  let layoutBlock: string;
-  if (visualPlan) {
-    const cleanPlan = sanitizePlannerOutput(visualPlan);
-    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
-  } else {
-    const autoLayout = coverType === "TakeawayCard"
-      ? "Title prominent in upper portion. Takeaway bullets as clean vertical list below. Fill remaining canvas with style-driven decorative elements."
-      : "Title centered as dominant hero element. Subtitle below. Tagline at bottom edge if present. Fill canvas with style-driven decorative elements.";
-    layoutBlock = `<layout_brief>\n${autoLayout}\n</layout_brief>`;
-  }
-  const rules = `<rules>
-- The title is the hero element — largest, boldest, immediately readable
-- The style in design_system overrides any visual suggestions in layout_brief
-- All text must be legible with high contrast
-- Do NOT render any XML tags, markdown syntax (#, ##, -), or structural markers as visible text
-</rules>`;
+function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, coverType?: string): string {
+  const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareCoverContentBlock(coverContent);
-  return `${role}\n\n${designSystem}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
+  const coverInstruction = coverType === "TakeawayCard"
+    ? "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text. Title prominent in upper portion. Takeaway bullets as clean vertical list below. Fill remaining canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts."
+    : "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text, centered as dominant hero element. Subtitle below. Tagline at bottom edge if present. Fill canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts.";
+
+  return `• Subject:
+Cover slide
+
+• Instructions:
+${coverInstruction}
+
+• Style:
+${styleBlock}
+
+• Content:
+${contentBlock}`;
 }
 
 // ── Storage helpers ──
@@ -495,7 +393,7 @@ Deno.serve(async (req: Request) => {
     const {
       nuggetId, cardId, cardTitle, detailLevel,
       settings, subject,
-      existingSynthesis, previousPlan,
+      existingSynthesis,
       documents, // Array of { fileId, name, sourceType, structure?, content? }
       referenceImage, // { base64, mimeType } or null
       skipSynthesis, // boolean — skip phase 1 if synthesis already exists
@@ -594,31 +492,11 @@ Deno.serve(async (req: Request) => {
     }
 
     // ══════════════════════════════════════════════════════════════
-    // PHASE 2: Layout Planning (Claude)
-    // ══════════════════════════════════════════════════════════════
-    let visualPlan = "";
-    try {
-      const plannerPrompt = isCover
-        ? buildCoverPlannerPrompt(cardTitle, synthesisContent, settings.style, settings.aspectRatio, detailLevel)
-        : buildPlannerPrompt(cardTitle, synthesisContent, settings.aspectRatio, previousPlan, subject);
-
-      const plannerResult = await callClaude({
-        model: CLAUDE_MODEL,
-        max_tokens: 1024,
-        temperature: 0.7,
-        messages: [{ role: "user", content: plannerPrompt }],
-      });
-      visualPlan = plannerResult.text;
-    } catch (err) {
-      console.warn("Planner failed, continuing without plan:", (err as Error).message);
-    }
-
-    // ══════════════════════════════════════════════════════════════
-    // PHASE 3: Image Generation (Gemini)
+    // PHASE 2: Image Generation (Gemini)
     // ══════════════════════════════════════════════════════════════
     const imagePrompt = isCover
-      ? buildCoverVisualizerPrompt(cardTitle, synthesisContent, settings, visualPlan || undefined, detailLevel)
-      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, visualPlan || undefined, subject);
+      ? buildCoverVisualizerPrompt(cardTitle, synthesisContent, settings, detailLevel)
+      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, subject);
 
     const parts: any[] = [];
     // Add reference image if provided
@@ -628,7 +506,7 @@ Deno.serve(async (req: Request) => {
     parts.push({ text: imagePrompt });
 
     const imageConfig = {
-      ...{ thinkingConfig: { thinkingLevel: "Minimal" }, responseModalities: ["TEXT", "IMAGE"] },
+      ...{ thinkingConfig: { thinkingLevel: "High" }, responseModalities: ["TEXT", "IMAGE"] },
       imageConfig: { aspectRatio: settings.aspectRatio.replace(":", ":"), imageSize: settings.resolution === "4K" ? "4K" : settings.resolution === "2K" ? "2K" : "1K" },
     };
 
@@ -748,7 +626,6 @@ Deno.serve(async (req: Request) => {
               synthesisMap: { ...(item.synthesisMap || {}), [detailLevel]: synthesisContent },
               activeImageMap: { ...(item.activeImageMap || {}), [detailLevel]: signedUrl },
               albumMap: { ...(item.albumMap || {}), [detailLevel]: album },
-              visualPlanMap: { ...(item.visualPlanMap || {}), [detailLevel]: visualPlan },
               lastGeneratedContentMap: { ...(item.lastGeneratedContentMap || {}), [detailLevel]: synthesisContent },
               lastPromptMap: { ...(item.lastPromptMap || {}), [detailLevel]: imagePrompt },
               isGeneratingMap: { ...(item.isGeneratingMap || {}), [detailLevel]: false },
@@ -772,7 +649,6 @@ Deno.serve(async (req: Request) => {
       imageUrl: signedUrl,
       storagePath,
       synthesisContent,
-      visualPlan,
       imagePrompt,
       geminiUsage,
     });

@@ -159,8 +159,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
       // Cover prompt reconstruction not available client-side — return synthesis as fallback
       return null;
     }
-    const plan = activeCard.visualPlanMap?.[activeLogicTab];
-    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings, plan);
+    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings);
   }, [activeCard, activeLogicTab, committedSettings]);
 
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];

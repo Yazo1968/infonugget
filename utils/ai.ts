@@ -222,7 +222,7 @@ const _FLASH_TEXT_CONFIG = {
 
 /** Config for Gemini image generation calls. Supported levels: Minimal (default), High. */
 export const PRO_IMAGE_CONFIG = {
-  thinkingConfig: { thinkingLevel: 'Minimal' as any },
+  thinkingConfig: { thinkingLevel: 'High' as any },
   responseModalities: ['TEXT', 'IMAGE'],
 };
 

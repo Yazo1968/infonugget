@@ -60,7 +60,6 @@ export interface GenerateCardRequest {
   settings: StylingOptions;
   subject?: string;
   existingSynthesis?: string;
-  previousPlan?: string;
   documents?: Array<{
     fileId?: string;
     name: string;
@@ -78,7 +77,6 @@ export interface GenerateCardResponse {
   imageUrl: string;
   storagePath: string;
   synthesisContent: string;
-  visualPlan: string;
   imagePrompt?: string;
   geminiUsage: unknown;
 }
