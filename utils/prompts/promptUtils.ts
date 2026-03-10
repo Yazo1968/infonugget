@@ -40,53 +40,48 @@ export function buildExpertPriming(subject?: string): string {
 // ─────────────────────────────────────────────────────────────────
 // Prompt Utilities for gemini-3.1-flash-image-preview
 // ─────────────────────────────────────────────────────────────────
-// All functions in this file produce narrative prose optimized for
-// the image generation model. No markdown, no XML, no key-value
-// pairs — these are leakage vectors in image-model prompts.
+// Structured prompt format using XML-delimited sections
+// (<role>, <design_system>, <layout_brief>, <rules>, <content>)
+// for clear separation of style, layout, and content concerns.
+// Content preserved in native markdown (headings, bullets).
 // ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────
-// S2 / B1: Content Markdown → Bracketed Tags
+// S2 / B1: Content Preparation for Image Model
 // ─────────────────────────────────────────────────────────────────
-// Transforms synthesis output (standard markdown) into bracketed
-// structural tags safe for the image model. The synthesis phase
-// continues to output markdown for other consumers; this transform
-// is applied only when assembling the image-model prompt.
+// Prepares synthesis content for the image model prompt. Strips
+// formatting markers (bold, italic, HR) while preserving headings
+// and bullet structure in native markdown. Wrapped in <content> tags.
 // ─────────────────────────────────────────────────────────────────
 
-export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
+/**
+ * Prepares synthesis content for the image generation prompt.
+ * Preserves native markdown structure (headings, bullets) instead of
+ * converting to bracketed tags — Gemini understands markdown natively
+ * and won't render ## or - as visible text (unlike [SECTION] tags).
+ *
+ * @deprecated transformContentToTags — replaced by this function.
+ * Legacy alias kept below for backward compatibility with imageGeneration.ts.
+ */
+export function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
-
   // Strip horizontal rules
   content = content.replace(/^---+$/gm, '');
-
-  // Convert heading levels to bracketed tags (most specific first)
-  // #### Sub-subsection → [DETAIL] Sub-subsection
-  content = content.replace(/^####\s+(.+)$/gm, '[DETAIL] $1');
-  // ### Subheading → [SUBSECTION] Subheading
-  content = content.replace(/^###\s+(.+)$/gm, '[SUBSECTION] $1');
-  // ## Heading → [SECTION] Heading
-  content = content.replace(/^##\s+(.+)$/gm, '[SECTION] $1');
-  // # Title → strip entirely (the wrapper adds [TITLE] from cardTitle, so inline H1s are duplicates)
+  // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, '');
-
-  // Strip bold markers
+  // Strip bold/italic markers but keep text
   content = content.replace(/\*\*(.+?)\*\*/g, '$1');
-
-  // Strip italic markers
   content = content.replace(/\*(.+?)\*/g, '$1');
-
-  // Strip bullet dashes (leading - or * list items) — keep the text
-  content = content.replace(/^[\s]*[-*]\s+/gm, '');
-
-  // Collapse excessive blank lines to single blank line
+  // Preserve bullet markers (- and *) and numbered lists as-is
+  // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, '\n\n');
-
-  // Trim
   content = content.trim();
+  return `<content>\nTitle: ${cardTitle}\n\n${content}\n</content>`;
+}
 
-  // Wrap with title and delimiters
-  return `[BEGIN TEXT CONTENT]\n[TITLE] ${cardTitle}\n\n${content}\n[END TEXT CONTENT]`;
+/** @deprecated Use prepareContentBlock instead. Kept for backward compat with imageGeneration.ts. */
+export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
+  return prepareContentBlock(synthesisContent, cardTitle);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -576,61 +571,43 @@ function detectPaletteStyleConflict(style: string, palette: StylingOptions['pale
 }
 
 /**
- * Builds the complete narrative style block from user settings.
- * Produces two paragraphs: color palette and typography.
- * All in narrative prose — no key-value pairs, no lists, no markdown.
+ * Builds a compact design system block using XML delimiters.
+ * Replaces the old narrative style block with structured key-value format
+ * that Gemini can parse more reliably.
  */
-export function buildNarrativeStyleBlock(settings: StylingOptions): string {
-  // ── Style Identity (creative driver) ──
+export function buildDesignSystemBlock(settings: StylingOptions): string {
   const identity = STYLE_IDENTITIES[settings.style] || '';
-  const styleParagraph = identity
-    ? `Design this infographic in a ${settings.style} aesthetic. ${identity} ` +
-      `Let this style drive every visual decision — shapes, decorations, title treatments, ` +
-      `section dividers, background textures, and iconography.`
-    : `Design this infographic in a bold ${settings.style} aesthetic. Let the ${settings.style} style ` +
-      `drive every visual decision — shapes, decorations, title treatments, section dividers, ` +
-      `background textures, and iconography should all feel authentically ${settings.style}.`;
+  const styleDesc = identity
+    ? `${settings.style} — ${identity}`
+    : `${settings.style}`;
+  const p = settings.palette;
+  const pFontDesc = fontToDescriptor(settings.fonts.primary);
+  const sFontDesc = fontToDescriptor(settings.fonts.secondary);
+  const typeLine = pFontDesc === sFontDesc
+    ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
+    : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
+  return `<design_system>
+Style: ${styleDesc}
+Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
+${typeLine}
+Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}
+</design_system>`;
+}
 
-  // ── Color Palette ──
-  const bgName = hexToColorName(settings.palette.background);
-  const primaryName = hexToColorName(settings.palette.primary);
-  const secondaryName = hexToColorName(settings.palette.secondary);
-  const accentName = hexToColorName(settings.palette.accent);
-  const textName = hexToColorName(settings.palette.text);
-
-  const hasConflict = detectPaletteStyleConflict(settings.style, settings.palette);
-  const overrideClause = hasConflict ? ` Use this custom palette instead of the typical ${settings.style} colors.` : '';
-
-  const paletteParagraph =
-    `Color palette: ${bgName} (${settings.palette.background}) background, ` +
-    `${primaryName} (${settings.palette.primary}) for headers and primary elements, ` +
-    `${secondaryName} (${settings.palette.secondary}) for secondary accents, ` +
-    `${accentName} (${settings.palette.accent}) for callout numbers and highlights, ` +
-    `${textName} (${settings.palette.text}) for body text. ` +
-    `Stay within these five colors but allow natural tonal variation for depth and dimension.${overrideClause}`;
-
-  // ── Typography ──
-  const primaryFontDesc = fontToDescriptor(settings.fonts.primary);
-  const secondaryFontDesc = fontToDescriptor(settings.fonts.secondary);
-
-  const sameFamily = primaryFontDesc === secondaryFontDesc;
-  const typographyParagraph = sameFamily
-    ? `Use a ${primaryFontDesc} typeface throughout. Maintain a clear size hierarchy ` +
-      `from title to headers to body text. All text must be legible.`
-    : `Use a ${primaryFontDesc} typeface for titles and headers, and a ${secondaryFontDesc} ` +
-      `typeface for body text. Maintain a clear size hierarchy. All text must be legible.`;
-
-  return `${styleParagraph}\n\n${paletteParagraph}\n\n${typographyParagraph}`;
+/** @deprecated Use buildDesignSystemBlock instead. Kept for backward compat. */
+export function buildNarrativeStyleBlock(settings: StylingOptions): string {
+  return buildDesignSystemBlock(settings);
 }
 
 // ─────────────────────────────────────────────────────────────────
 // S7 / B3: Prompt Assembler
 // ─────────────────────────────────────────────────────────────────
-// Composes the complete image-model prompt in optimal order:
-// 1. Role & output type
-// 2. Visual style & palette (narrative)
-// 3. Layout structure (from planner or auto-inferred)
-// 4. Content to render (bracketed tags)
+// Composes the complete image-model prompt with XML-delimited sections:
+// 1. <role> — expert identity & domain context
+// 2. <design_system> — style, palette (hex), typography, canvas
+// 3. <layout_brief> — planner keywords or auto-layout
+// 4. <rules> — rendering constraints
+// 5. <content> — native markdown with headings & bullets
 // ─────────────────────────────────────────────────────────────────
 
 export function assembleRendererPrompt(
@@ -641,54 +618,28 @@ export function assembleRendererPrompt(
   referenceNote?: string,
   subject?: string,
 ): string {
-  // 1. Role — open-ended, lets style drive the aesthetic
   const domainClause = subject
-    ? ` The content belongs to the domain of "${subject}" — use domain-appropriate visual metaphors, iconography, and diagram conventions.`
+    ? ` Domain: "${subject}" — use domain-appropriate visual metaphors and iconography.`
     : '';
-  const role = `You are an expert Information Designer. Create a visually striking infographic.${domainClause}`;
-
-  // 2. Style & Palette (narrative prose from settings — style leads)
-  const styleBlock = buildNarrativeStyleBlock(settings);
-
-  // 3. Layout — planner output sandwiched with style enforcement
+  const role = `<role>Expert Information Designer. Create a visually striking infographic.${domainClause}</role>`;
+  const designSystem = buildDesignSystemBlock(settings);
   let layoutBlock: string;
   if (plannerOutput) {
     const cleanPlan = sanitizePlannerOutput(plannerOutput);
-    layoutBlock =
-      `Use the following creative brief to guide the information architecture and visual concept. ` +
-      `Interpret it strictly within the ${settings.style} style described above — the style identity ` +
-      `is non-negotiable and takes precedence over any visual interpretation of the brief.\n\n` +
-      `${cleanPlan}\n\n` +
-      `Every single piece of text content provided below must appear in the final image — ` +
-      `no heading, bullet point, statistic, or detail may be omitted. If the layout concept ` +
-      `cannot fit all the content, adapt the layout rather than dropping text. Reduce whitespace, ` +
-      `add rows, extend sections, or use a denser arrangement — but never cut content. ` +
-      `All text must be legible with high contrast.`;
+    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
   } else {
-    layoutBlock =
-      `Choose the spatial arrangement that best fits the content hierarchy — ` +
-      `grids, flowing sections, or radial layouts as appropriate. ` +
-      `Every single piece of text content provided below must appear in the final image — ` +
-      `no heading, bullet point, statistic, or detail may be omitted. If the layout ` +
-      `cannot fit all the content, adapt it rather than dropping text. ` +
-      `All text must be legible with high contrast.`;
+    layoutBlock = `<layout_brief>\nAuto: choose the spatial arrangement that best fits the content hierarchy — grids, flowing sections, or radial layouts as appropriate.\n</layout_brief>`;
   }
-
-  // 4. Content (transformed from markdown to bracketed tags)
-  const contentBlock = transformContentToTags(synthesisContent, cardTitle);
-
-  // 5. Tag rendering instruction — the Flash image model renders bracketed
-  //    tags as literal text unless explicitly told not to.
-  const tagInstruction =
-    'The content below uses bracketed tags like [TITLE], [SECTION], [SUBSECTION], ' +
-    '[DETAIL], [BEGIN TEXT CONTENT], and [END TEXT CONTENT] to indicate text hierarchy. ' +
-    'These tags are structural markers only — do NOT render them as visible text in the image. ' +
-    'Render only the text that follows each tag, using the tag to determine visual weight ' +
-    '(TITLE = largest, SECTION = heading, SUBSECTION = subheading, DETAIL = minor heading).';
-
-  // Assemble: role → style → [reference] → layout → tag instruction → content
-  const blocks = [role, styleBlock];
-  if (referenceNote) blocks.push(referenceNote);
-  blocks.push(layoutBlock, tagInstruction, contentBlock);
-  return blocks.join('\n\n');
+  let refBlock = '';
+  if (referenceNote) refBlock = `\n\n${referenceNote}`;
+  const rules = `<rules>
+- The style described in design_system is non-negotiable and overrides any visual suggestions in layout_brief
+- Render ALL text from content section — never omit any heading, bullet, statistic, or detail
+- Adapt layout density rather than dropping content — reduce whitespace, add rows, use denser arrangement
+- Use ## headings for section titles and - bullets for list items to determine visual weight
+- All text must be legible with high contrast against its background
+- Do NOT render any XML tags, markdown syntax (##, -, *), or structural markers as visible text
+</rules>`;
+  const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
+  return `${role}\n\n${designSystem}${refBlock}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
 }

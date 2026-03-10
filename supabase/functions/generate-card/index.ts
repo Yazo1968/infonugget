@@ -14,7 +14,7 @@ const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const IMAGE_EMPTY_RETRIES = 2;
 
 const CARD_TOKEN_LIMITS: Record<string, number> = {
-  TitleCard: 150, TakeawayCard: 350, Executive: 300, Standard: 600, Detailed: 1200,
+  TitleCard: 150, TakeawayCard: 350, Executive: 143, Standard: 338, Detailed: 663,
 };
 const COVER_TOKEN_LIMIT = 256;
 
@@ -38,7 +38,9 @@ function errRes(msg: string, status = 500) {
 async function verifyUser(req: Request) {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return null;
-  const supabase = createClient(SUPABASE_URL, Deno.env.get("SUPABASE_ANON_KEY")!, {
+  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!anonKey) return null;
+  const supabase = createClient(SUPABASE_URL, anonKey, {
     global: { headers: { Authorization: authHeader } },
   });
   const { data: { user }, error } = await supabase.auth.getUser();
@@ -248,59 +250,50 @@ interface StylingOptions {
   resolution: string;
 }
 
-function buildNarrativeStyleBlock(settings: StylingOptions): string {
+function buildDesignSystemBlock(settings: StylingOptions): string {
   const identity = STYLE_IDENTITIES[settings.style] || "";
-  const styleParagraph = identity
-    ? `Design this infographic in a ${settings.style} aesthetic. ${identity} Let this style drive every visual decision — shapes, decorations, title treatments, section dividers, background textures, and iconography.`
-    : `Design this infographic in a bold ${settings.style} aesthetic. Let the ${settings.style} style drive every visual decision — shapes, decorations, title treatments, section dividers, background textures, and iconography should all feel authentically ${settings.style}.`;
+  const styleDesc = identity
+    ? `${settings.style} — ${identity}`
+    : `${settings.style}`;
   const p = settings.palette;
-  const bgName = hexToColorName(p.background);
-  const primaryName = hexToColorName(p.primary);
-  const secondaryName = hexToColorName(p.secondary);
-  const accentName = hexToColorName(p.accent);
-  const textName = hexToColorName(p.text);
-  const paletteParagraph = `Color palette: ${bgName} (${p.background}) background, ${primaryName} (${p.primary}) for headers and primary elements, ${secondaryName} (${p.secondary}) for secondary accents, ${accentName} (${p.accent}) for callout numbers and highlights, ${textName} (${p.text}) for body text. Stay within these five colors but allow natural tonal variation for depth and dimension.`;
   const pFontDesc = fontToDescriptor(settings.fonts.primary);
   const sFontDesc = fontToDescriptor(settings.fonts.secondary);
-  const typographyParagraph = pFontDesc === sFontDesc
-    ? `Use a ${pFontDesc} typeface throughout. Maintain a clear size hierarchy from title to headers to body text. All text must be legible.`
-    : `Use a ${pFontDesc} typeface for titles and headers, and a ${sFontDesc} typeface for body text. Maintain a clear size hierarchy. All text must be legible.`;
-  return `${styleParagraph}\n\n${paletteParagraph}\n\n${typographyParagraph}`;
+  const typeLine = pFontDesc === sFontDesc
+    ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
+    : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
+  return `<design_system>
+Style: ${styleDesc}
+Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
+${typeLine}
+Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}
+</design_system>`;
 }
 
-function transformContentToTags(synthesisContent: string, cardTitle: string): string {
+function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
+  // Strip horizontal rules
   content = content.replace(/^---+$/gm, "");
-  content = content.replace(/^####\s+(.+)$/gm, "[DETAIL] $1");
-  content = content.replace(/^###\s+(.+)$/gm, "[SUBSECTION] $1");
-  content = content.replace(/^##\s+(.+)$/gm, "[SECTION] $1");
+  // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, "");
+  // Strip bold/italic markers but keep text
   content = content.replace(/\*\*(.+?)\*\*/g, "$1");
   content = content.replace(/\*(.+?)\*/g, "$1");
-  content = content.replace(/^[\s]*[-*]\s+/gm, "");
+  // Preserve bullet markers (- and *) and numbered lists as-is
+  // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  return `[BEGIN TEXT CONTENT]\n[TITLE] ${cardTitle}\n\n${content}\n[END TEXT CONTENT]`;
+  return `<content>\nTitle: ${cardTitle}\n\n${content}\n</content>`;
 }
 
-function transformCoverContentToTags(coverContent: string, cardTitle: string): string {
+function prepareCoverContentBlock(coverContent: string): string {
   let content = coverContent;
-  content = content.replace(/^#\s+(.+)$/gm, "[TITLE] $1");
-  content = content.replace(/^##\s+(.+)$/gm, "[SUBTITLE] $1");
+  // Strip bold/italic markers but keep text
   content = content.replace(/\*\*(.+?)\*\*/g, "$1");
   content = content.replace(/\*(.+?)\*/g, "$1");
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  content = content.replace(/^[-*]\s+(.+)$/gm, "[TAKEAWAY-BULLET] $1");
-  const lines = content.split("\n").map((line: string) => {
-    const trimmed = line.trim();
-    if (!trimmed) return "";
-    if (trimmed.startsWith("[TITLE]") || trimmed.startsWith("[SUBTITLE]") || trimmed.startsWith("[TAKEAWAY-BULLET]")) return trimmed;
-    if (content.includes("[SUBTITLE]")) return `[TAGLINE] ${trimmed}`;
-    return `[TAKEAWAY] ${trimmed}`;
-  });
-  const taggedContent = lines.filter((l: string) => l).join("\n");
-  return `[BEGIN COVER CONTENT]\n${taggedContent}\n[END COVER CONTENT]`;
+  // Keep markdown headings (#, ##) and bullets (- ) as-is
+  return `<content>\n${content}\n</content>`;
 }
 
 const FONT_NAMES = ["Montserrat","Inter","Roboto","Open Sans","Lato","Poppins","Raleway","Nunito","Source Sans","Work Sans","DM Sans","Playfair Display","Merriweather","Lora","Georgia","Garamond","PT Serif","Libre Baskerville","Source Serif","Crimson Text","Source Code Pro","Fira Code","JetBrains Mono","IBM Plex Mono","IBM Plex Sans","Helvetica","Arial","Verdana","Tahoma","Trebuchet","Bebas Neue","Orbitron","Rajdhani","Oswald","Impact","Arial Black","DIN Condensed","Pacifico","Comic Sans MS","Rubik","Quicksand","Futura","Courier New"];
@@ -327,42 +320,53 @@ function sanitizePlannerOutput(plannerText: string): string {
 }
 
 function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, plannerOutput?: string, referenceNote?: string, subject?: string): string {
-  const domainClause = subject ? ` The content belongs to the domain of "${subject}" — use domain-appropriate visual metaphors, iconography, and diagram conventions.` : "";
-  const role = `You are an expert Information Designer. Create a visually striking infographic.${domainClause}`;
-  const styleBlock = buildNarrativeStyleBlock(settings);
+  const domainClause = subject ? ` Domain: "${subject}" — use domain-appropriate visual metaphors and iconography.` : "";
+  const role = `<role>Expert Information Designer. Create a visually striking infographic.${domainClause}</role>`;
+  const designSystem = buildDesignSystemBlock(settings);
   let layoutBlock: string;
   if (plannerOutput) {
     const cleanPlan = sanitizePlannerOutput(plannerOutput);
-    layoutBlock = `Use the following creative brief to guide the information architecture and visual concept. Interpret it strictly within the ${settings.style} style described above — the style identity is non-negotiable and takes precedence over any visual interpretation of the brief.\n\n${cleanPlan}\n\nEvery single piece of text content provided below must appear in the final image — no heading, bullet point, statistic, or detail may be omitted. If the layout concept cannot fit all the content, adapt the layout rather than dropping text. Reduce whitespace, add rows, extend sections, or use a denser arrangement — but never cut content. All text must be legible with high contrast.`;
+    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
   } else {
-    layoutBlock = "Choose the spatial arrangement that best fits the content hierarchy — grids, flowing sections, or radial layouts as appropriate. Every single piece of text content provided below must appear in the final image — no heading, bullet point, statistic, or detail may be omitted. If the layout cannot fit all the content, adapt it rather than dropping text. All text must be legible with high contrast.";
+    layoutBlock = `<layout_brief>\nAuto: choose the spatial arrangement that best fits the content hierarchy — grids, flowing sections, or radial layouts as appropriate.\n</layout_brief>`;
   }
-  const contentBlock = transformContentToTags(synthesisContent, cardTitle);
-  const tagInstruction = "The content below uses bracketed tags like [TITLE], [SECTION], [SUBSECTION], [DETAIL], [BEGIN TEXT CONTENT], and [END TEXT CONTENT] to indicate text hierarchy. These tags are structural markers only — do NOT render them as visible text in the image. Render only the text that follows each tag, using the tag to determine visual weight (TITLE = largest, SECTION = heading, SUBSECTION = subheading, DETAIL = minor heading).";
-  const blocks = [role, styleBlock];
-  if (referenceNote) blocks.push(referenceNote);
-  blocks.push(layoutBlock, tagInstruction, contentBlock);
-  return blocks.join("\n\n");
+  let refBlock = "";
+  if (referenceNote) refBlock = `\n\n${referenceNote}`;
+  const rules = `<rules>
+- The style described in design_system is non-negotiable and overrides any visual suggestions in layout_brief
+- Render ONLY text from the content section — never omit any heading, bullet, statistic, or detail, but also never add, invent, infer, or elaborate text that is not explicitly present in the content section
+- The layout_brief describes spatial structure only — do NOT render any words or phrases from the layout_brief as visible text on the image
+- Adapt layout density rather than dropping content — reduce whitespace, add rows, use denser arrangement
+- Use ## headings for section titles and - bullets for list items to determine visual weight
+- All text must be legible with high contrast against its background
+- Do NOT render any XML tags, markdown syntax (##, -, *), or structural markers as visible text
+</rules>`;
+  const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
+  return `${role}\n\n${designSystem}${refBlock}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
 }
 
 function buildContentPrompt(cardTitle: string, level: string, subject?: string): string {
   let wordCountRange = "200-250";
+  let wordCountHard = "250";
   let scopeGuidance = "";
   let formattingGuidance = "";
   if (level === "Executive") {
     wordCountRange = "70-100";
-    scopeGuidance = "**Scope:** This is an EXECUTIVE SUMMARY. Prioritize ruthlessly — include only the single most important insight, conclusion, or finding.";
-    formattingGuidance = "**Formatting (strict for Executive):**\n- Maximum one ## heading below the title\n- Prefer a tight paragraph or 2-3 bullets — nothing more\n- No tables, no numbered lists, no ###";
+    wordCountHard = "100";
+    scopeGuidance = "**Scope:** EXECUTIVE SUMMARY — ruthlessly concise. Include ONLY the single most important insight or finding. Cut everything else.";
+    formattingGuidance = "**Formatting (strict):**\n- Maximum one ## heading\n- 1 tight paragraph OR 2-3 bullets — nothing more\n- No tables, no numbered lists, no ###";
   } else if (level === "Detailed") {
     wordCountRange = "450-500";
-    scopeGuidance = "**Scope:** This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships.";
-    formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables when comparing items\n- Use bold for key terms\n- Choose the format that best represents the data";
+    wordCountHard = "500";
+    scopeGuidance = "**Scope:** DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships.";
+    formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables when comparing items\n- Use bold for key terms";
   } else {
-    scopeGuidance = "**Scope:** This is a STANDARD summary. Cover the key points, important data, and primary relationships.";
+    wordCountHard = "250";
+    scopeGuidance = "**Scope:** STANDARD summary. Cover key points, important data, and primary relationships.";
     formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables only when comparing 3+ items\n- Use bold for key terms";
   }
   const expertPriming = buildExpertPriming(subject);
-  return `${expertPriming ? expertPriming + "\n\n" : ""}Content Generation — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content.\n\n**WORD COUNT: EXACTLY ${wordCountRange} words. This is a hard limit.**\n\n${scopeGuidance}\n\n**Task:** Extract and restructure the section's content into infographic-ready text within the word limit.\n\n**Requirements:**\n- Make explicit any relationships that are implied\n- Use concise, direct phrasing\n- Preserve key data points exactly as written\n- Do not invent information not present in the documents\n\n${formattingGuidance}\n\n**Heading Hierarchy (strict):**\n- Do NOT include the section title as a heading\n- Use ## for main sections\n- Use ### for subsections (if word count permits)\n- Never use # (H1) — reserved for section title\n\n**Output:** Return ONLY the card content. No preamble. REMINDER: ${wordCountRange} words maximum.`.trim();
+  return `${expertPriming ? expertPriming + "\n\n" : ""}Content Generation — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content.\n\nWORD LIMIT: ${wordCountRange} words. ABSOLUTE MAXIMUM: ${wordCountHard} words. Count your words before responding. If over ${wordCountHard}, cut content until under.\n\n${scopeGuidance}\n\n**Task:** Extract and restructure the section's content into infographic-ready text.\n\n**Requirements:**\n- Make explicit any relationships that are implied\n- Use concise, direct phrasing\n- Preserve key data points exactly as written\n- Do not invent information not present in the documents\n\n${formattingGuidance}\n\n**Heading Hierarchy (strict):**\n- Do NOT include the section title as a heading\n- Use ## for main sections\n- Use ### for subsections (if word count permits)\n- Never use # (H1) — reserved for section title\n\n**Output:** Return ONLY the card content. No preamble. No commentary. HARD LIMIT: ${wordCountHard} words.`.trim();
 }
 
 function buildCoverContentPrompt(cardTitle: string, coverType: string, subject?: string): string {
@@ -378,16 +382,55 @@ function buildPlannerPrompt(cardTitle: string, synthesisContent: string, aspectR
   const canvasDescription = describeCanvas(aspectRatio);
   let diversityClause = "";
   if (previousPlan) {
-    diversityClause = `\n## PREVIOUS CONCEPT (DO NOT REPEAT):\n${previousPlan.slice(0, 600)}\n---\n`;
+    diversityClause = `\nPREVIOUS CONCEPT (do not repeat): ${previousPlan.slice(0, 400)}\n`;
   }
-  const domainContext = subject ? `\n## DOMAIN CONTEXT:\nThis content belongs to the domain of "${subject}".\n` : "";
-  return `# CREATIVE VISUAL BRIEF — [${cardTitle}]\n\nYou are an expert information designer creating a creative brief for an infographic.${domainContext}\n\n## CANVAS:\n- Aspect ratio: ${aspectRatio} (${canvasDescription})\n- Content density: ~${wordCount} words${diversityClause}\n\n## CONTENT:\n---\n${synthesisContent}\n---\n\nWrite a short creative brief (150-250 words) covering: DATA RELATIONSHIPS, VISUAL CONCEPT, CONTENT GROUPINGS, FOCAL HIERARCHY.\n\nRULES: No exact positions, no container types, no colors/fonts/sizes, no rewriting content, reference ALL content items.`.trim();
+  const domainContext = subject ? `\nDomain: "${subject}"\n` : "";
+  return `LAYOUT BRIEF — [${cardTitle}]${domainContext}
+Canvas: ${aspectRatio} (${canvasDescription}), ~${wordCount} words
+${diversityClause}
+CONTENT:
+---
+${synthesisContent}
+---
+
+Produce a concise layout brief (80-120 words) as bullet points covering:
+
+DATA RELATIONSHIPS: What connects to what? (e.g., cause-effect, comparison, sequence, hierarchy)
+CONTENT GROUPINGS: Which items belong together? Reference all content items.
+LAYOUT TYPE: Single keyword (e.g., timeline, comparison-grid, radial, flow-chart, stacked-sections, dashboard)
+FOCAL HIERARCHY: Rank content by importance (most → least prominent)
+
+FORMAT: Short bullet points and keywords only. No prose paragraphs, no visual descriptions of how things should look, no descriptions of shapes/decorations/backgrounds.
+
+FORBIDDEN: colors, fonts, sizes, positions, container descriptions, prose narratives about visual appearance. Focus on data logic and content structure only.
+
+CRITICAL: Do NOT elaborate, expand, or invent details beyond what is explicitly stated in the content. Describe structure and relationships using ONLY concepts and terms that appear in the content above. If the content mentions a concept without detail, reference it by name only — do NOT fill in specifics from domain knowledge.`.trim();
 }
 
 function buildCoverPlannerPrompt(cardTitle: string, coverContent: string, style: string, aspectRatio: string, coverType: string): string {
   const canvasDescription = describeCanvas(aspectRatio);
   const coverKind = coverType === "TitleCard" ? "Title Card" : "Takeaway Card";
-  return `COVER SLIDE LAYOUT PLANNING — [${cardTitle}]\n\nYou are an expert cover slide designer. Plan the visual layout of a ${coverKind}.\n\nCANVAS: ${aspectRatio} (${canvasDescription})\n\nCONTENT:\n---\n${coverContent}\n---\n\nPlan a visually striking cover slide. The title is the hero element. This is NOT a data infographic. No charts, grids, or bullet lists. Write narrative prose covering COMPOSITION, VISUAL FOCAL POINT, STYLE APPLICATION (${style}), TEXT HIERARCHY.\n\nFORBIDDEN: font names, point sizes, hex colors, pixel values.`.trim();
+  return `COVER LAYOUT BRIEF — [${cardTitle}]
+
+Type: ${coverKind}
+Canvas: ${aspectRatio} (${canvasDescription})
+
+CONTENT:
+---
+${coverContent}
+---
+
+Produce a concise layout brief (60-80 words) as bullet points:
+
+COMPOSITION: Where does the title sit? (e.g., centered, upper-third, left-aligned)
+FOCAL POINT: What draws the eye first?
+TEXT HIERARCHY: Title → subtitle → tagline/bullets ordering
+DECORATIVE APPROACH: Keywords only (e.g., geometric-shapes, gradient-fill, minimal-lines)
+
+This is a cover slide — NOT a data infographic. No charts, grids, or multi-section layouts.
+
+FORMAT: Short bullet points and keywords only. No prose paragraphs.
+FORBIDDEN: font names, sizes, colors, pixel values, detailed visual descriptions.`.trim();
 }
 
 function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, visualPlan?: string, subject?: string): string {
@@ -395,21 +438,26 @@ function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings
 }
 
 function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, visualPlan?: string, coverType?: string): string {
-  const role = "You are an expert cover slide designer. Create a visually striking cover slide — a bold, brand-forward title card that functions as an opener or presentation cover. This is NOT a data infographic. Do not include charts, data grids, bullet lists, or multi-section layouts. The title must be the absolute hero element — the largest, most dominant text on the canvas. Fill the entire canvas with a cohesive visual composition — no empty white areas.";
-  const styleBlock = buildNarrativeStyleBlock(settings);
+  const role = `<role>Expert cover slide designer. Create a bold, brand-forward cover slide — NOT a data infographic. No charts, data grids, or multi-section layouts. The title must be the largest, most dominant text. Fill the entire canvas — no empty white areas.</role>`;
+  const designSystem = buildDesignSystemBlock(settings);
   let layoutBlock: string;
   if (visualPlan) {
     const cleanPlan = sanitizePlannerOutput(visualPlan);
-    layoutBlock = `${cleanPlan}\n\nRender the title as the hero element — bold, dominant, and immediately readable. All text must be legible with high contrast against the background.`;
+    layoutBlock = `<layout_brief>\n${cleanPlan}\n</layout_brief>`;
   } else {
-    layoutBlock = coverType === "TakeawayCard"
-      ? "Place the title prominently in the upper portion. Below it, render takeaway bullet points as a clean, vertically stacked list. Fill remaining canvas with style-driven decorative elements. All text must be legible with high contrast."
-      : "Center the title as the dominant element. Place the subtitle below it. If there is a tagline, position it at the bottom edge. Fill canvas with style-driven decorative elements. All text must be legible with high contrast.";
+    const autoLayout = coverType === "TakeawayCard"
+      ? "Title prominent in upper portion. Takeaway bullets as clean vertical list below. Fill remaining canvas with style-driven decorative elements."
+      : "Title centered as dominant hero element. Subtitle below. Tagline at bottom edge if present. Fill canvas with style-driven decorative elements.";
+    layoutBlock = `<layout_brief>\n${autoLayout}\n</layout_brief>`;
   }
-  const contentBlock = transformCoverContentToTags(coverContent, cardTitle);
-  const tagInstruction = "The content below uses bracketed tags like [TITLE], [SUBTITLE], [TAGLINE], [TAKEAWAY-BULLET], [BEGIN COVER CONTENT], and [END COVER CONTENT] to indicate text hierarchy. These tags are structural markers only — do NOT render them as visible text in the image. Render only the text that follows each tag.";
-  const blocks = [role, styleBlock, layoutBlock, tagInstruction, contentBlock];
-  return blocks.join("\n\n");
+  const rules = `<rules>
+- The title is the hero element — largest, boldest, immediately readable
+- The style in design_system overrides any visual suggestions in layout_brief
+- All text must be legible with high contrast
+- Do NOT render any XML tags, markdown syntax (#, ##, -), or structural markers as visible text
+</rules>`;
+  const contentBlock = prepareCoverContentBlock(coverContent);
+  return `${role}\n\n${designSystem}\n\n${layoutBlock}\n\n${rules}\n\n${contentBlock}`;
 }
 
 // ── Storage helpers ──
@@ -725,6 +773,7 @@ Deno.serve(async (req: Request) => {
       storagePath,
       synthesisContent,
       visualPlan,
+      imagePrompt,
       geminiUsage,
     });
 

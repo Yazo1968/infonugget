@@ -31,3 +31,5 @@ memory/
 # Local audit & reference files
 audits/
 reference files (unused)/
+
+.vercel

@@ -361,6 +361,7 @@ export function useCardGeneration(
             isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
             lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: response.synthesisContent },
             visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: response.visualPlan },
+            ...(response.imagePrompt ? { lastPromptMap: { ...(c.lastPromptMap || {}), [currentLevel]: response.imagePrompt } } : {}),
           };
         });
       } catch (err: any) {

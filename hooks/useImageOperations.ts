@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage, AlbumImage } from '../types';
@@ -8,6 +8,7 @@ import { manageImagesApi } from '../utils/api';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ImageOps');
+const SET_ACTIVE_DEBOUNCE_MS = 300;
 
 export interface UseImageOperationsParams {
   activeCard: Card | null;
@@ -47,6 +48,10 @@ export function useImageOperations({
     resolve: (decision: 'disable' | 'skip' | 'cancel') => void;
   } | null>(null);
   const [albumActionPending, setAlbumActionPending] = useState<string | null>(null);
+
+  // Sequence counter for album browsing — prevents stale API responses from causing re-renders
+  const setActiveSeqRef = useRef(0);
+  const setActiveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Zoom ──
 
@@ -125,7 +130,7 @@ export function useImageOperations({
   // ── Album browsing ──
 
   const handleSetActiveImage = useCallback(
-    async (imageId: string) => {
+    (imageId: string) => {
       if (!activeCardId || !selectedNugget) return;
       const level = activeLogicTab;
       const cardId = activeCardId;
@@ -135,7 +140,10 @@ export function useImageOperations({
       const targetImage = album.find((img) => img.id === imageId);
       if (!targetImage || targetImage.isActive) return;
 
-      // Optimistic: toggle isActive flags + update activeImageMap
+      // Increment sequence — any in-flight API response with a stale seq is ignored
+      const seq = ++setActiveSeqRef.current;
+
+      // Optimistic: toggle isActive flags + update activeImageMap (instant)
       updateNugget(nuggetId, (n) => ({
         ...n,
         cards: mapCardById(n.cards, cardId, (c) => ({
@@ -152,31 +160,36 @@ export function useImageOperations({
         lastModifiedAt: Date.now(),
       }));
 
-      try {
-        const response = await manageImagesApi({
-          action: 'set_active',
-          nuggetId,
-          cardId,
-          detailLevel: level,
-          imageId,
-        });
-        // Reconcile with server response (fresh signed URLs)
-        if (response.album) {
-          updateNugget(nuggetId, (n) => ({
-            ...n,
-            cards: mapCardById(n.cards, cardId, (c) => ({
-              ...c,
-              albumMap: { ...(c.albumMap || {}), [level]: response.album! },
-              activeImageMap: {
-                ...(c.activeImageMap || {}),
-                [level]: response.activeImageUrl || targetImage.imageUrl,
-              },
-            })),
-          }));
+      // Debounce the API call — only the last click within the window fires
+      if (setActiveTimerRef.current) clearTimeout(setActiveTimerRef.current);
+      setActiveTimerRef.current = setTimeout(async () => {
+        try {
+          const response = await manageImagesApi({
+            action: 'set_active',
+            nuggetId,
+            cardId,
+            detailLevel: level,
+            imageId,
+          });
+          // Only reconcile if no newer click has happened since this call fired
+          if (setActiveSeqRef.current !== seq) return;
+          if (response.album) {
+            updateNugget(nuggetId, (n) => ({
+              ...n,
+              cards: mapCardById(n.cards, cardId, (c) => ({
+                ...c,
+                albumMap: { ...(c.albumMap || {}), [level]: response.album! },
+                activeImageMap: {
+                  ...(c.activeImageMap || {}),
+                  [level]: response.activeImageUrl || targetImage.imageUrl,
+                },
+              })),
+            }));
+          }
+        } catch (err) {
+          log.warn('Failed to set active image via API:', err);
         }
-      } catch (err) {
-        log.warn('Failed to set active image via API:', err);
-      }
+      }, SET_ACTIVE_DEBOUNCE_MS);
     },
     [activeCardId, selectedNugget, activeLogicTab, updateNugget],
   );

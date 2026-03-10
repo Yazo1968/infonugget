@@ -1,7 +1,7 @@
 import { useState, useCallback, useMemo } from 'react';
 import { CLAUDE_MODEL } from '../utils/constants';
 import { Nugget, DQAFReport } from '../types';
-import { documentQualityApi } from '../utils/api';
+import { documentQualityApi, DocumentQualityCall1Response, DocumentQualityReportResponse } from '../utils/api';
 import { resolveEnabledDocs } from '../utils/documentResolution';
 import { useAbortController } from './useAbortController';
 import { RecordUsageFn } from './useTokenUsage';
@@ -105,36 +105,76 @@ export function useDocumentQualityCheck(
         })),
       }));
 
-      log.info(`Running DQAF assessment for ${documents.length} document(s)`);
+      const baseParams = { documents, engagementPurpose: engagementPurpose.trim(), nuggetId: selectedNugget.id };
+      const isSingleDoc = documents.length === 1;
 
-      const response = await documentQualityApi(
-        { documents, engagementPurpose: engagementPurpose.trim(), nuggetId: selectedNugget.id },
-        controller.signal,
-      );
+      log.info(`Running DQAF assessment for ${documents.length} document(s) — ${isSingleDoc ? 'single-doc (1 call)' : 'multi-doc (2 staged calls)'}`);
 
-      // Record token usage
-      if (response.usage) {
-        recordUsage?.({
-          provider: 'claude',
-          model: CLAUDE_MODEL,
-          inputTokens: response.usage.inputTokens ?? 0,
-          outputTokens: response.usage.outputTokens ?? 0,
-          cacheReadTokens: response.usage.cacheReadTokens ?? 0,
-          cacheWriteTokens: response.usage.cacheWriteTokens ?? 0,
-        });
+      // Helper to accumulate token usage
+      const accumulatedUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+      const addUsage = (u: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number }) => {
+        accumulatedUsage.inputTokens += u.inputTokens ?? 0;
+        accumulatedUsage.outputTokens += u.outputTokens ?? 0;
+        accumulatedUsage.cacheReadTokens += u.cacheReadTokens ?? 0;
+        accumulatedUsage.cacheWriteTokens += u.cacheWriteTokens ?? 0;
+      };
+
+      let reportResponse: DocumentQualityReportResponse;
+
+      if (isSingleDoc) {
+        // Single doc: Call 2 is a no-op (no Claude call), so one invocation is fine.
+        // Use staged call1 + call2 to keep under timeout even for large single docs.
+        const call1Resp = await documentQualityApi(
+          { ...baseParams, stage: 'call1' },
+          controller.signal,
+        ) as DocumentQualityCall1Response;
+        addUsage(call1Resp.usage);
+
+        reportResponse = await documentQualityApi(
+          { ...baseParams, stage: 'call2', call1Data: call1Resp.call1Data },
+          controller.signal,
+        ) as DocumentQualityReportResponse;
+        addUsage(reportResponse.usage);
+      } else {
+        // Multi-doc: split into 2 calls to stay under the 150s free-plan Edge Function limit.
+        // Call 1: per-document analysis (Stage 1 profiling + Pass 1 checks)
+        const call1Resp = await documentQualityApi(
+          { ...baseParams, stage: 'call1' },
+          controller.signal,
+        ) as DocumentQualityCall1Response;
+        addUsage(call1Resp.usage);
+
+        log.info('DQAF Call 1 complete, starting Call 2 (cross-document analysis)');
+
+        // Call 2: cross-document analysis + KPI computation + report assembly
+        reportResponse = await documentQualityApi(
+          { ...baseParams, stage: 'call2', call1Data: call1Resp.call1Data },
+          controller.signal,
+        ) as DocumentQualityReportResponse;
+        addUsage(reportResponse.usage);
       }
+
+      // Record combined token usage
+      recordUsage?.({
+        provider: 'claude',
+        model: CLAUDE_MODEL,
+        inputTokens: accumulatedUsage.inputTokens,
+        outputTokens: accumulatedUsage.outputTokens,
+        cacheReadTokens: accumulatedUsage.cacheReadTokens,
+        cacheWriteTokens: accumulatedUsage.cacheWriteTokens,
+      });
 
       const currentMaxSeq = selectedNugget.sourcesLogStats?.rawEventSeq ?? (selectedNugget.docChangeLog?.length ?? 0);
 
       // Stamp the report with client-side metadata
       const report: DQAFReport = {
-        ...response.report,
+        ...reportResponse.report,
         lastCheckTimestamp: Date.now(),
         docChangeLogSeqAtCheck: currentMaxSeq,
         // Map verdict → legacy status for backward compat (FootnoteBar, PanelTabBar)
-        status: response.report.overallVerdict === 'ready'
+        status: reportResponse.report.overallVerdict === 'ready'
           ? 'green'
-          : response.report.overallVerdict === 'conditional'
+          : reportResponse.report.overallVerdict === 'conditional'
             ? 'amber'
             : 'red',
       };
