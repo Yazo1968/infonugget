@@ -269,16 +269,29 @@ const App: React.FC = () => {
     [createPlaceholderCardsInFolder],
   );
 
-  // ── Folder picker for chat operations ──
+  // ── Folder picker for card operations ──
   type PendingFolderSelection =
     | { type: 'chatSaveAsCard'; message: ChatMessage; editedContent: string }
-    | { type: 'chatGenerateCard'; promptText: string; detailLevel: DetailLevel };
+    | { type: 'chatGenerateCard'; promptText: string; detailLevel: DetailLevel }
+    | { type: 'sourceGeneration'; headingId: string; detailLevel: DetailLevel; cardTitle: string; sourceDocName: string };
 
   const [pendingFolderSelection, setPendingFolderSelection] = useState<PendingFolderSelection | null>(null);
 
   const handleGenerateCardContentWrapped = useCallback(
     (headingId: string, detailLevel: DetailLevel, cardTitle: string, sourceDocName?: string, existingCardId?: string) => {
-      handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
+      if (existingCardId) {
+        // Updating existing card — no folder selection needed
+        handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
+      } else {
+        // New card — show folder picker
+        setPendingFolderSelection({
+          type: 'sourceGeneration',
+          headingId,
+          detailLevel,
+          cardTitle,
+          sourceDocName: sourceDocName || '',
+        });
+      }
     },
     [handleGenerateCardContent],
   );
@@ -312,11 +325,18 @@ const App: React.FC = () => {
         }
         // Send the chat message now that the placeholder is placed in the folder
         sendInsightsMessage(pending.promptText, true, pending.detailLevel);
+      } else if (pending.type === 'sourceGeneration') {
+        // Create a placeholder card in the selected folder, then generate content
+        const placeholders = createPlaceholderCards([pending.cardTitle], pending.detailLevel, { targetFolderId: folderId });
+        const placeholderId = placeholders[0]?.id ?? null;
+        if (placeholderId) {
+          handleGenerateCardContent(pending.headingId, pending.detailLevel, pending.cardTitle, pending.sourceDocName, placeholderId);
+        }
       }
 
       setPendingFolderSelection(null);
     },
-    [pendingFolderSelection, handleSaveAsCard, createPlaceholderCards, sendInsightsMessage],
+    [pendingFolderSelection, handleSaveAsCard, createPlaceholderCards, sendInsightsMessage, handleGenerateCardContent],
   );
 
   const handleCreateFolderForPending = useCallback(

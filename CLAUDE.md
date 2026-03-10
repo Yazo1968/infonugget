@@ -50,6 +50,19 @@ The app is transitioning from client-side AI calls to server-side Edge Function 
 ### 3-Phase Card Pipeline
 Content Synthesis (Claude, client-side) → Layout Planning + Image Generation + Storage (server-side via `generate-card`). See `hooks/useCardGeneration.ts`. Images are stored as signed Supabase Storage URLs (not blob URLs).
 
+#### Card Content Structure
+Content synthesis enforces a strict format across ALL detail levels (Executive, Standard, Detailed). Only these content types are allowed under any heading/subheading:
+1. Very short statements (no inline itemization — "x, y, z and w" must become bullet points)
+2. Bullet points
+3. Numbered lists
+4. Tables
+5. Quotes (`>`)
+
+Word count varies by level: Executive 70-100, Standard 200-250, Detailed 450-500. Format rules are uniform. See `utils/prompts/contentGeneration.ts`.
+
+#### Folder Picker for Card Generation
+Single-card generation from Sources panel triggers `FolderPickerDialog` so users must place new cards in a folder (or create one). Existing card regeneration bypasses the picker. Chat-based card operations also use the picker. Batch generation creates folders programmatically.
+
 ### Card Folder System
 `Nugget.cards` is `CardItem[]` — discriminated union of `Card | CardFolder`. Folders use `kind: 'folder'` with `isCardFolder()` type guard. Tree utilities in `utils/cardUtils.ts`. InsightsCardList renders folders with drag-and-drop using `VisibleItem[]` index.
 
@@ -106,8 +119,16 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx` (project cards, crea
 - **Storage Backend**: `utils/storage/SupabaseBackend.ts` implements `StorageBackend` interface. Cards stored as JSONB on nuggets table. Images uploaded to Storage bucket with signed URLs.
 - **Supabase Client**: `utils/supabase.ts` — singleton `createClient` using `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`.
 
-### Prompt Anti-Leakage
-Content converted via `transformContentToTags()` — markdown to bracketed tags, font names to descriptors, hex to color names. Tag rendering instruction injected into image prompts to prevent Flash model from rendering `[TITLE]`, `[SECTION]` etc. as visible text. See `utils/prompts/promptUtils.ts`.
+### Prompt Anti-Leakage & Anti-Hallucination
+Content prepared via `prepareContentBlock()` — strips bold/italic/HR, preserves native markdown (headings, bullets). Wrapped in `<content>` tags. Legacy `transformContentToTags()` is a deprecated alias. See `utils/prompts/promptUtils.ts`.
+
+Image generation rules enforce exclusivity: "Render ONLY text from the content section" (not just "render ALL"). Layout brief is isolated: "do NOT render any words from the layout_brief as visible text." Planner prompt has anti-elaboration constraint: "Do NOT elaborate, expand, or invent details beyond what is explicitly stated in the content." See `supabase/functions/generate-card/index.ts`.
+
+### Subject Generation
+`utils/subjectGeneration.ts` — generates a 30-40 word domain-specific subject sentence from document TOC + opening paragraphs via Claude. Used for expert priming across all content-generating pipelines via `buildExpertPriming()`.
+
+### Document Editor Typography
+`.document-prose` in `globals.css` — Libre Baskerville serif, base 12px. Heading scale: H1 24px (w800), H2 18px (w700), H3 14px (w700), H4 12px (w600). Table cells 11px, table headers 10px uppercase. Shared by Sources panel document editor and Cards & Assets card content editor.
 
 ## Shared Utilities & Constants
 
@@ -148,7 +169,7 @@ All calls: auth token from `supabase.auth.getSession()`, JWT expiry checked with
 ### Token Usage Tracking
 `hooks/useTokenUsage.ts` — tracks token consumption and cost per AI call. Cost rates: Claude Sonnet 4.6 at $3/$15 input/output per 1M tokens; Gemini image at $0.25/$0.067. Debounce-saves totals to storage backend. `recordUsage` callback passed to all AI-calling hooks.
 
-## App.tsx Structure (~1000 lines)
+## App.tsx Structure (~1020 lines)
 
 App.tsx is the main orchestrator. Renders `Dashboard` when no project is open, full workspace otherwise. Key hooks consumed:
 
@@ -185,7 +206,7 @@ Modals/Dialogs: `PdfUploadChoiceDialog`, `PdfProcessorModal`, `StyleStudioModal`
 - `components/DocumentEditorModal.tsx` — Full-screen markdown document editor
 - `components/ErrorBoundary.tsx` — React error boundary wrapper
 - `components/FindReplaceBar.tsx` — Find & replace toolbar for document editor
-- `components/FolderPickerDialog.tsx` — Folder selection dialog for card moves
+- `components/FolderPickerDialog.tsx` — Folder selection dialog for card generation and chat card operations
 - `components/FolderRow.tsx` — Folder row in InsightsCardList
 - `components/FootnoteBar.tsx` — Dynamic workspace status notices (pending source changes, subject review, quality issues)
 - `components/FormatToolbar.tsx` — TipTap formatting toolbar
