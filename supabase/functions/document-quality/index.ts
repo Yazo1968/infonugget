@@ -538,8 +538,249 @@ function computeFlagsSummary(documents: any[], crossDocFindings: any[], perDocum
 // MAIN HANDLER
 // ════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════
+// SHARED HELPERS
+// ════════════════════════════════════════════════════════════════
+
+function buildDocBlocks(documents: any[]) {
+  const fileApiDocs: Array<{ fileId: string; name: string }> = [];
+  const inlineDocSections: string[] = [];
+
+  for (const d of documents) {
+    if (d.fileId) {
+      fileApiDocs.push({ fileId: d.fileId, name: d.name });
+    } else if (d.content) {
+      const MAX_CHARS = 50000;
+      const excerpt = d.content.length > MAX_CHARS
+        ? d.content.slice(0, MAX_CHARS) + '\n\n[... document truncated for analysis ...]'
+        : d.content;
+      inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n${excerpt}\n--- End Document ---`);
+    } else {
+      inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n[No content available]\n--- End Document ---`);
+    }
+  }
+
+  return { fileApiDocs, inlineDocSections };
+}
+
+function assembleReport(
+  call1Data: any,
+  call2Data: any,
+  engagementPurpose: string,
+  docCount: number,
+  isSingleDoc: boolean,
+) {
+  // Normalize cross-doc findings (handle potential snake_case from Claude)
+  const crossDocFindings = (call2Data.crossDocumentFindings || []).map((f: any) => ({
+    checkId: f.checkId || f.check_id,
+    scope: f.scope || 'between_documents',
+    severity: f.severity,
+    description: f.description,
+    documentsInvolved: f.documentsInvolved || f.documents_involved || [],
+    productionImpact: f.productionImpact || f.production_impact || '',
+  }));
+
+  // Normalize per-document flags (handle potential snake_case from Claude)
+  const perDocumentFlags = (call2Data.perDocumentFlags || call2Data.per_document_flags || []).map((f: any) => ({
+    checkId: f.checkId || f.check_id,
+    documentId: f.documentId || f.document_id,
+    scope: f.scope || 'this_document',
+    severity: f.severity,
+    description: f.description,
+    crossDocumentConsequence: f.crossDocumentConsequence || f.cross_document_consequence || '',
+  }));
+
+  const kpis = computeKPIs(call1Data.documents, crossDocFindings, isSingleDoc);
+  const flagsSummary = computeFlagsSummary(call1Data.documents, crossDocFindings, perDocumentFlags);
+  const overallVerdict = kpis.overallSetReadinessScore >= 90 ? 'ready'
+    : kpis.overallSetReadinessScore >= 70 ? 'conditional' : 'not_ready';
+
+  const statusMap: Record<string, string> = { ready: 'green', conditional: 'amber', not_ready: 'red' };
+
+  const documentRegister = (call2Data.documentRegister || []).map((r: any) => {
+    const docData = call1Data.documents.find((d: any) => d.documentId === r.documentId);
+    return {
+      documentId: r.documentId,
+      documentLabel: r.documentLabel || docData?.documentLabel || 'Unknown',
+      detectedVersion: r.detectedVersion ?? docData?.metadata?.detectedVersion ?? null,
+      detectedDate: r.detectedDate ?? docData?.metadata?.detectedDate ?? null,
+      relevanceScoreA: docData?.relevanceScoreA ?? 0,
+      relevanceInterpretation: docData?.relevanceInterpretation ?? 'orphan_review_required',
+      documentReadinessScore: docData?.documentReadinessScore ?? 0,
+      documentVerdict: docData?.documentVerdict ?? 'not_ready',
+      requiredAction: r.requiredAction || 'Review required.',
+    };
+  });
+
+  return {
+    assessmentId: crypto.randomUUID(),
+    assessedAt: new Date().toISOString(),
+    engagementPurposeStatement: engagementPurpose,
+    engagementPurposeProfile: call1Data.engagementPurposeProfile || { objective: '', audience: '', type: '', focus: '', tone: '' },
+    documentCountSubmitted: docCount,
+    documentCountRetrieved: call1Data.documents?.length ?? 0,
+    documents: call1Data.documents || [],
+    interDocumentCompatibility: call2Data.interDocumentCompatibility || [],
+    crossDocumentFindings: crossDocFindings,
+    perDocumentFlags,
+    kpis,
+    flagsSummary,
+    overallVerdict,
+    verdictRationale: call2Data.verdictRationale || '',
+    documentRegister,
+    ...(call2Data.mandatoryProductionNotice ? { mandatoryProductionNotice: call2Data.mandatoryProductionNotice } : {}),
+    lastCheckTimestamp: Date.now(),
+    docChangeLogSeqAtCheck: 0, // Set by client
+    status: statusMap[overallVerdict] || 'red',
+  };
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// STAGE HANDLERS
+// ════════════════════════════════════════════════════════════════
+
+/** Stage 'call1': Run per-document analysis (Stage 1 profiling + Pass 1 checks). */
+async function handleCall1(
+  documents: any[],
+  engagementPurpose: string,
+  fileApiDocs: Array<{ fileId: string; name: string }>,
+  inlineDocSections: string[],
+) {
+  const call1SystemBlocks: Array<{ text: string; cache: boolean }> = [
+    { text: CALL1_SYSTEM_PROMPT, cache: true },
+    {
+      text: `## ENGAGEMENT PURPOSE STATEMENT\n\n"${engagementPurpose}"\n\n## DOCUMENT ID MAPPING\n\n${documents.map((d: any) => `- ID: ${d.id} → Name: ${d.name}`).join('\n')}`,
+      cache: false,
+    },
+  ];
+
+  if (inlineDocSections.length > 0) {
+    call1SystemBlocks.push({
+      text: `## INLINE DOCUMENTS\n\n${inlineDocSections.join('\n\n')}`,
+      cache: true,
+    });
+  }
+
+  const call1Messages = [{
+    role: 'user' as const,
+    content: 'Analyze each document against the engagement purpose. Assess the content utility of each document for the brief — evaluate what usable information, data, and material each document actually contains for producing the described output. Profile all dimensions, score content utility, and run all Pass 1 checks. Return the complete JSON as specified.',
+  }];
+
+  console.log(`[DQAF] Call 1: ${documents.length} docs, ${fileApiDocs.length} Files API, ${inlineDocSections.length} inline`);
+
+  const result = await callClaudeAPI(
+    call1SystemBlocks,
+    call1Messages,
+    16384,
+    fileApiDocs.length > 0 ? fileApiDocs : undefined,
+  );
+
+  const call1Data = extractJSON(result.text);
+  console.log(`[DQAF] Call 1 complete: ${call1Data.documents?.length ?? 0} doc assessments`);
+
+  // Compute document-level scores and verdicts
+  for (const doc of call1Data.documents) {
+    doc.documentReadinessScore = computeDocReadinessScore(doc.pass1Scores || {});
+    doc.documentVerdict = computeDocVerdict(doc.documentReadinessScore);
+  }
+
+  return { call1Data, usage: result.usage };
+}
+
+/** Stage 'call2': Run cross-document analysis (Stage 1D + Pass 2) + assemble final report. */
+async function handleCall2(
+  documents: any[],
+  engagementPurpose: string,
+  call1Data: any,
+  fileApiDocs: Array<{ fileId: string; name: string }>,
+  inlineDocSections: string[],
+) {
+  const isSingleDoc = documents.length === 1;
+  const docCount = documents.length;
+  let call2Usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+
+  let call2Data: any = {
+    interDocumentCompatibility: [],
+    crossDocumentFindings: [],
+    perDocumentFlags: [],
+    documentRegister: [],
+    verdictRationale: '',
+    mandatoryProductionNotice: undefined,
+  };
+
+  if (!isSingleDoc) {
+    const call1Context = JSON.stringify({
+      engagementPurposeProfile: call1Data.engagementPurposeProfile,
+      documents: call1Data.documents.map((d: any) => ({
+        documentId: d.documentId,
+        documentLabel: d.documentLabel,
+        documentProfile: d.documentProfile,
+        relevanceScoreA: d.relevanceScoreA,
+        relevanceInterpretation: d.relevanceInterpretation,
+        pass1Scores: d.pass1Scores,
+        documentReadinessScore: d.documentReadinessScore,
+        documentVerdict: d.documentVerdict,
+        metadata: d.metadata,
+      })),
+    }, null, 2);
+
+    const call2Prompt = CALL2_SYSTEM_PROMPT_TEMPLATE.replace('{CALL1_RESULTS}', call1Context);
+
+    const call2SystemBlocks: Array<{ text: string; cache: boolean }> = [
+      { text: call2Prompt, cache: true },
+    ];
+
+    if (inlineDocSections.length > 0) {
+      call2SystemBlocks.push({
+        text: `## INLINE DOCUMENTS\n\n${inlineDocSections.join('\n\n')}`,
+        cache: true,
+      });
+    }
+
+    const call2Messages = [{
+      role: 'user' as const,
+      content: 'Analyze cross-document relationships. Evaluate how documents complement or conflict with each other as source material for the brief. Score inter-document content complementarity for every pair, run Pass 2 checks, review Pass 1 results for cross-document escalations, generate document register actions and verdict rationale. Return the complete JSON as specified.',
+    }];
+
+    console.log(`[DQAF] Call 2: cross-document analysis for ${docCount} docs (${docCount * (docCount - 1) / 2} pairs)`);
+
+    const result = await callClaudeAPI(
+      call2SystemBlocks,
+      call2Messages,
+      12288,
+      fileApiDocs.length > 0 ? fileApiDocs : undefined,
+    );
+
+    call2Usage = result.usage;
+    call2Data = extractJSON(result.text);
+    console.log(`[DQAF] Call 2 complete: ${call2Data.interDocumentCompatibility?.length ?? 0} pairs, ${call2Data.crossDocumentFindings?.length ?? 0} findings, ${call2Data.perDocumentFlags?.length ?? 0} per-doc flags`);
+  } else {
+    const doc = call1Data.documents[0];
+    call2Data.documentRegister = [{
+      documentId: doc.documentId,
+      documentLabel: doc.documentLabel,
+      detectedVersion: doc.metadata?.detectedVersion ?? null,
+      detectedDate: doc.metadata?.detectedDate ?? null,
+      requiredAction: doc.documentVerdict === 'ready'
+        ? 'Use as-is — single document passed all structural checks.'
+        : 'Review flagged issues before production.',
+    }];
+    call2Data.verdictRationale = `Single document assessment. Document scored ${doc.documentReadinessScore}% readiness with verdict: ${doc.documentVerdict}.`;
+  }
+
+  const report = assembleReport(call1Data, call2Data, engagementPurpose, docCount, isSingleDoc);
+
+  return { report, usage: call2Usage };
+}
+
+
+// ════════════════════════════════════════════════════════════════
+// MAIN HANDLER
+// ════════════════════════════════════════════════════════════════
+
 Deno.serve(async (req) => {
-  if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
+  if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
 
   try {
     // ── Auth ──
@@ -555,7 +796,9 @@ Deno.serve(async (req) => {
     if (authError || !user) throw new Error('Unauthorized');
 
     // ── Parse Request ──
-    const { documents, engagementPurpose, nuggetId } = await req.json();
+    const body = await req.json();
+    const { documents, engagementPurpose, nuggetId, stage, call1Data: providedCall1Data } = body;
+
     if (!documents || !Array.isArray(documents) || documents.length === 0) {
       throw new Error('At least one document is required');
     }
@@ -576,236 +819,43 @@ Deno.serve(async (req) => {
         .then(({ error: e }) => { if (e) console.warn('last_api_call_at update failed:', e); });
     }
 
-    const isSingleDoc = documents.length === 1;
-    const docCount = documents.length;
-    let totalUsage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const { fileApiDocs, inlineDocSections } = buildDocBlocks(documents);
 
-    // ── Build document blocks ──
-    const fileApiDocs: Array<{ fileId: string; name: string }> = [];
-    const inlineDocSections: string[] = [];
+    // ── Stage routing ──
+    // 'call1' — per-document analysis only (returns call1Data for the client to pass back)
+    // 'call2' — cross-document analysis + report assembly (requires call1Data from client)
+    // undefined — legacy full pipeline (both calls in one invocation; may timeout on free plan)
 
-    for (const d of documents) {
-      if (d.fileId) {
-        fileApiDocs.push({ fileId: d.fileId, name: d.name });
-      } else if (d.content) {
-        const MAX_CHARS = 50000;
-        const excerpt = d.content.length > MAX_CHARS
-          ? d.content.slice(0, MAX_CHARS) + '\n\n[... document truncated for analysis ...]'
-          : d.content;
-        inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n${excerpt}\n--- End Document ---`);
-      } else {
-        inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n[No content available]\n--- End Document ---`);
-      }
-    }
-
-    // ══════════════════════════════════════════════════════════
-    // CALL 1 — Stage 1 (Profiling + Score A) + Pass 1 (6 checks)
-    // ══════════════════════════════════════════════════════════
-
-    const call1SystemBlocks: Array<{ text: string; cache: boolean }> = [
-      { text: CALL1_SYSTEM_PROMPT, cache: true },
-    ];
-
-    // Add engagement purpose as a separate system block
-    call1SystemBlocks.push({
-      text: `## ENGAGEMENT PURPOSE STATEMENT\n\n"${engagementPurpose}"\n\n## DOCUMENT ID MAPPING\n\n${documents.map((d: any) => `- ID: ${d.id} → Name: ${d.name}`).join('\n')}`,
-      cache: false,
-    });
-
-    // Add inline documents if any
-    if (inlineDocSections.length > 0) {
-      call1SystemBlocks.push({
-        text: `## INLINE DOCUMENTS\n\n${inlineDocSections.join('\n\n')}`,
-        cache: true,
+    if (stage === 'call1') {
+      const { call1Data, usage } = await handleCall1(documents, engagementPurpose, fileApiDocs, inlineDocSections);
+      return new Response(JSON.stringify({ success: true, stage: 'call1', call1Data, usage }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
       });
     }
 
-    const call1Messages = [{
-      role: 'user' as const,
-      content: 'Analyze each document against the engagement purpose. Assess the content utility of each document for the brief — evaluate what usable information, data, and material each document actually contains for producing the described output. Profile all dimensions, score content utility, and run all Pass 1 checks. Return the complete JSON as specified.',
-    }];
-
-    console.log(`[DQAF] Call 1: ${docCount} docs, ${fileApiDocs.length} Files API, ${inlineDocSections.length} inline`);
-
-    const call1Result = await callClaudeAPI(
-      call1SystemBlocks,
-      call1Messages,
-      16384,
-      fileApiDocs.length > 0 ? fileApiDocs : undefined,
-    );
-
-    totalUsage.inputTokens += call1Result.usage.inputTokens;
-    totalUsage.outputTokens += call1Result.usage.outputTokens;
-    totalUsage.cacheReadTokens += call1Result.usage.cacheReadTokens;
-    totalUsage.cacheWriteTokens += call1Result.usage.cacheWriteTokens;
-
-    const call1Data = extractJSON(call1Result.text);
-    console.log(`[DQAF] Call 1 complete: ${call1Data.documents?.length ?? 0} doc assessments`);
-
-    // ── Compute document-level scores and verdicts ──
-    for (const doc of call1Data.documents) {
-      doc.documentReadinessScore = computeDocReadinessScore(doc.pass1Scores || {});
-      doc.documentVerdict = computeDocVerdict(doc.documentReadinessScore);
+    if (stage === 'call2') {
+      if (!providedCall1Data) throw new Error('call1Data is required for stage call2');
+      const { report, usage } = await handleCall2(documents, engagementPurpose, providedCall1Data, fileApiDocs, inlineDocSections);
+      console.log(`[DQAF] Assessment complete: ${report.overallVerdict} (${report.kpis.overallSetReadinessScore}%), ${report.flagsSummary.total} flags`);
+      return new Response(JSON.stringify({ success: true, report, usage }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
     }
 
-    // ══════════════════════════════════════════════════════════
-    // CALL 2 — Stage 1D (Score B) + Pass 2 (5 cross-doc checks)
-    // ══════════════════════════════════════════════════════════
+    // ── Legacy full pipeline (no stage specified) ──
+    const { call1Data, usage: call1Usage } = await handleCall1(documents, engagementPurpose, fileApiDocs, inlineDocSections);
+    const { report, usage: call2Usage } = await handleCall2(documents, engagementPurpose, call1Data, fileApiDocs, inlineDocSections);
 
-    let call2Data: any = {
-      interDocumentCompatibility: [],
-      crossDocumentFindings: [],
-      perDocumentFlags: [],
-      documentRegister: [],
-      verdictRationale: '',
-      mandatoryProductionNotice: undefined,
+    const totalUsage = {
+      inputTokens: call1Usage.inputTokens + call2Usage.inputTokens,
+      outputTokens: call1Usage.outputTokens + call2Usage.outputTokens,
+      cacheReadTokens: call1Usage.cacheReadTokens + call2Usage.cacheReadTokens,
+      cacheWriteTokens: call1Usage.cacheWriteTokens + call2Usage.cacheWriteTokens,
     };
 
-    if (!isSingleDoc) {
-      // Build Call 1 results text for context
-      const call1Context = JSON.stringify({
-        engagementPurposeProfile: call1Data.engagementPurposeProfile,
-        documents: call1Data.documents.map((d: any) => ({
-          documentId: d.documentId,
-          documentLabel: d.documentLabel,
-          documentProfile: d.documentProfile,
-          relevanceScoreA: d.relevanceScoreA,
-          relevanceInterpretation: d.relevanceInterpretation,
-          pass1Scores: d.pass1Scores,
-          documentReadinessScore: d.documentReadinessScore,
-          documentVerdict: d.documentVerdict,
-          metadata: d.metadata,
-        })),
-      }, null, 2);
+    console.log(`[DQAF] Assessment complete: ${report.overallVerdict} (${report.kpis.overallSetReadinessScore}%), ${report.flagsSummary.total} flags`);
 
-      const call2Prompt = CALL2_SYSTEM_PROMPT_TEMPLATE.replace('{CALL1_RESULTS}', call1Context);
-
-      const call2SystemBlocks: Array<{ text: string; cache: boolean }> = [
-        { text: call2Prompt, cache: true },
-      ];
-
-      // Add inline documents for context (same as Call 1)
-      if (inlineDocSections.length > 0) {
-        call2SystemBlocks.push({
-          text: `## INLINE DOCUMENTS\n\n${inlineDocSections.join('\n\n')}`,
-          cache: true,
-        });
-      }
-
-      const call2Messages = [{
-        role: 'user' as const,
-        content: 'Analyze cross-document relationships. Evaluate how documents complement or conflict with each other as source material for the brief. Score inter-document content complementarity for every pair, run Pass 2 checks, review Pass 1 results for cross-document escalations, generate document register actions and verdict rationale. Return the complete JSON as specified.',
-      }];
-
-      console.log(`[DQAF] Call 2: cross-document analysis for ${docCount} docs (${docCount * (docCount - 1) / 2} pairs)`);
-
-      const call2Result = await callClaudeAPI(
-        call2SystemBlocks,
-        call2Messages,
-        12288,
-        fileApiDocs.length > 0 ? fileApiDocs : undefined,
-      );
-
-      totalUsage.inputTokens += call2Result.usage.inputTokens;
-      totalUsage.outputTokens += call2Result.usage.outputTokens;
-      totalUsage.cacheReadTokens += call2Result.usage.cacheReadTokens;
-      totalUsage.cacheWriteTokens += call2Result.usage.cacheWriteTokens;
-
-      call2Data = extractJSON(call2Result.text);
-      console.log(`[DQAF] Call 2 complete: ${call2Data.interDocumentCompatibility?.length ?? 0} pairs, ${call2Data.crossDocumentFindings?.length ?? 0} findings, ${call2Data.perDocumentFlags?.length ?? 0} per-doc flags`);
-    } else {
-      // Single doc — generate register and verdict rationale from Call 1 data
-      const doc = call1Data.documents[0];
-      call2Data.documentRegister = [{
-        documentId: doc.documentId,
-        documentLabel: doc.documentLabel,
-        detectedVersion: doc.metadata?.detectedVersion ?? null,
-        detectedDate: doc.metadata?.detectedDate ?? null,
-        requiredAction: doc.documentVerdict === 'ready'
-          ? 'Use as-is — single document passed all structural checks.'
-          : 'Review flagged issues before production.',
-      }];
-      call2Data.verdictRationale = `Single document assessment. Document scored ${doc.documentReadinessScore}% readiness with verdict: ${doc.documentVerdict}.`;
-    }
-
-    // ══════════════════════════════════════════════════════════
-    // STAGE 3 — KPI COMPUTATION & REPORT ASSEMBLY
-    // ══════════════════════════════════════════════════════════
-
-    // Normalize cross-doc findings (handle potential snake_case from Claude)
-    const crossDocFindings = (call2Data.crossDocumentFindings || []).map((f: any) => ({
-      checkId: f.checkId || f.check_id,
-      scope: f.scope || 'between_documents',
-      severity: f.severity,
-      description: f.description,
-      documentsInvolved: f.documentsInvolved || f.documents_involved || [],
-      productionImpact: f.productionImpact || f.production_impact || '',
-    }));
-
-    // Normalize per-document flags (handle potential snake_case from Claude)
-    const perDocumentFlags = (call2Data.perDocumentFlags || call2Data.per_document_flags || []).map((f: any) => ({
-      checkId: f.checkId || f.check_id,
-      documentId: f.documentId || f.document_id,
-      scope: f.scope || 'this_document',
-      severity: f.severity,
-      description: f.description,
-      crossDocumentConsequence: f.crossDocumentConsequence || f.cross_document_consequence || '',
-    }));
-
-    const kpis = computeKPIs(call1Data.documents, crossDocFindings, isSingleDoc);
-    const flagsSummary = computeFlagsSummary(call1Data.documents, crossDocFindings, perDocumentFlags);
-    const overallVerdict = kpis.overallSetReadinessScore >= 90 ? 'ready'
-      : kpis.overallSetReadinessScore >= 70 ? 'conditional' : 'not_ready';
-
-    // Map verdict to legacy status
-    const statusMap: Record<string, string> = { ready: 'green', conditional: 'amber', not_ready: 'red' };
-
-    // Build document register with relevance data
-    const documentRegister = (call2Data.documentRegister || []).map((r: any) => {
-      const docData = call1Data.documents.find((d: any) => d.documentId === r.documentId);
-      return {
-        documentId: r.documentId,
-        documentLabel: r.documentLabel || docData?.documentLabel || 'Unknown',
-        detectedVersion: r.detectedVersion ?? docData?.metadata?.detectedVersion ?? null,
-        detectedDate: r.detectedDate ?? docData?.metadata?.detectedDate ?? null,
-        relevanceScoreA: docData?.relevanceScoreA ?? 0,
-        relevanceInterpretation: docData?.relevanceInterpretation ?? 'orphan_review_required',
-        documentReadinessScore: docData?.documentReadinessScore ?? 0,
-        documentVerdict: docData?.documentVerdict ?? 'not_ready',
-        requiredAction: r.requiredAction || 'Review required.',
-      };
-    });
-
-    const report = {
-      assessmentId: crypto.randomUUID(),
-      assessedAt: new Date().toISOString(),
-      engagementPurposeStatement: engagementPurpose,
-      engagementPurposeProfile: call1Data.engagementPurposeProfile || { objective: '', audience: '', type: '', focus: '', tone: '' },
-      documentCountSubmitted: docCount,
-      documentCountRetrieved: call1Data.documents?.length ?? 0,
-      documents: call1Data.documents || [],
-      interDocumentCompatibility: call2Data.interDocumentCompatibility || [],
-      crossDocumentFindings: crossDocFindings,
-      perDocumentFlags: perDocumentFlags,
-      kpis,
-      flagsSummary,
-      overallVerdict,
-      verdictRationale: call2Data.verdictRationale || '',
-      documentRegister,
-      ...(call2Data.mandatoryProductionNotice ? { mandatoryProductionNotice: call2Data.mandatoryProductionNotice } : {}),
-      // Internal app fields
-      lastCheckTimestamp: Date.now(),
-      docChangeLogSeqAtCheck: 0, // Set by client
-      status: statusMap[overallVerdict] || 'red',
-    };
-
-    console.log(`[DQAF] Assessment complete: ${overallVerdict} (${kpis.overallSetReadinessScore}%), ${flagsSummary.total} flags (${perDocumentFlags.length} per-doc escalations)`);
-
-    return new Response(JSON.stringify({
-      success: true,
-      report,
-      usage: totalUsage,
-    }), {
+    return new Response(JSON.stringify({ success: true, report, usage: totalUsage }), {
       headers: { 'Content-Type': 'application/json', ...corsHeaders },
     });
 

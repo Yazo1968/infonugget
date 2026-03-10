@@ -322,7 +322,8 @@ export function useCardGeneration(
         }));
 
         // Call the server-side generate-card Edge Function
-        // This runs the full pipeline: planning → image gen → storage upload → DB persist
+        // Pipeline: synthesis (if needed) → image gen → storage upload → DB persist
+        // Planner is skipped for standard cards — Gemini handles visualization directly.
         const response = await generateCardApi({
           nuggetId: selectedNugget!.id,
           cardId: card.id,
@@ -331,7 +332,6 @@ export function useCardGeneration(
           settings,
           subject: selectedNugget?.subject,
           existingSynthesis: contentToMap,
-          previousPlan: card.visualPlanMap?.[currentLevel],
           documents,
           referenceImage: refImagePayload,
           skipSynthesis: true, // Content already synthesized
@@ -360,7 +360,7 @@ export function useCardGeneration(
             activeImageMap: { ...(c.activeImageMap || {}), [currentLevel]: response.imageUrl },
             isGeneratingMap: { ...(c.isGeneratingMap || {}), [currentLevel]: false },
             lastGeneratedContentMap: { ...(c.lastGeneratedContentMap || {}), [currentLevel]: response.synthesisContent },
-            visualPlanMap: { ...(c.visualPlanMap || {}), [currentLevel]: response.visualPlan },
+            ...(response.imagePrompt ? { lastPromptMap: { ...(c.lastPromptMap || {}), [currentLevel]: response.imagePrompt } } : {}),
           };
         });
       } catch (err: any) {

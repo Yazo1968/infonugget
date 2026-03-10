@@ -269,16 +269,29 @@ const App: React.FC = () => {
     [createPlaceholderCardsInFolder],
   );
 
-  // ── Folder picker for chat operations ──
+  // ── Folder picker for card operations ──
   type PendingFolderSelection =
     | { type: 'chatSaveAsCard'; message: ChatMessage; editedContent: string }
-    | { type: 'chatGenerateCard'; promptText: string; detailLevel: DetailLevel };
+    | { type: 'chatGenerateCard'; promptText: string; detailLevel: DetailLevel }
+    | { type: 'sourceGeneration'; headingId: string; detailLevel: DetailLevel; cardTitle: string; sourceDocName: string };
 
   const [pendingFolderSelection, setPendingFolderSelection] = useState<PendingFolderSelection | null>(null);
 
   const handleGenerateCardContentWrapped = useCallback(
     (headingId: string, detailLevel: DetailLevel, cardTitle: string, sourceDocName?: string, existingCardId?: string) => {
-      handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
+      if (existingCardId) {
+        // Updating existing card — no folder selection needed
+        handleGenerateCardContent(headingId, detailLevel, cardTitle, sourceDocName, existingCardId);
+      } else {
+        // New card — show folder picker
+        setPendingFolderSelection({
+          type: 'sourceGeneration',
+          headingId,
+          detailLevel,
+          cardTitle,
+          sourceDocName: sourceDocName || '',
+        });
+      }
     },
     [handleGenerateCardContent],
   );
@@ -312,11 +325,18 @@ const App: React.FC = () => {
         }
         // Send the chat message now that the placeholder is placed in the folder
         sendInsightsMessage(pending.promptText, true, pending.detailLevel);
+      } else if (pending.type === 'sourceGeneration') {
+        // Create a placeholder card in the selected folder, then generate content
+        const placeholders = createPlaceholderCards([pending.cardTitle], pending.detailLevel, { targetFolderId: folderId });
+        const placeholderId = placeholders[0]?.id ?? null;
+        if (placeholderId) {
+          handleGenerateCardContent(pending.headingId, pending.detailLevel, pending.cardTitle, pending.sourceDocName, placeholderId);
+        }
       }
 
       setPendingFolderSelection(null);
     },
-    [pendingFolderSelection, handleSaveAsCard, createPlaceholderCards, sendInsightsMessage],
+    [pendingFolderSelection, handleSaveAsCard, createPlaceholderCards, sendInsightsMessage, handleGenerateCardContent],
   );
 
   const handleCreateFolderForPending = useCallback(
@@ -337,8 +357,8 @@ const App: React.FC = () => {
 
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null>(null);
-  const [qualityActiveTab, setQualityActiveTab] = useState<'subject' | 'brief' | 'assessment'>('subject');
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null>('sources');
+  const [qualityActiveTab, setQualityActiveTab] = useState<'logs' | 'brief' | 'assessment'>('brief');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
   // ── Unsaved-changes gating for panel/nugget switching ──
@@ -347,7 +367,12 @@ const App: React.FC = () => {
   const tabBarRef = useRef<HTMLDivElement>(null);
   const panelSwitchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [appPendingAction, setAppPendingAction] = useState<(() => void) | null>(null);
-  const [appPendingDirtyPanel, setAppPendingDirtyPanel] = useState<'cards' | 'sources' | null>(null);
+  const [appPendingDirtyPanel, setAppPendingDirtyPanel] = useState<'cards' | 'sources' | 'brief' | null>(null);
+
+  // Brief draft-mode dirty tracking (set via SubjectQualityPanel callback)
+  const [briefLockActive, setBriefLockActive] = useState(false);
+  const briefSaveRef = useRef<(() => void) | null>(null);
+  const briefDiscardRef = useRef<(() => void) | null>(null);
 
   const appGatedAction = useCallback((action: () => void) => {
     if (cardsPanelRef.current?.isDirty) {
@@ -360,19 +385,27 @@ const App: React.FC = () => {
       setAppPendingAction(() => action);
       return;
     }
+    if (briefLockActive) {
+      setAppPendingDirtyPanel('brief');
+      setAppPendingAction(() => action);
+      return;
+    }
     action();
-  }, []);
+  }, [briefLockActive]);
 
   const handleAppDialogSave = useCallback(() => {
     const panel = appPendingDirtyPanel;
     if (panel === 'cards') cardsPanelRef.current?.save();
     else if (panel === 'sources') sourcesPanelRef.current?.save();
-    // After saving, re-check: is the OTHER panel dirty?
-    const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
-    const otherLabel = panel === 'cards' ? 'sources' : 'cards';
-    if (otherRef.current?.isDirty) {
-      setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
-      return;
+    else if (panel === 'brief') briefSaveRef.current?.();
+    // After saving, re-check: is another panel dirty?
+    if (panel !== 'brief') {
+      const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
+      const otherLabel = panel === 'cards' ? 'sources' : 'cards';
+      if (otherRef.current?.isDirty) {
+        setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
+        return;
+      }
     }
     const action = appPendingAction;
     setAppPendingAction(null);
@@ -384,11 +417,14 @@ const App: React.FC = () => {
     const panel = appPendingDirtyPanel;
     if (panel === 'cards') cardsPanelRef.current?.discard();
     else if (panel === 'sources') sourcesPanelRef.current?.discard();
-    const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
-    const otherLabel = panel === 'cards' ? 'sources' : 'cards';
-    if (otherRef.current?.isDirty) {
-      setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
-      return;
+    else if (panel === 'brief') briefDiscardRef.current?.();
+    if (panel !== 'brief') {
+      const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
+      const otherLabel = panel === 'cards' ? 'sources' : 'cards';
+      if (otherRef.current?.isDirty) {
+        setAppPendingDirtyPanel(otherLabel as 'cards' | 'sources');
+        return;
+      }
     }
     const action = appPendingAction;
     setAppPendingAction(null);
@@ -471,7 +507,7 @@ const App: React.FC = () => {
       if (e.key === 'Escape') {
         setZoomState({ imageUrl: null, cardId: null, cardText: null });
         setManifestCards(null);
-        setExpandedPanel(null);
+        setExpandedPanel('sources');
       }
     };
     window.addEventListener('keydown', onKeyDown);
@@ -495,7 +531,7 @@ const App: React.FC = () => {
         if (fixed.parentElement === document.body) return;
         fixed = fixed.parentElement?.closest('.fixed') ?? null;
       }
-      appGatedAction(() => setExpandedPanel(null));
+      appGatedAction(() => setExpandedPanel('sources'));
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -604,8 +640,9 @@ const App: React.FC = () => {
           {/* App-level unsaved changes dialog (for nugget/panel switching) */}
           {appPendingAction && appPendingDirtyPanel && (
             <UnsavedChangesDialog
-              title={`Unsaved changes in ${appPendingDirtyPanel === 'cards' ? 'Cards' : 'Sources'} editor`}
+              title={`Unsaved changes in ${appPendingDirtyPanel === 'cards' ? 'Cards' : appPendingDirtyPanel === 'brief' ? 'Subject & Brief' : 'Sources'} editor`}
               description="You have unsaved edits. Save or discard them to continue."
+              saveLabel={appPendingDirtyPanel === 'brief' ? 'Update' : undefined}
               onSave={handleAppDialogSave}
               onDiscard={handleAppDialogDiscard}
               onCancel={handleAppDialogCancel}
@@ -659,7 +696,7 @@ const App: React.FC = () => {
                 expandedPanel={expandedPanel}
                 onTogglePanel={(panel) =>
                   appGatedAction(() => setExpandedPanel((prev) => {
-                    if (prev === panel) return null;
+                    if (prev === panel) return 'sources';
                     if (prev !== null) {
                       // Collapse first, then expand after animation
                       if (panelSwitchTimerRef.current) clearTimeout(panelSwitchTimerRef.current);
@@ -712,7 +749,12 @@ const App: React.FC = () => {
                       onRenameLogEntry={renameDocChangeLogEntry}
                       onCreateLogEntry={() => createLogCheckpoint('manual')}
                       briefing={selectedNugget.briefing}
+                      briefingSuggestions={selectedNugget.briefingSuggestions}
                       onBriefingChange={(briefing) => updateNugget(selectedNugget.id, (n) => ({ ...n, briefing, briefReviewNeeded: false }))}
+                      onSuggestionsChange={(briefingSuggestions) => updateNugget(selectedNugget.id, (n) => ({ ...n, briefingSuggestions }))}
+                      onBriefDirtyChange={setBriefLockActive}
+                      briefSaveRef={briefSaveRef}
+                      briefDiscardRef={briefDiscardRef}
                       documents={nuggetDocs}
                       subject={selectedNugget.subject}
                       onGenerateSuggestions={autoDeckGenerateSuggestions}
@@ -776,7 +818,7 @@ const App: React.FC = () => {
                       externalPlaceholderRef={chatPendingPlaceholderRef}
                       onInitiateChat={initiateInsightsChat}
                       qualityStatus={qualityStatus}
-                      onViewLog={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
+                      onViewLog={() => appGatedAction(() => { setQualityActiveTab('logs'); setExpandedPanel('quality'); })}
                     />
                   </ErrorBoundary>
 
@@ -946,8 +988,8 @@ const App: React.FC = () => {
               subjectReviewNeeded={selectedNugget?.subjectReviewNeeded}
               briefReviewNeeded={selectedNugget?.briefReviewNeeded}
               qualityStatus={qualityStatus}
-              onOpenSourcesLog={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
-              onOpenSubjectEdit={() => appGatedAction(() => { setQualityActiveTab('subject'); setExpandedPanel('quality'); })}
+              onOpenSourcesLog={() => appGatedAction(() => { setQualityActiveTab('logs'); setExpandedPanel('quality'); })}
+              onOpenSubjectEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
               onOpenBriefEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
               onOpenQualityPanel={() => appGatedAction(() => { setQualityActiveTab('assessment'); setExpandedPanel('quality'); })}
             />

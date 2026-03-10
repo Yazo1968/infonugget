@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo, useImperativeHandle, forwardRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   DQAFReport,
@@ -27,12 +27,13 @@ import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 import { QualityStatus } from '../hooks/useDocumentQualityCheck';
 import { BRIEFING_LIMITS, countWords } from '../utils/autoDeck/constants';
+import { UnsavedChangesDialog } from './Dialogs';
 
 // ─────────────────────────────────────────────────────────────────
 // Tab type
 // ─────────────────────────────────────────────────────────────────
 
-export type SubjectQualityTab = 'subject' | 'brief' | 'assessment';
+export type SubjectQualityTab = 'logs' | 'brief' | 'assessment';
 
 // ─────────────────────────────────────────────────────────────────
 // Props
@@ -63,9 +64,14 @@ export interface SubjectQualityPanelProps {
   onCreateLogEntry: () => void;
   // Brief
   briefing?: AutoDeckBriefing;
+  briefingSuggestions?: BriefingSuggestions;
   briefReviewNeeded: boolean;
   onBriefingChange: (briefing: AutoDeckBriefing) => void;
+  onSuggestionsChange: (suggestions: BriefingSuggestions) => void;
   onDismissBriefReview: (nuggetId: string) => void;
+  onBriefDirtyChange?: (dirty: boolean) => void;
+  briefSaveRef?: React.MutableRefObject<(() => void) | null>;
+  briefDiscardRef?: React.MutableRefObject<(() => void) | null>;
   documents: UploadedFile[];
   subject?: string;
   onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number) => Promise<BriefingSuggestions>;
@@ -241,8 +247,8 @@ export function deriveEngagementPurpose(briefing?: AutoDeckBriefing, subject?: s
 type SidebarSection = 'overview' | 'conflicts' | 'register' | `doc-${string}`;
 
 const TAB_ITEMS: { id: SubjectQualityTab; label: string }[] = [
-  { id: 'subject', label: 'Subject & Logs' },
-  { id: 'brief', label: 'Brief' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'brief', label: 'Subject & Brief' },
   { id: 'assessment', label: 'Assessment' },
 ];
 
@@ -260,7 +266,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
     sourcesLog, sourcesLogStats, hasPendingChanges,
     onDeleteLogEntry, onDeleteAllLogEntries, onRenameLogEntry, onCreateLogEntry,
     // Brief
-    briefing, briefReviewNeeded, onBriefingChange, onDismissBriefReview, documents, subject,
+    briefing, briefingSuggestions, briefReviewNeeded, onBriefingChange, onSuggestionsChange, onDismissBriefReview, onBriefDirtyChange, briefSaveRef, briefDiscardRef, documents, subject,
     onGenerateSuggestions, onAbortSuggestions,
     // Assessment
     dqafReport, effectiveStatus, isChecking, checkError,
@@ -274,6 +280,54 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
     minWidth: 300,
     anchorRef: tabBarRef,
   });
+
+  // ── Brief draft-mode gating ──
+  const briefTabRef = useRef<BriefTabHandle>(null);
+  const [briefDirty, setBriefDirty] = useState(false);
+  const [pendingTab, setPendingTab] = useState<SubjectQualityTab | null>(null);
+
+  const handleBriefDirtyChange = useCallback((dirty: boolean) => {
+    setBriefDirty(dirty);
+    onBriefDirtyChange?.(dirty);
+  }, [onBriefDirtyChange]);
+
+  // Expose save/discard to parent (App.tsx) for panel-close gating
+  useEffect(() => {
+    if (briefSaveRef) briefSaveRef.current = () => briefTabRef.current?.save();
+    if (briefDiscardRef) briefDiscardRef.current = () => briefTabRef.current?.discard();
+    return () => {
+      if (briefSaveRef) briefSaveRef.current = null;
+      if (briefDiscardRef) briefDiscardRef.current = null;
+    };
+  }, [briefSaveRef, briefDiscardRef]);
+
+  const handleTabClick = useCallback((tab: SubjectQualityTab) => {
+    if (tab === activeTab) return;
+    // If leaving the brief tab with unsaved changes, intercept
+    if (activeTab === 'brief' && briefDirty) {
+      setPendingTab(tab);
+      return;
+    }
+    onTabChange(tab);
+  }, [activeTab, briefDirty, onTabChange]);
+
+  const handleDialogSave = useCallback(() => {
+    briefTabRef.current?.save();
+    const target = pendingTab;
+    setPendingTab(null);
+    if (target) onTabChange(target);
+  }, [pendingTab, onTabChange]);
+
+  const handleDialogDiscard = useCallback(() => {
+    briefTabRef.current?.discard();
+    const target = pendingTab;
+    setPendingTab(null);
+    if (target) onTabChange(target);
+  }, [pendingTab, onTabChange]);
+
+  const handleDialogCancel = useCallback(() => {
+    setPendingTab(null);
+  }, []);
 
   if (!shouldRender) return null;
 
@@ -291,7 +345,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
             return (
               <button
                 key={tab.id}
-                onClick={() => onTabChange(tab.id)}
+                onClick={() => handleTabClick(tab.id)}
                 className={`flex-1 py-2.5 text-[11px] font-semibold tracking-wide transition-colors relative ${
                   isActive
                     ? darkMode ? 'text-zinc-100' : 'text-zinc-800'
@@ -309,17 +363,9 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
       </div>
 
       {/* ── Tab Content ── */}
-      {activeTab === 'subject' && (
-        <SubjectAndLogsTab
+      {activeTab === 'logs' && (
+        <LogsTab
           darkMode={darkMode}
-          nuggetId={nuggetId}
-          nuggetName={nuggetName}
-          currentSubject={currentSubject}
-          isRegeneratingSubject={isRegeneratingSubject}
-          subjectReviewNeeded={subjectReviewNeeded}
-          onSaveSubject={onSaveSubject}
-          onRegenerateSubject={onRegenerateSubject}
-          onDismissSubjectReview={onDismissSubjectReview}
           sourcesLog={sourcesLog}
           sourcesLogStats={sourcesLogStats}
           hasPendingChanges={hasPendingChanges}
@@ -331,12 +377,25 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
       )}
       {activeTab === 'brief' && (
         <BriefTab
+          ref={briefTabRef}
           darkMode={darkMode}
-          briefing={briefing}
-          briefReviewNeeded={briefReviewNeeded}
+          // Subject
           nuggetId={nuggetId}
+          nuggetName={nuggetName}
+          currentSubject={currentSubject}
+          isRegeneratingSubject={isRegeneratingSubject}
+          subjectReviewNeeded={subjectReviewNeeded}
+          onSaveSubject={onSaveSubject}
+          onRegenerateSubject={onRegenerateSubject}
+          onDismissSubjectReview={onDismissSubjectReview}
+          // Brief
+          briefing={briefing}
+          briefingSuggestions={briefingSuggestions}
+          briefReviewNeeded={briefReviewNeeded}
           onBriefingChange={onBriefingChange}
+          onSuggestionsChange={onSuggestionsChange}
           onDismissBriefReview={onDismissBriefReview}
+          onDirtyChange={handleBriefDirtyChange}
           documents={documents}
           subject={subject}
           onGenerateSuggestions={onGenerateSuggestions}
@@ -360,31 +419,34 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
           onTabChange={onTabChange}
         />
       )}
+
+      {/* ── Unsaved brief changes dialog ── */}
+      {pendingTab !== null && (
+        <UnsavedChangesDialog
+          onSave={handleDialogSave}
+          onDiscard={handleDialogDiscard}
+          onCancel={handleDialogCancel}
+          title="Unsaved changes"
+          description="You have unsaved edits to the subject or briefing. Save or discard them to continue."
+          saveLabel="Update"
+          discardLabel="Discard Changes"
+        />
+      )}
     </div>,
     document.body,
   );
 };
 
 // ═════════════════════════════════════════════════════════════════
-// TAB 1: Subject & Logs
+// TAB 1: Logs (sources log only)
 // ═════════════════════════════════════════════════════════════════
 
-function SubjectAndLogsTab({
+function LogsTab({
   darkMode,
-  nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
-  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
   sourcesLog, sourcesLogStats, hasPendingChanges,
   onDeleteLogEntry, onDeleteAllLogEntries, onRenameLogEntry, onCreateLogEntry,
 }: {
   darkMode: boolean;
-  nuggetId: string;
-  nuggetName: string;
-  currentSubject: string;
-  isRegeneratingSubject: boolean;
-  subjectReviewNeeded: boolean;
-  onSaveSubject: (nuggetId: string, subject: string) => void;
-  onRegenerateSubject: (nuggetId: string) => void;
-  onDismissSubjectReview: (nuggetId: string) => void;
   sourcesLog: SourcesLogEntry[];
   sourcesLogStats: SourcesLogStats;
   hasPendingChanges: boolean;
@@ -395,21 +457,6 @@ function SubjectAndLogsTab({
 }) {
   return (
     <div className="flex flex-col flex-1 overflow-hidden max-w-2xl mx-auto w-full">
-      {/* Subject section */}
-      <SubjectSection
-        darkMode={darkMode}
-        nuggetId={nuggetId}
-        nuggetName={nuggetName}
-        currentSubject={currentSubject}
-        isRegeneratingSubject={isRegeneratingSubject}
-        subjectReviewNeeded={subjectReviewNeeded}
-        onSaveSubject={onSaveSubject}
-        onRegenerateSubject={onRegenerateSubject}
-        onDismissSubjectReview={onDismissSubjectReview}
-      />
-      {/* Divider */}
-      <div className={`shrink-0 mx-4 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
-      {/* Sources log section */}
       <SourcesLogSection
         darkMode={darkMode}
         sourcesLog={sourcesLog}
@@ -424,12 +471,15 @@ function SubjectAndLogsTab({
   );
 }
 
-// ── Subject Section (inline edit) ──
+// ── Subject Section (inline edit, forwardRef for draft-mode gating) ──
 
-function SubjectSection({
-  darkMode, nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
-  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
-}: {
+interface SubjectSectionHandle {
+  save: () => void;
+  discard: () => void;
+  readonly isDirty: boolean;
+}
+
+const SubjectSection = forwardRef<SubjectSectionHandle, {
   darkMode: boolean;
   nuggetId: string;
   nuggetName: string;
@@ -439,55 +489,85 @@ function SubjectSection({
   onSaveSubject: (nuggetId: string, subject: string) => void;
   onRegenerateSubject: (nuggetId: string) => void;
   onDismissSubjectReview: (nuggetId: string) => void;
-}) {
+  onDirtyChange?: (dirty: boolean) => void;
+}>(function SubjectSection({
+  darkMode, nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
+  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
+  onDirtyChange,
+}, ref) {
   const [localSubject, setLocalSubject] = useState(currentSubject);
-  const [hasRegenerated, setHasRegenerated] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Sync when external value changes (e.g. regeneration completes)
+  // Sync when external value changes (e.g. regeneration completes, nugget switch)
   useEffect(() => {
     if (currentSubject !== localSubject && !isRegeneratingSubject) {
       setLocalSubject(currentSubject);
-      setHasRegenerated(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSubject, isRegeneratingSubject]);
 
-  const hasChanged = localSubject.trim() !== currentSubject;
-  const isEmpty = localSubject.trim() === '';
-
-  const handleSave = () => {
-    if (!isEmpty) {
-      onSaveSubject(nuggetId, localSubject.trim());
-      setHasRegenerated(false);
+  const handleSave = useCallback(() => {
+    const trimmed = localSubject.trim();
+    if (trimmed && trimmed !== currentSubject) {
+      onSaveSubject(nuggetId, trimmed);
     }
-  };
+  }, [localSubject, currentSubject, nuggetId, onSaveSubject]);
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSave();
-    }
-  };
+  const subjectIsDirty = localSubject.trim() !== currentSubject;
+
+  useEffect(() => { onDirtyChange?.(subjectIsDirty); }, [subjectIsDirty, onDirtyChange]);
+
+  useImperativeHandle(ref, () => ({
+    save() { handleSave(); },
+    discard() { setLocalSubject(currentSubject); },
+    get isDirty() { return subjectIsDirty; },
+  }), [handleSave, currentSubject, subjectIsDirty]);
 
   return (
-    <div className="shrink-0 px-4 pt-4 pb-3">
+    <div className="shrink-0 px-5 pt-4 pb-3">
+      <div className="max-w-2xl mx-auto">
       <div className="flex items-center justify-between mb-2">
-        <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-          Subject
-        </h3>
-        {subjectReviewNeeded && (
-          <span className="text-[9px] font-medium text-amber-500 dark:text-amber-400 flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-            Review needed
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+            Subject
+          </h3>
+          {subjectReviewNeeded && (
+            <span className="text-[9px] font-medium text-amber-500 dark:text-amber-400 flex items-center gap-1">
+              <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+              Review needed
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => onRegenerateSubject(nuggetId)}
+            disabled={isRegeneratingSubject}
+            className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+          >
+            {isRegeneratingSubject ? (
+              <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Regenerating...</>
+            ) : (
+              <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
+              </svg>Regenerate</>
+            )}
+          </button>
+          {subjectIsDirty && (
+            <button
+              type="button"
+              onClick={handleSave}
+              className={`text-[11px] font-semibold px-2.5 py-0.5 rounded transition-colors ${darkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+            >
+              Update
+            </button>
+          )}
+        </div>
       </div>
       <textarea
         ref={textareaRef}
         value={localSubject}
         onChange={(e) => setLocalSubject(e.target.value)}
-        onKeyDown={handleKeyDown}
         rows={2}
         disabled={isRegeneratingSubject}
         className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed ${
@@ -499,29 +579,8 @@ function SubjectSection({
         Topic sentence to prime AI as a domain expert. Keep it specific (15-40 words).
       </p>
 
-      {isRegeneratingSubject && (
-        <div className="flex items-center gap-2 mt-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-          <svg className="animate-spin h-3.5 w-3.5" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
-            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-          </svg>
-          Regenerating from documents...
-        </div>
-      )}
-
-      {/* Action buttons */}
-      <div className="flex items-center gap-3 mt-2">
-        <button
-          onClick={() => onRegenerateSubject(nuggetId)}
-          disabled={isRegeneratingSubject}
-          className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" />
-          </svg>
-          Regenerate
-        </button>
-        {subjectReviewNeeded && !hasChanged && !isRegeneratingSubject && !hasRegenerated && (
+      {subjectReviewNeeded && !subjectIsDirty && !isRegeneratingSubject && (
+        <div className="flex items-center gap-3 mt-2">
           <button
             onClick={() => onDismissSubjectReview(nuggetId)}
             className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors flex items-center gap-1.5"
@@ -531,22 +590,12 @@ function SubjectSection({
             </svg>
             Keep
           </button>
-        )}
-        {(hasChanged || hasRegenerated) && (
-          <button
-            onClick={handleSave}
-            disabled={isEmpty || isRegeneratingSubject}
-            className={`text-[11px] font-semibold px-3 py-1 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-              darkMode ? 'bg-zinc-100 text-zinc-900 hover:bg-zinc-200' : 'bg-zinc-800 text-white hover:bg-zinc-700'
-            }`}
-          >
-            Save
-          </button>
-        )}
+        </div>
+      )}
       </div>
     </div>
   );
-}
+});
 
 // ── Sources Log Section ──
 
@@ -788,36 +837,110 @@ function SourcesLogSection({
 }
 
 // ═════════════════════════════════════════════════════════════════
-// TAB 2: Brief
+// TAB 2: Brief (draft mode — manual save required)
 // ═════════════════════════════════════════════════════════════════
 
-function BriefTab({
-  darkMode, briefing, briefReviewNeeded, nuggetId, onBriefingChange, onDismissBriefReview, documents, subject,
-  onGenerateSuggestions, onAbortSuggestions, isOpen,
-}: {
+export interface BriefTabHandle {
+  save: () => void;
+  discard: () => void;
+  readonly isDirty: boolean;
+}
+
+interface BriefTabProps {
   darkMode: boolean;
-  briefing?: AutoDeckBriefing;
-  briefReviewNeeded: boolean;
+  // Subject
   nuggetId: string;
+  nuggetName: string;
+  currentSubject: string;
+  isRegeneratingSubject: boolean;
+  subjectReviewNeeded: boolean;
+  onSaveSubject: (nuggetId: string, subject: string) => void;
+  onRegenerateSubject: (nuggetId: string) => void;
+  onDismissSubjectReview: (nuggetId: string) => void;
+  // Brief
+  briefing?: AutoDeckBriefing;
+  briefingSuggestions?: BriefingSuggestions;
+  briefReviewNeeded: boolean;
   onBriefingChange: (briefing: AutoDeckBriefing) => void;
+  onSuggestionsChange: (suggestions: BriefingSuggestions) => void;
   onDismissBriefReview: (nuggetId: string) => void;
+  onDirtyChange: (dirty: boolean) => void;
   documents: UploadedFile[];
   subject?: string;
   onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number) => Promise<BriefingSuggestions>;
   onAbortSuggestions?: () => void;
   isOpen: boolean;
-}) {
-  const [localBriefing, setLocalBriefing] = useState<AutoDeckBriefing>(briefing ?? { audience: '', type: '', objective: '', tone: '', focus: '' });
-  const [suggestions, setSuggestions] = useState<BriefingSuggestions | null>(null);
+}
+
+const EMPTY_BRIEFING: AutoDeckBriefing = { audience: '', type: '', objective: '', tone: '', focus: '' };
+
+const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
+  darkMode,
+  // Subject
+  nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
+  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
+  // Brief
+  briefing, briefingSuggestions, briefReviewNeeded, onBriefingChange, onSuggestionsChange, onDismissBriefReview, onDirtyChange, documents, subject,
+  onGenerateSuggestions, onAbortSuggestions, isOpen,
+}, ref) {
+  // Subject ref for combined dirty gating
+  const subjectRef = useRef<SubjectSectionHandle>(null);
+  // Draft state — only committed on explicit save
+  const [localBriefing, setLocalBriefing] = useState<AutoDeckBriefing>(briefing ?? EMPTY_BRIEFING);
+  const [localSuggestions, setLocalSuggestions] = useState<BriefingSuggestions | null>(briefingSuggestions ?? null);
+  // Committed snapshots for dirty comparison
+  const [committedBriefing, setCommittedBriefing] = useState<AutoDeckBriefing>(briefing ?? EMPTY_BRIEFING);
+  const [committedSuggestions, setCommittedSuggestions] = useState<BriefingSuggestions | null>(briefingSuggestions ?? null);
+
   const [isSuggesting, setIsSuggesting] = useState(false);
   const [suggestError, setSuggestError] = useState<string | null>(null);
 
-  // Sync local briefing when parent prop changes (e.g. switching nuggets)
+  // Sync local + committed state when parent props change (e.g. switching nuggets)
   const briefingRef = useRef(briefing);
   if (briefing !== briefingRef.current) {
     briefingRef.current = briefing;
-    setLocalBriefing(briefing ?? { audience: '', type: '', objective: '', tone: '', focus: '' });
+    const b = briefing ?? EMPTY_BRIEFING;
+    setLocalBriefing(b);
+    setCommittedBriefing(b);
   }
+  const suggestionsRef = useRef(briefingSuggestions);
+  if (briefingSuggestions !== suggestionsRef.current) {
+    suggestionsRef.current = briefingSuggestions;
+    setLocalSuggestions(briefingSuggestions ?? null);
+    setCommittedSuggestions(briefingSuggestions ?? null);
+  }
+
+  // Dirty detection — brief fields
+  const briefDirtyOnly = useMemo(() => {
+    return JSON.stringify(localBriefing) !== JSON.stringify(committedBriefing)
+      || JSON.stringify(localSuggestions) !== JSON.stringify(committedSuggestions);
+  }, [localBriefing, committedBriefing, localSuggestions, committedSuggestions]);
+
+  // Subject dirty state (updated via SubjectSection callback)
+  const [subjectDirty, setSubjectDirty] = useState(false);
+
+  // Combined dirty: subject OR brief
+  const isDirty = briefDirtyOnly || subjectDirty;
+
+  useEffect(() => { onDirtyChange(isDirty); }, [isDirty, onDirtyChange]);
+
+  // Imperative handle for parent — saves/discards BOTH subject + brief
+  useImperativeHandle(ref, () => ({
+    save() {
+      subjectRef.current?.save();
+      onBriefingChange(localBriefing);
+      if (localSuggestions) onSuggestionsChange(localSuggestions);
+      setCommittedBriefing(localBriefing);
+      setCommittedSuggestions(localSuggestions);
+      setSubjectDirty(false); // Immediate clear — SubjectSection will confirm on next render
+    },
+    discard() {
+      subjectRef.current?.discard();
+      setLocalBriefing(committedBriefing);
+      setLocalSuggestions(committedSuggestions);
+    },
+    get isDirty() { return isDirty; },
+  }), [localBriefing, localSuggestions, committedBriefing, committedSuggestions, isDirty, onBriefingChange, onSuggestionsChange]);
 
   const availableDocs = documents.filter((d) => d.content || d.fileId || d.pdfBase64);
   const selectedDocs = availableDocs.filter((d) => d.enabled !== false);
@@ -832,22 +955,27 @@ function BriefTab({
     const { max } = BRIEFING_LIMITS[field];
     const words = value.split(/\s+/).filter(Boolean);
     const trimmed = words.length > max ? words.slice(0, max).join(' ') : value;
-    const next = { ...localBriefing, [field]: trimmed };
-    setLocalBriefing(next);
-    onBriefingChange(next);
-  }, [localBriefing, onBriefingChange]);
+    setLocalBriefing((prev) => ({ ...prev, [field]: trimmed }));
+  }, []);
 
   const handleGenerateBriefing = useCallback(async () => {
-    if (!onGenerateSuggestions || availableDocs.length === 0) return;
-    const empty: AutoDeckBriefing = { audience: '', type: '', objective: '', tone: '', focus: '' };
-    setLocalBriefing(empty);
-    onBriefingChange(empty);
-    setSuggestions(null);
+    if (!onGenerateSuggestions) { setSuggestError('Generate handler not available'); return; }
+    if (availableDocs.length === 0) { setSuggestError('No documents with content available'); return; }
+    setLocalBriefing(EMPTY_BRIEFING);
+    setLocalSuggestions(null);
     setIsSuggesting(true);
     setSuggestError(null);
     try {
       const result = await onGenerateSuggestions(subject, selectedDocs, totalWordCount);
-      setSuggestions(result);
+      setLocalSuggestions(result);
+      // Auto-select the first suggestion for each field
+      const fields: (keyof typeof BRIEFING_LIMITS)[] = ['objective', 'audience', 'type', 'focus', 'tone'];
+      const autoFilled: AutoDeckBriefing = { ...EMPTY_BRIEFING };
+      for (const f of fields) {
+        const first = result[f]?.[0];
+        if (first) autoFilled[f] = first.text;
+      }
+      setLocalBriefing(autoFilled);
     } catch (err: any) {
       if (err?.name !== 'AbortError') setSuggestError(err?.message || 'Failed to generate suggestions');
     } finally {
@@ -855,26 +983,72 @@ function BriefTab({
     }
   }, [onGenerateSuggestions, subject, selectedDocs, totalWordCount, availableDocs.length]);
 
+  const handleSave = useCallback(() => {
+    onBriefingChange(localBriefing);
+    if (localSuggestions) onSuggestionsChange(localSuggestions);
+    setCommittedBriefing(localBriefing);
+    setCommittedSuggestions(localSuggestions);
+  }, [localBriefing, localSuggestions, onBriefingChange, onSuggestionsChange]);
+
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
-      <div className="flex-1 overflow-y-auto p-5">
+      <div className="flex-1 overflow-y-auto">
+        {/* ── Subject section ── */}
+        <SubjectSection
+          ref={subjectRef}
+          darkMode={darkMode}
+          nuggetId={nuggetId}
+          nuggetName={nuggetName}
+          currentSubject={currentSubject}
+          isRegeneratingSubject={isRegeneratingSubject}
+          subjectReviewNeeded={subjectReviewNeeded}
+          onSaveSubject={onSaveSubject}
+          onRegenerateSubject={onRegenerateSubject}
+          onDismissSubjectReview={onDismissSubjectReview}
+          onDirtyChange={setSubjectDirty}
+        />
+        {/* ── Divider ── */}
+        <div className={`mx-5 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
+        {/* ── Brief section ── */}
+        <div className="px-5 pt-4 pb-3">
         <div className="max-w-2xl mx-auto">
-          {briefReviewNeeded && (
-            <div className={`flex items-center justify-between gap-3 rounded-lg border px-3 py-2 mb-4 ${darkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200'}`}>
-              <span className={`text-[11px] ${darkMode ? 'text-amber-400' : 'text-amber-700'}`}>Sources have changed — review your briefing</span>
-              <button onClick={() => onDismissBriefReview(nuggetId)} className={`text-[10px] font-medium px-2 py-0.5 rounded transition-colors ${darkMode ? 'hover:bg-amber-500/20 text-amber-400' : 'hover:bg-amber-100 text-amber-600'}`}>Dismiss</button>
-            </div>
-          )}
-          <div className="mb-3.5">
-            <button onClick={handleGenerateBriefing} disabled={isSuggesting || availableDocs.length === 0}
-              className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 mb-1 rounded-md border-none text-[12px] font-semibold transition-all ${isSuggesting ? 'cursor-not-allowed opacity-70' : availableDocs.length === 0 ? 'cursor-not-allowed' : 'cursor-pointer'} ${isSuggesting ? (darkMode ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-200 text-zinc-500') : availableDocs.length > 0 ? 'bg-blue-600 hover:bg-blue-500 text-white' : (darkMode ? 'bg-zinc-800 text-zinc-600' : 'bg-zinc-200 text-zinc-400')}`}>
-              {isSuggesting ? (
-                <><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="animate-spin"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></svg>Analyzing documents...</>
-              ) : (
-                <><svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" /><path d="M20 3v4M22 5h-4" /></svg>{suggestions ? 'Regenerate Briefing' : 'Generate Briefing'}</>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2">
+              <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                Briefing
+              </h3>
+              {briefReviewNeeded && (
+                <span className="text-[9px] font-medium text-amber-500 dark:text-amber-400 flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                  Review needed
+                </span>
               )}
-            </button>
-            {suggestError && <div className="text-[11px] text-red-500 dark:text-red-400 mb-1">{suggestError}</div>}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleGenerateBriefing}
+                disabled={isSuggesting}
+                className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {isSuggesting ? (
+                  <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Analyzing...</>
+                ) : (
+                  <><svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" className={darkMode ? 'text-zinc-400' : 'text-zinc-500'}>
+                    <path d="M9.937 15.5A2 2 0 0 0 8.5 14.063l-6.135-1.582a.5.5 0 0 1 0-.962L8.5 9.936A2 2 0 0 0 9.937 8.5l1.582-6.135a.5.5 0 0 1 .963 0L14.063 8.5A2 2 0 0 0 15.5 9.937l6.135 1.581a.5.5 0 0 1 0 .964L15.5 14.063a2 2 0 0 0-1.437 1.437l-1.582 6.135a.5.5 0 0 1-.963 0z" />
+                    <path d="M20 3v4M22 5h-4" />
+                  </svg>{localSuggestions ? 'Regenerate Briefing' : 'Generate Briefing'}</>
+                )}
+              </button>
+              {briefDirtyOnly && !isSuggesting && (
+                <button
+                  onClick={handleSave}
+                  className={`text-[11px] font-semibold px-2.5 py-0.5 rounded transition-colors ${darkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-500 text-white'}`}
+                >
+                  Update
+                </button>
+              )}
+            </div>
           </div>
           {([
             { field: 'objective' as const, label: 'Objective', required: true, hint: 'What should the audience take away?' },
@@ -895,21 +1069,37 @@ function BriefTab({
                   <label className={`text-[12px] font-semibold ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{label}{required && <span className="text-red-500 ml-0.5">*</span>}</label>
                   <span className={`text-[10px] tabular-nums ${fwcColor}`}>{fieldMin}–{fieldMax} words</span>
                 </div>
-                <select value="" onChange={(e) => { if (e.target.value) updateField(field, e.target.value); }} disabled={isSuggesting || !suggestions}
-                  className={`w-full py-1.5 px-2.5 rounded-t-md border border-b-0 text-[12px] transition-colors ${darkMode ? 'border-zinc-700 bg-zinc-800/50 text-zinc-200' : 'border-zinc-300 bg-white text-zinc-800'} ${suggestions ? 'cursor-pointer' : 'cursor-default'} ${isSuggesting ? 'opacity-50' : ''}`}>
-                  <option value="" disabled>{isSuggesting ? 'Generating...' : suggestions ? 'Select a suggestion...' : 'Click Generate Briefing first'}</option>
-                  {suggestions?.[field as BriefingFieldName]?.map((opt, i) => (<option key={i} value={opt.text}>{opt.label}</option>))}
+                <select value={localSuggestions?.[field as BriefingFieldName]?.find(o => o.text === fieldValue)?.text ?? ''} onChange={(e) => { if (e.target.value) updateField(field, e.target.value); }} disabled={isSuggesting}
+                  className={`w-full py-1.5 px-2.5 rounded-t-md border border-b-0 text-[12px] transition-colors ${darkMode ? 'border-zinc-700 bg-zinc-800/50 text-zinc-200' : 'border-zinc-300 bg-white text-zinc-800'} ${localSuggestions ? 'cursor-pointer' : 'cursor-default'} ${isSuggesting ? 'opacity-50' : ''}`}>
+                  <option value="" disabled>{isSuggesting ? 'Generating...' : localSuggestions ? 'Select a suggestion...' : 'No suggestions yet'}</option>
+                  {localSuggestions?.[field as BriefingFieldName]?.map((opt, i) => (<option key={i} value={opt.text}>{opt.label}</option>))}
                 </select>
                 <textarea value={localBriefing[field] || ''} onChange={(e) => updateField(field, e.target.value)} placeholder={hint} rows={2}
                   className={`w-full py-2 px-2.5 rounded-b-md border text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 ${darkMode ? 'border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600' : 'border-zinc-300 bg-white text-zinc-800 placeholder:text-zinc-400'}`} />
               </div>
             );
           })}
+
+          {briefReviewNeeded && !briefDirtyOnly && !isSuggesting && (
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                onClick={() => onDismissBriefReview(nuggetId)}
+                className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors flex items-center gap-1.5"
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Keep
+              </button>
+            </div>
+          )}
+          {suggestError && <div className="text-[11px] text-red-500 dark:text-red-400 mt-1">{suggestError}</div>}
+        </div>
         </div>
       </div>
     </div>
   );
-}
+});
 
 // ═════════════════════════════════════════════════════════════════
 // TAB 3: Assessment
@@ -976,13 +1166,9 @@ function AssessmentTab({
           </p>
         </div>
         <div className="flex gap-3">
-          <button onClick={() => onTabChange('subject')}
-            className={`text-[11px] font-medium px-4 py-2 rounded-lg transition-colors ${darkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'}`}>
-            Set Subject
-          </button>
           <button onClick={() => onTabChange('brief')}
             className={`text-[11px] font-medium px-4 py-2 rounded-lg transition-colors ${darkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-            Fill Brief
+            Set Subject & Brief
           </button>
         </div>
       </div>

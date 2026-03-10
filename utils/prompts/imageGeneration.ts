@@ -1,4 +1,4 @@
-import { transformContentToTags, hexToColorName } from './promptUtils';
+import { prepareContentBlock, hexToColorName } from './promptUtils';
 
 // ─────────────────────────────────────────────────────────────────
 // Annotation-Based Modification
@@ -119,8 +119,8 @@ export function buildContentModificationPrompt(
     `add rows, extend sections, or use a denser arrangement — but never cut content. ` +
     `All text must be legible with high contrast.`;
 
-  // Content: transform to bracketed tags
-  const contentBlock = '\n\n' + transformContentToTags(content, cardTitle || 'Untitled');
+  // Content: prepare content block preserving markdown structure
+  const contentBlock = '\n\n' + prepareContentBlock(content, cardTitle || 'Untitled');
 
   return (opening + paletteBlock + styleBlock + typographyBlock + renderInstruction + contentBlock).trim();
 }

@@ -40,178 +40,42 @@ export function buildExpertPriming(subject?: string): string {
 // ─────────────────────────────────────────────────────────────────
 // Prompt Utilities for gemini-3.1-flash-image-preview
 // ─────────────────────────────────────────────────────────────────
-// All functions in this file produce narrative prose optimized for
-// the image generation model. No markdown, no XML, no key-value
-// pairs — these are leakage vectors in image-model prompts.
+// Structured prompt format using XML-delimited sections
+// (<role>, <design_system>, <rules>, <content>)
+// for clear separation of style, layout, and content concerns.
+// Content preserved in native markdown (headings, bullets).
 // ─────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────
-// S2 / B1: Content Markdown → Bracketed Tags
+// S2 / B1: Content Preparation for Image Model
 // ─────────────────────────────────────────────────────────────────
-// Transforms synthesis output (standard markdown) into bracketed
-// structural tags safe for the image model. The synthesis phase
-// continues to output markdown for other consumers; this transform
-// is applied only when assembling the image-model prompt.
+// Prepares synthesis content for the image model prompt. Strips
+// formatting markers (bold, italic, HR) while preserving headings
+// and bullet structure in native markdown. Wrapped in <content> tags.
 // ─────────────────────────────────────────────────────────────────
 
-export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
+/**
+ * Prepares synthesis content for the image generation prompt.
+ * Preserves native markdown structure (headings, bullets) instead of
+ * converting to bracketed tags — Gemini understands markdown natively
+ * and won't render ## or - as visible text (unlike [SECTION] tags).
+ *
+ * @deprecated transformContentToTags — replaced by this function.
+ * Legacy alias kept below for backward compatibility with imageGeneration.ts.
+ */
+export function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
-
-  // Strip horizontal rules
-  content = content.replace(/^---+$/gm, '');
-
-  // Convert heading levels to bracketed tags (most specific first)
-  // #### Sub-subsection → [DETAIL] Sub-subsection
-  content = content.replace(/^####\s+(.+)$/gm, '[DETAIL] $1');
-  // ### Subheading → [SUBSECTION] Subheading
-  content = content.replace(/^###\s+(.+)$/gm, '[SUBSECTION] $1');
-  // ## Heading → [SECTION] Heading
-  content = content.replace(/^##\s+(.+)$/gm, '[SECTION] $1');
-  // # Title → strip entirely (the wrapper adds [TITLE] from cardTitle, so inline H1s are duplicates)
+  // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, '');
-
-  // Strip bold markers
-  content = content.replace(/\*\*(.+?)\*\*/g, '$1');
-
-  // Strip italic markers
-  content = content.replace(/\*(.+?)\*/g, '$1');
-
-  // Strip bullet dashes (leading - or * list items) — keep the text
-  content = content.replace(/^[\s]*[-*]\s+/gm, '');
-
-  // Collapse excessive blank lines to single blank line
+  // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, '\n\n');
-
-  // Trim
   content = content.trim();
-
-  // Wrap with title and delimiters
-  return `[BEGIN TEXT CONTENT]\n[TITLE] ${cardTitle}\n\n${content}\n[END TEXT CONTENT]`;
+  return `Title: ${cardTitle}\n\n${content}`;
 }
 
-// ─────────────────────────────────────────────────────────────────
-// B2: Sanitize Planner Output
-// ─────────────────────────────────────────────────────────────────
-// Safety net that strips any residual toxic patterns from the
-// planner's output before it reaches the image model. Catches
-// font names, point sizes, hex colors, and key-value patterns
-// that the planner was told not to produce but might anyway.
-// ─────────────────────────────────────────────────────────────────
-
-// Known font families that should never appear in planner output
-const FONT_NAMES = [
-  'Montserrat',
-  'Inter',
-  'Roboto',
-  'Open Sans',
-  'Lato',
-  'Poppins',
-  'Raleway',
-  'Nunito',
-  'Source Sans',
-  'Work Sans',
-  'DM Sans',
-  'Playfair Display',
-  'Merriweather',
-  'Lora',
-  'Georgia',
-  'Garamond',
-  'PT Serif',
-  'Libre Baskerville',
-  'Source Serif',
-  'Crimson Text',
-  'Source Code Pro',
-  'Fira Code',
-  'JetBrains Mono',
-  'IBM Plex Mono',
-  'IBM Plex Sans',
-  'Helvetica',
-  'Arial',
-  'Verdana',
-  'Tahoma',
-  'Trebuchet',
-  // Additional fonts from STYLE_FONTS
-  'Bebas Neue',
-  'Orbitron',
-  'Rajdhani',
-  'Oswald',
-  'Impact',
-  'Arial Black',
-  'DIN Condensed',
-  'Pacifico',
-  'Comic Sans MS',
-  'Rubik',
-  'Quicksand',
-  'Futura',
-  'Courier New',
-];
-
-export function sanitizePlannerOutput(plannerText: string): string {
-  let text = plannerText;
-
-  // ── Strip markdown formatting (leakage vectors for image model) ──
-
-  // Remove heading markers
-  text = text.replace(/^#{1,6}\s+/gm, '');
-
-  // Remove bold markers
-  text = text.replace(/\*\*(.+?)\*\*/g, '$1');
-
-  // Remove italic markers
-  text = text.replace(/\*(.+?)\*/g, '$1');
-
-  // Remove horizontal rules
-  text = text.replace(/^---+$/gm, '');
-
-  // Remove numbered list prefixes but keep the text
-  text = text.replace(/^\d+\.\s+/gm, '');
-
-  // Remove bullet dashes but keep the text
-  text = text.replace(/^[\s]*[-*]\s+/gm, '');
-
-  // ── Strip toxic payload patterns ──
-
-  // Remove lines that are purely font specifications
-  // Pattern: "Title: FontName Bold, 42pt, ..."
-  text = text.replace(
-    /^.*?:\s*(?:(?:Montserrat|Inter|Roboto|Open Sans|Lato|Poppins|Raleway|Nunito|Helvetica|Arial|Bebas Neue|Orbitron|Rajdhani|Oswald|Impact|DIN Condensed|Pacifico|Comic Sans MS|Rubik|Quicksand|Futura|Courier New|IBM Plex Sans|IBM Plex Mono)\s+(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)\s*,?\s*\d+(?:-\d+)?pt).*$/gim,
-    '',
-  );
-
-  // Remove standalone point size specs (e.g., "36pt", "22-28pt", "36-48pt")
-  text = text.replace(/\b\d{1,3}(?:-\d{1,3})?pt\b/gi, '');
-
-  // Remove hex color codes (#RRGGBB or #RGB)
-  text = text.replace(/#[0-9A-Fa-f]{3,8}\b/g, '');
-
-  // Remove known font names when they appear as nouns (not inside content)
-  for (const font of FONT_NAMES) {
-    // Replace font name when it appears in a typography/font context
-    // Use word boundary to avoid partial matches
-    const escaped = font.replace(/\s+/g, '\\s+');
-    text = text.replace(
-      new RegExp(`\\b${escaped}\\b\\s*(?:Bold|SemiBold|Regular|Medium|Light|Thin|ExtraBold|Black)?`, 'gi'),
-      '',
-    );
-  }
-
-  // Remove font weight + size combos that slipped through (e.g., "Bold, 42pt")
-  text = text.replace(/\b(?:Bold|SemiBold|Regular|Medium|Light)\s*,?\s*\d+(?:-\d+)?pt/gi, '');
-
-  // Remove pixel values (e.g., "24px", "1920x1080")
-  text = text.replace(/\b\d{2,4}x\d{2,4}\b/g, '');
-  text = text.replace(/\b\d+px\b/gi, '');
-
-  // Clean up orphaned commas, colons, and dashes from removed content
-  text = text.replace(/,\s*,/g, ',');
-  text = text.replace(/:\s*$/gm, '');
-  text = text.replace(/:\s*,/g, ':');
-
-  // Collapse excessive whitespace
-  text = text.replace(/[ \t]{2,}/g, ' ');
-  text = text.replace(/\n{3,}/g, '\n\n');
-
-  return text.trim();
+/** @deprecated Use prepareContentBlock instead. Kept for backward compat with imageGeneration.ts. */
+export function transformContentToTags(synthesisContent: string, cardTitle: string): string {
+  return prepareContentBlock(synthesisContent, cardTitle);
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -576,119 +440,63 @@ function detectPaletteStyleConflict(style: string, palette: StylingOptions['pale
 }
 
 /**
- * Builds the complete narrative style block from user settings.
- * Produces two paragraphs: color palette and typography.
- * All in narrative prose — no key-value pairs, no lists, no markdown.
+ * Builds a plain-text style block for the image prompt.
+ * No XML tags — just style identity, palette (hex), typography, canvas.
  */
-export function buildNarrativeStyleBlock(settings: StylingOptions): string {
-  // ── Style Identity (creative driver) ──
+export function buildDesignSystemBlock(settings: StylingOptions): string {
+  return buildStyleBlock(settings);
+}
+
+export function buildStyleBlock(settings: StylingOptions): string {
   const identity = STYLE_IDENTITIES[settings.style] || '';
-  const styleParagraph = identity
-    ? `Design this infographic in a ${settings.style} aesthetic. ${identity} ` +
-      `Let this style drive every visual decision — shapes, decorations, title treatments, ` +
-      `section dividers, background textures, and iconography.`
-    : `Design this infographic in a bold ${settings.style} aesthetic. Let the ${settings.style} style ` +
-      `drive every visual decision — shapes, decorations, title treatments, section dividers, ` +
-      `background textures, and iconography should all feel authentically ${settings.style}.`;
+  const styleDesc = identity
+    ? `${settings.style} — ${identity}`
+    : `${settings.style}`;
+  const p = settings.palette;
+  const pFontDesc = fontToDescriptor(settings.fonts.primary);
+  const sFontDesc = fontToDescriptor(settings.fonts.secondary);
+  const typeLine = pFontDesc === sFontDesc
+    ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
+    : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
+  return `${styleDesc}
+Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
+${typeLine}
+Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}`;
+}
 
-  // ── Color Palette ──
-  const bgName = hexToColorName(settings.palette.background);
-  const primaryName = hexToColorName(settings.palette.primary);
-  const secondaryName = hexToColorName(settings.palette.secondary);
-  const accentName = hexToColorName(settings.palette.accent);
-  const textName = hexToColorName(settings.palette.text);
-
-  const hasConflict = detectPaletteStyleConflict(settings.style, settings.palette);
-  const overrideClause = hasConflict ? ` Use this custom palette instead of the typical ${settings.style} colors.` : '';
-
-  const paletteParagraph =
-    `Color palette: ${bgName} (${settings.palette.background}) background, ` +
-    `${primaryName} (${settings.palette.primary}) for headers and primary elements, ` +
-    `${secondaryName} (${settings.palette.secondary}) for secondary accents, ` +
-    `${accentName} (${settings.palette.accent}) for callout numbers and highlights, ` +
-    `${textName} (${settings.palette.text}) for body text. ` +
-    `Stay within these five colors but allow natural tonal variation for depth and dimension.${overrideClause}`;
-
-  // ── Typography ──
-  const primaryFontDesc = fontToDescriptor(settings.fonts.primary);
-  const secondaryFontDesc = fontToDescriptor(settings.fonts.secondary);
-
-  const sameFamily = primaryFontDesc === secondaryFontDesc;
-  const typographyParagraph = sameFamily
-    ? `Use a ${primaryFontDesc} typeface throughout. Maintain a clear size hierarchy ` +
-      `from title to headers to body text. All text must be legible.`
-    : `Use a ${primaryFontDesc} typeface for titles and headers, and a ${secondaryFontDesc} ` +
-      `typeface for body text. Maintain a clear size hierarchy. All text must be legible.`;
-
-  return `${styleParagraph}\n\n${paletteParagraph}\n\n${typographyParagraph}`;
+/** @deprecated Use buildDesignSystemBlock instead. Kept for backward compat. */
+export function buildNarrativeStyleBlock(settings: StylingOptions): string {
+  return buildDesignSystemBlock(settings);
 }
 
 // ─────────────────────────────────────────────────────────────────
-// S7 / B3: Prompt Assembler
+// Prompt Assembler — 4-Section Template
 // ─────────────────────────────────────────────────────────────────
-// Composes the complete image-model prompt in optimal order:
-// 1. Role & output type
-// 2. Visual style & palette (narrative)
-// 3. Layout structure (from planner or auto-inferred)
-// 4. Content to render (bracketed tags)
+// Subject → Instructions (static) → Style (injected) → Content (as-is)
 // ─────────────────────────────────────────────────────────────────
 
 export function assembleRendererPrompt(
   cardTitle: string,
   synthesisContent: string,
   settings: StylingOptions,
-  plannerOutput?: string,
   referenceNote?: string,
   subject?: string,
 ): string {
-  // 1. Role — open-ended, lets style drive the aesthetic
-  const domainClause = subject
-    ? ` The content belongs to the domain of "${subject}" — use domain-appropriate visual metaphors, iconography, and diagram conventions.`
-    : '';
-  const role = `You are an expert Information Designer. Create a visually striking infographic.${domainClause}`;
+  const subjectLine = subject || 'Not specified';
+  const styleBlock = buildStyleBlock(settings);
+  const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
+  let refLine = '';
+  if (referenceNote) refLine = `\n\n${referenceNote}`;
 
-  // 2. Style & Palette (narrative prose from settings — style leads)
-  const styleBlock = buildNarrativeStyleBlock(settings);
+  return `• Subject:
+${subjectLine}
 
-  // 3. Layout — planner output sandwiched with style enforcement
-  let layoutBlock: string;
-  if (plannerOutput) {
-    const cleanPlan = sanitizePlannerOutput(plannerOutput);
-    layoutBlock =
-      `Use the following creative brief to guide the information architecture and visual concept. ` +
-      `Interpret it strictly within the ${settings.style} style described above — the style identity ` +
-      `is non-negotiable and takes precedence over any visual interpretation of the brief.\n\n` +
-      `${cleanPlan}\n\n` +
-      `Every single piece of text content provided below must appear in the final image — ` +
-      `no heading, bullet point, statistic, or detail may be omitted. If the layout concept ` +
-      `cannot fit all the content, adapt the layout rather than dropping text. Reduce whitespace, ` +
-      `add rows, extend sections, or use a denser arrangement — but never cut content. ` +
-      `All text must be legible with high contrast.`;
-  } else {
-    layoutBlock =
-      `Choose the spatial arrangement that best fits the content hierarchy — ` +
-      `grids, flowing sections, or radial layouts as appropriate. ` +
-      `Every single piece of text content provided below must appear in the final image — ` +
-      `no heading, bullet point, statistic, or detail may be omitted. If the layout ` +
-      `cannot fit all the content, adapt it rather than dropping text. ` +
-      `All text must be legible with high contrast.`;
-  }
+• Instructions:
+Generate a slide for this content showing the relations, hierarchy, flow, logic to make the content fully understandable by the viewer. When applicable use charts (bar, column, radar, tornado, graph or any other suitable chart), use infographics, use stats, timelines, diagrams (hierarchy, flow...etc.). Use the content given and do not assume, extrapolate or infer content other than the content provided.
 
-  // 4. Content (transformed from markdown to bracketed tags)
-  const contentBlock = transformContentToTags(synthesisContent, cardTitle);
+• Style:
+${styleBlock}${refLine}
 
-  // 5. Tag rendering instruction — the Flash image model renders bracketed
-  //    tags as literal text unless explicitly told not to.
-  const tagInstruction =
-    'The content below uses bracketed tags like [TITLE], [SECTION], [SUBSECTION], ' +
-    '[DETAIL], [BEGIN TEXT CONTENT], and [END TEXT CONTENT] to indicate text hierarchy. ' +
-    'These tags are structural markers only — do NOT render them as visible text in the image. ' +
-    'Render only the text that follows each tag, using the tag to determine visual weight ' +
-    '(TITLE = largest, SECTION = heading, SUBSECTION = subheading, DETAIL = minor heading).';
-
-  // Assemble: role → style → [reference] → layout → tag instruction → content
-  const blocks = [role, styleBlock];
-  if (referenceNote) blocks.push(referenceNote);
-  blocks.push(layoutBlock, tagInstruction, contentBlock);
-  return blocks.join('\n\n');
+• Content:
+${contentBlock}`;
 }

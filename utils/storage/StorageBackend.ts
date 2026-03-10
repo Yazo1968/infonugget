@@ -10,6 +10,8 @@ import {
   DQAFReport,
   SourcesLogStats,
   SourcesLogEntry,
+  AutoDeckBriefing,
+  BriefingSuggestions,
 } from '../../types';
 
 // ── Stored types (what lives in the database) ──
@@ -113,6 +115,10 @@ export interface StoredNugget {
   dqafReport?: DQAFReport;
   /** Engagement purpose statement for DQAF assessment */
   engagementPurpose?: string;
+  /** Persisted briefing (5-field descriptive brief) — used by Auto-Deck and DQAF */
+  briefing?: AutoDeckBriefing;
+  /** Persisted AI-generated briefing suggestions (dropdown options) */
+  briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
   /** CardFolder metadata for nuggets that contain card folders. */

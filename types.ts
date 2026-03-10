@@ -693,6 +693,8 @@ export interface Nugget {
   engagementPurpose?: string;
   /** Persisted briefing (5-field descriptive brief) — used by Auto-Deck and DQAF */
   briefing?: AutoDeckBriefing;
+  /** Persisted AI-generated briefing suggestions (dropdown options for each field) */
+  briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
   createdAt: number;

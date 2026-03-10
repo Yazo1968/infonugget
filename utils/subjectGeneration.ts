@@ -65,7 +65,7 @@ function buildSubjectPrompt(docSummaries: string): { system: string; prompt: str
   const system =
     'You are a document analyst. Your task is to identify the core subject and domain of the provided documents.';
 
-  const prompt = `Analyze the following document summaries and produce a single sentence (15–30 words) that describes the overall subject and domain of expertise these documents cover.
+  const prompt = `Analyze the following document summaries and produce a single sentence (30–40 words) that describes the overall subject and domain of expertise these documents cover.
 
 Requirements:
 - Be specific to the actual content — not generic (e.g., "Enterprise zero-trust cybersecurity architecture with focus on cloud-native identity management" not "Technology and security")

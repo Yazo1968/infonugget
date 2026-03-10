@@ -1,7 +1,7 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { marked } from 'marked';
 import { sanitizeHtml } from '../utils/sanitize';
-import { Card, StylingOptions, Palette, DetailLevel, ImageVersion, ReferenceImage } from '../types';
+import { Card, StylingOptions, Palette, DetailLevel, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
 import { VISUAL_STYLES, STYLE_FONTS, BUILTIN_STYLE_NAMES } from '../utils/ai';
 import AnnotationWorkbench, { type AnnotationToolbarState } from './workbench/AnnotationWorkbench';
 import AnnotationToolbar from './workbench/AnnotationToolbar';
@@ -10,6 +10,8 @@ import { ReferenceMismatchDialog, ManifestModal } from './Dialogs';
 import { useThemeContext } from '../context/ThemeContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import PanelRequirements from './PanelRequirements';
+import ChiselLoader from './ChiselLoader';
+import { assembleRendererPrompt } from '../utils/prompts/promptUtils';
 
 interface AssetsPanelProps {
   committedSettings: StylingOptions;
@@ -145,32 +147,47 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const album = activeCard?.albumMap?.[activeLogicTab] || [];
   const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating;
 
+  // Effective prompt: use stored lastPromptMap or reconstruct from synthesis + visual plan
+  const effectivePrompt = useMemo(() => {
+    if (!activeCard) return null;
+    const stored = activeCard.lastPromptMap?.[activeLogicTab];
+    if (stored) return stored;
+    // Reconstruct from card data (works for existing cards where lastPromptMap was lost)
+    const synthesis = activeCard.synthesisMap?.[activeLogicTab];
+    if (!synthesis) return null;
+    if (isCoverLevel(activeLogicTab)) {
+      // Cover prompt reconstruction not available client-side — return synthesis as fallback
+      return null;
+    }
+    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings);
+  }, [activeCard, activeLogicTab, committedSettings]);
+
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];
 
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
   // ── Rotating fun status messages ──
   const funMessages = [
-    'Brewing visual magic...',
-    'Pixels falling into place...',
-    'Teaching colors to dance...',
-    'Consulting the design gods...',
-    'Waking up the AI hamsters...',
-    'Sketching at the speed of thought...',
-    'Mixing the perfect pixel potion...',
-    'Crunching creative numbers...',
-    'Painting between the lines...',
-    'Warming up the idea engine...',
-    'Convincing gradients to behave...',
-    'Almost there, probably...',
-    'Aligning all the things...',
-    'Letting the AI cook...',
-    'Sprinkling some visual fairy dust...',
-    'Doing something very clever...',
-    'Polishing every last pixel...',
-    'Channeling inner Picasso...',
-    'Rendering with reckless ambition...',
-    'Making it look effortless...',
+    'Drilling into the data veins...',
+    'Panning for nuggets of insight...',
+    'Excavating key findings...',
+    'Mapping the geological layers...',
+    'Sifting through the bedrock...',
+    'Polishing the raw ore...',
+    'Striking a rich vein of content...',
+    'Tunneling deeper into the source...',
+    'Assaying the mineral deposits...',
+    'Reinforcing the mine shaft...',
+    'Loading the ore cart...',
+    'Prospecting for visual clarity...',
+    'Smelting ideas into form...',
+    'Chiseling the rough edges...',
+    'Surveying the terrain...',
+    'Hauling nuggets to the surface...',
+    'Checking the canary...',
+    'Almost hit the motherlode...',
+    'Forging the final nugget...',
+    'Blasting through the last layer...',
   ];
 
   const styleToolbarRef = useRef<HTMLDivElement>(null);
@@ -716,10 +733,10 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
               {/* Toggle image / prompt view */}
               <button
                 onClick={() => setShowPrompt((prev) => !prev)}
-                disabled={!activeCard?.lastPromptMap?.[activeLogicTab]}
+                disabled={!effectivePrompt}
                 title={showPrompt ? 'Show generated image' : 'Show generation prompt'}
                 aria-label={showPrompt ? 'Show generated image' : 'Show generation prompt'}
-                className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt && activeCard?.lastPromptMap?.[activeLogicTab] ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
+                className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt && effectivePrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
               >
                 <svg
                   width="16"
@@ -812,32 +829,26 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
               />
             </ErrorBoundary>
           </div>
-        ) : showPrompt && activeCard?.lastPromptMap?.[activeLogicTab] ? (
+        ) : showPrompt && effectivePrompt ? (
           <div className="absolute inset-0 overflow-y-auto text-left px-6 py-4 animate-in fade-in duration-300">
             <article
               className="document-prose chat-prose pb-20 max-w-none"
               dangerouslySetInnerHTML={{
                 __html: sanitizeHtml(
-                  marked.parse(activeCard.lastPromptMap[activeLogicTab]!, { async: false }) as string,
+                  marked.parse(effectivePrompt, { async: false }) as string,
                 ),
               }}
             />
           </div>
         ) : isGenerating ? (
-          <div className="flex flex-col items-center space-y-8 animate-in fade-in duration-500">
-            <div className="relative w-24 h-24">
-              <div className="absolute inset-0 border-4 border-[rgba(42,159,212,0.1)] rounded-full" />
-              <div className="absolute inset-0 border-4 border-t-accent-blue rounded-full animate-spin" />
-              <div className="absolute inset-4 border-2 border-[rgba(42,159,212,0.2)] rounded-full animate-pulse" />
-            </div>
-            <div className="space-y-2">
-              <p
-                className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 italic transition-all duration-300 ease-in-out"
-                style={{ opacity: funMsgFade ? 1 : 0, transform: funMsgFade ? 'translateY(0)' : 'translateY(4px)' }}
-              >
-                {funMessages[funMsgIndex]}
-              </p>
-            </div>
+          <div className="flex flex-col items-center space-y-4 animate-in fade-in duration-500">
+            <ChiselLoader darkMode={darkMode} />
+            <p
+              className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 italic transition-all duration-300 ease-in-out"
+              style={{ opacity: funMsgFade ? 1 : 0, transform: funMsgFade ? 'translateY(0)' : 'translateY(4px)' }}
+            >
+              {funMessages[funMsgIndex]}
+            </p>
           </div>
         ) : hasImage ? (
           <div ref={imageContainerRef} className="w-full h-full animate-in fade-in duration-300 relative">

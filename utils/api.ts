@@ -60,7 +60,6 @@ export interface GenerateCardRequest {
   settings: StylingOptions;
   subject?: string;
   existingSynthesis?: string;
-  previousPlan?: string;
   documents?: Array<{
     fileId?: string;
     name: string;
@@ -78,7 +77,7 @@ export interface GenerateCardResponse {
   imageUrl: string;
   storagePath: string;
   synthesisContent: string;
-  visualPlan: string;
+  imagePrompt?: string;
   geminiUsage: unknown;
 }
 
@@ -314,23 +313,43 @@ export interface DocumentQualityRequest {
   engagementPurpose: string;
   /** Optional nugget ID — used server-side to update last_api_call_at for Files API cleanup. */
   nuggetId?: string;
+  /** Stage selector: 'call1' for per-doc only, 'call2' for cross-doc + report, omit for legacy full pipeline. */
+  stage?: 'call1' | 'call2';
+  /** Call 1 results — required when stage is 'call2'. */
+  call1Data?: Record<string, unknown>;
 }
 
-export interface DocumentQualityResponse {
+interface DQAFUsage {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+}
+
+/** Response from stage 'call1' — returns intermediate per-document analysis. */
+export interface DocumentQualityCall1Response {
+  success: boolean;
+  stage: 'call1';
+  call1Data: Record<string, unknown>;
+  usage: DQAFUsage;
+}
+
+/** Response from stage 'call2' or legacy full pipeline — returns the final report. */
+export interface DocumentQualityReportResponse {
   success: boolean;
   report: DQAFReport;
-  usage: {
-    inputTokens: number;
-    outputTokens: number;
-    cacheReadTokens: number;
-    cacheWriteTokens: number;
-  };
+  usage: DQAFUsage;
 }
+
+export type DocumentQualityResponse = DocumentQualityCall1Response | DocumentQualityReportResponse;
 
 /**
  * Call the document-quality Edge Function.
- * Runs the full 3-stage DQAF assessment: relevance profiling, structural checks, KPI computation.
- * Two Claude calls internally (per-doc + cross-doc), KPIs computed server-side.
+ *
+ * Supports staged execution to avoid free-plan 150s Edge Function timeout:
+ * - stage 'call1': runs per-document analysis only → returns call1Data
+ * - stage 'call2': runs cross-doc analysis + report assembly → returns report
+ * - no stage: legacy full pipeline (may timeout on free plan with multiple docs)
  */
 export async function documentQualityApi(
   request: DocumentQualityRequest,

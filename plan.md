@@ -1,22 +1,34 @@
-# Plan: Rename LandingPage to Dashboard
+# Plan: Enforce Strict Card Content Structure
 
-## Summary
-Rename the existing `LandingPage` component (the project overview shown after login) to `Dashboard`. This is a pure rename — no functional changes.
+## Goal
+Make the content synthesis prompt enforce a uniform content structure across ALL detail levels (Executive, Standard, Detailed). Only these formats allowed under any heading/subheading:
+- Very short statements (no inline itemization like "x, y, z and w")
+- Bullet points
+- Numbered lists
+- Tables
+- Quotes
 
-## Changes
+## File: `utils/prompts/contentGeneration.ts`
 
-### 1. Rename the file
-- `components/LandingPage.tsx` → `components/Dashboard.tsx`
+### Changes to `buildContentPrompt()`:
 
-### 2. Update the component name inside the file
-- Rename interface `LandingPageProps` → `DashboardProps`
-- Rename export `LandingPage` → `Dashboard`
+1. **Unify formatting guidance** — remove per-level formatting differences. Currently Executive says "No tables, no numbered lists, no sub-sub headings" — this gets replaced with the same allowed-formats list as other levels. The only thing that varies by level is word count and scope (what to include), NOT format.
 
-### 3. Update imports in `App.tsx`
-- Change `import { LandingPage } from './components/LandingPage'` → `import { Dashboard } from './components/Dashboard'`
-- Change `<LandingPage ...>` → `<Dashboard ...>` in JSX
+2. **Update "Allowed content types" block** (lines 82-87) — replace with the five allowed formats, adding quotes and the anti-itemization rule:
+   - Headings (## and ###) for structure
+   - Very short statements — concise, direct, no compound sentences, no inline itemization (never "x, y, z and w" — use bullet points instead)
+   - Bullet points for unordered sets
+   - Numbered lists for sequential/ranked items
+   - Tables for structured comparisons
+   - Quotes for key quotes or highlighted excerpts
 
-### 4. Update version text
-- Change `v6.0` → `v6.1` in the dashboard footer (since CLAUDE.md says we're on v6.1)
+3. **Remove `>` from PROHIBITED CHARACTERS** (line 89) — blockquote markers are now allowed since quotes are a valid format.
 
-That's it — 2 files touched, pure rename. No functional changes.
+4. **Update header comment** (line 9) — remove "no blockquotes" since quotes are now allowed.
+
+5. **Executive `formattingGuidance`** (lines 28-31) — remove the restrictions on tables/numbered lists. Replace with unified format rules, just noting brevity appropriate for the word count.
+
+## No changes needed:
+- `promptUtils.ts` `prepareContentBlock()` — already preserves markdown structure, `>` markers will pass through to the image model fine (Gemini understands markdown blockquotes natively).
+- `buildPlannerPrompt()` — unchanged, it consumes whatever content format is produced.
+- Image generation prompts — unchanged, they render content as-is.
