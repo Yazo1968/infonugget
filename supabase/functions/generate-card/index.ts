@@ -294,8 +294,11 @@ function assembleRendererPrompt(cardTitle: string, synthesisContent: string, set
 * Step 2: Visual Framework Selection. Based strictly on Step 1, select the most effective overall layout. Ensure the flow of information (e.g., left-to-right, center-out) matches the logical relationship you identified.
 * Step 3: Component Design. For quantitative data, use precise charts (bar, pie, line). For categories/lists, use modular grids with relevant iconography.
 * Step 4: Strict Content Constraint. Use only the data, facts, and text provided in the "CONTENT" section. Elevate key metrics or critical statements as bold callouts. Do not hallucinate, assume, extrapolate, or invent any external context, statistics, or filler text.
+
 SUBJECT: ${subjectLine}
+
 CONTENT: ${contentBlock}
+
 STYLE: ${styleBlock}${refLine}`;
 }
 
