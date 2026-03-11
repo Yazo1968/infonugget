@@ -669,6 +669,10 @@ export interface Nugget {
   cards: CardItem[];
   messages?: ChatMessage[];
   lastDocHash?: string; // hash of active documents at time of last API call
+  /** Messages for the Guided Deck conversation (separate from chat). */
+  deckMessages?: ChatMessage[];
+  /** Hash of active documents at time of last deck API call — for doc change detection. */
+  lastDeckDocHash?: string;
   /** Ordered log of document mutations for change notification (capped at 20 entries) */
   docChangeLog?: DocChangeEvent[];
   /** Seq of the last docChangeLog event synced to the chat agent */

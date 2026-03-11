@@ -26,6 +26,7 @@ export interface NuggetContextValue {
   updateNuggetCards: (updater: (c: Card) => Card) => void;
   updateNuggetContentAndCards: (content: string, cards: CardItem[]) => void;
   appendNuggetMessage: (message: ChatMessage) => void;
+  appendNuggetDeckMessage: (message: ChatMessage) => void;
 
   // Document mutation helpers (operate on selected nugget)
   addNuggetDocument: (doc: UploadedFile) => void;

@@ -31,7 +31,19 @@ interface ChatPanelProps {
   onInitiateChat?: () => void;
   qualityStatus?: 'green' | 'amber' | 'red' | 'stale' | null;
   onViewLog?: () => void;
+  // Guided Deck tab props
+  deckMessages?: ChatMessage[];
+  isDeckLoading?: boolean;
+  onStartDeck?: () => void;
+  onSendDeckMessage?: (text: string) => void;
+  onClearDeck?: () => void;
+  onStopDeck?: () => void;
+  deckDocHashChanged?: boolean;
+  onCreateDeck?: (outline: Array<{ title: string; description: string; detailLevel: DetailLevel }>) => void;
+  onCreateDeckFromContent?: (cards: Array<{ title: string; content: string }>) => void;
 }
+
+type ChatTab = 'chat' | 'deck';
 
 const ChatPanel: React.FC<ChatPanelProps> = ({
   isOpen,
@@ -56,6 +68,15 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   onInitiateChat,
   qualityStatus,
   onViewLog,
+  deckMessages,
+  isDeckLoading,
+  onStartDeck,
+  onSendDeckMessage,
+  onClearDeck,
+  onStopDeck,
+  deckDocHashChanged,
+  onCreateDeck,
+  onCreateDeckFromContent,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -64,7 +85,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     minWidth: 300,
     anchorRef: tabBarRef,
   });
-  const [inputText, setInputText] = useState('');
+  const [activeTab, setActiveTab] = useState<ChatTab>('chat');
+  const [chatInputText, setChatInputText] = useState('');
+  const [deckInputText, setDeckInputText] = useState('');
+  const inputText = activeTab === 'chat' ? chatInputText : deckInputText;
+  const setInputText = activeTab === 'chat' ? setChatInputText : setDeckInputText;
   const [showSendMenu, setShowSendMenu] = useState(false);
   const [showCardSubmenu, setShowCardSubmenu] = useState(false);
   const [sendMenuPos, setSendMenuPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -78,7 +103,13 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   const prevMessagesRef = useRef<typeof messages>(messages);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [expandedCards, setExpandedCards] = useState<Set<string>>(new Set());
+  const [selectedChips, setSelectedChips] = useState<Set<string>>(new Set());
 
+
+  // ── Tab-aware derived values (needed before effects) ──
+  const activeMessages = activeTab === 'chat' ? messages : (deckMessages ?? []);
+  const activeLoading = activeTab === 'chat' ? isLoading : (isDeckLoading ?? false);
+  const isDeckTab = activeTab === 'deck';
 
   // ── Document change notice state ──
   const [showDocChangeNotice, setShowDocChangeNotice] = useState(false);
@@ -147,14 +178,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   useEffect(() => {
     const prev = prevMessagesRef.current;
     const isAppend =
-      messages.length > prev.length && prev.length > 0 && messages[prev.length - 1] === prev[prev.length - 1];
-    if (isAppend || isLoading) {
+      activeMessages.length > prev.length && prev.length > 0 && activeMessages[prev.length - 1] === prev[prev.length - 1];
+    if (isAppend || activeLoading) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    } else if (messages.length > 0) {
+    } else if (activeMessages.length > 0) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'instant' });
     }
-    prevMessagesRef.current = messages;
-  }, [messages, isLoading]);
+    prevMessagesRef.current = activeMessages;
+    // Clear multi-select chip selections when new messages arrive
+    if (isAppend) setSelectedChips(new Set());
+  }, [activeMessages, activeLoading]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -250,7 +283,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   }, [showSendMenu]);
 
   const handleCopyChatMarkdown = useCallback(() => {
-    const text = messages
+    const text = activeMessages
       .map((m) => {
         if (m.role === 'user') return `**You:** ${m.content}`;
         if (m.role === 'system') return `> ${m.content}`;
@@ -262,7 +295,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     }
-  }, [messages]);
+  }, [activeMessages]);
 
   const _startEditing = (msg: ChatMessage) => {
     setEditingMessageId(msg.id);
@@ -289,17 +322,70 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     return { body, docLog: match[1].trim() };
   }, []);
 
-  const parseCardSuggestions = useCallback((content: string): { body: string; suggestions: string[] } => {
-    const regex = /```card-suggestions\n([\s\S]*?)```/;
-    const match = content.match(regex);
-    if (!match) return { body: content, suggestions: [] };
-    const body = content.replace(regex, '').trimEnd();
-    const suggestions = match[1]
-      .split('\n')
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
-    return { body, suggestions };
-  }, []);
+  /** Parse a ```deck-outline fence into structured card entries with per-card LOD. */
+  const parseDeckOutline = useCallback(
+    (content: string): { body: string; outlineEntries: Array<{ title: string; description: string; detailLevel: DetailLevel }> } => {
+      const regex = /```deck-outline\n([\s\S]*?)```/;
+      const match = content.match(regex);
+      if (!match) return { body: content, outlineEntries: [] };
+      const body = content.replace(regex, '').trimEnd();
+      const lodMap: Record<string, DetailLevel> = { executive: 'Executive', standard: 'Standard', detailed: 'Detailed' };
+      const entries = match[1]
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .map((line) => {
+          // Expected format: "1. Card Title | Brief description | Executive"
+          const cleaned = line.replace(/^\d+\.\s*/, '');
+          const parts = cleaned.split('|').map((p) => p.trim());
+          const title = parts[0] || '';
+          const description = parts.length > 2 ? parts[1] : (parts[1] || '');
+          const lodRaw = parts.length > 2 ? parts[2] : '';
+          const detailLevel = lodMap[lodRaw.toLowerCase()] || 'Standard';
+          return { title, description, detailLevel };
+        });
+      return { body, outlineEntries: entries };
+    },
+    [],
+  );
+
+  /** Parse a ```deck-content fence into individual card content blocks. */
+  const parseDeckContent = useCallback(
+    (content: string): { body: string; cardContents: Array<{ title: string; content: string }> } => {
+      const regex = /```deck-content\n([\s\S]*?)```/;
+      const match = content.match(regex);
+      if (!match) return { body: content, cardContents: [] };
+      const body = content.replace(regex, '').trimEnd();
+      // Split by H1 headings — each card starts with `# Title`
+      const raw = match[1];
+      const sections = raw.split(/(?=^#\s+)/m).filter((s) => s.trim().length > 0);
+      const cardContents = sections.map((section) => {
+        const lines = section.split('\n');
+        const titleLine = lines[0]?.replace(/^#\s+/, '').trim() || 'Untitled';
+        const cardBody = lines.slice(1).join('\n').trim();
+        return { title: titleLine, content: `# ${titleLine}\n\n${cardBody}` };
+      });
+      return { body, cardContents };
+    },
+    [],
+  );
+
+  const parseCardSuggestions = useCallback(
+    (content: string): { body: string; suggestions: string[]; multiSelect: boolean } => {
+      // Match both ```card-suggestions and ```card-suggestions multi
+      const regex = /```card-suggestions(?:\s+multi)?\n([\s\S]*?)```/;
+      const match = content.match(regex);
+      if (!match) return { body: content, suggestions: [], multiSelect: false };
+      const body = content.replace(regex, '').trimEnd();
+      const multiSelect = /```card-suggestions\s+multi/i.test(content);
+      const suggestions = match[1]
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      return { body, suggestions, multiSelect };
+    },
+    [],
+  );
 
   const renderMarkdown = (content: string) => {
     const html = sanitizeHtml(marked.parse(content, { async: false }) as string);
@@ -329,6 +415,23 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
   };
 
+  // ── Deck-specific handlers ──
+  const handleDeckSend = useCallback(() => {
+    if (!deckInputText.trim() || isDeckLoading) return;
+    onSendDeckMessage?.(deckInputText.trim());
+    setDeckInputText('');
+  }, [deckInputText, isDeckLoading, onSendDeckMessage]);
+
+  const handleDeckKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleDeckSend();
+      }
+    },
+    [handleDeckSend],
+  );
+
   return (
     <>
       {shouldRender &&
@@ -342,12 +445,51 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               ...overlayStyle,
             }}
           >
+            {/* ── Tab bar ── */}
+            <div className="shrink-0 flex border-b border-zinc-200 dark:border-zinc-700 px-3">
+              <button
+                onClick={() => setActiveTab('chat')}
+                className={`px-4 py-2 text-[11px] font-medium border-b-2 transition-colors ${
+                  activeTab === 'chat'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-400'
+                }`}
+              >
+                Chat
+              </button>
+              <button
+                onClick={() => setActiveTab('deck')}
+                className={`px-4 py-2 text-[11px] font-medium border-b-2 transition-colors ${
+                  activeTab === 'deck'
+                    ? 'border-blue-500 text-blue-600 dark:text-blue-400'
+                    : 'border-transparent text-zinc-400 dark:text-zinc-500 hover:text-zinc-600 dark:hover:text-zinc-400'
+                }`}
+              >
+                Deck
+              </button>
+            </div>
+
             <div className="flex-1 overflow-y-auto px-3 [&>*]:max-w-2xl [&>*]:mx-auto">
-                {messages.length === 0 && (
+                {/* ── Deck tab: doc-change notice ── */}
+                {isDeckTab && deckDocHashChanged && activeMessages.length > 0 && (
+                  <div className="mx-5 mt-4 mb-2 p-3 rounded-xl bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700/50">
+                    <p className="text-[11px] text-amber-700 dark:text-amber-400 mb-2">
+                      Your documents have changed since this deck conversation started. Please restart to use the current documents.
+                    </p>
+                    <button
+                      onClick={onClearDeck}
+                      className="px-4 py-1 rounded-full text-[10px] font-medium bg-amber-600 text-white hover:bg-amber-700 transition-colors"
+                    >
+                      Restart
+                    </button>
+                  </div>
+                )}
+
+                {/* ── Empty state ── */}
+                {activeMessages.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8">
                     <PanelRequirements level="sources" />
-                    {/* Show conversation prompt only when all prerequisites are met */}
-                    {documents.length > 0 && (
+                    {documents.length > 0 && !isDeckTab && (
                       <>
                         <div className="w-10 h-10 bg-zinc-100 dark:bg-zinc-800/50 rounded-full flex items-center justify-center mb-3">
                           <svg
@@ -378,10 +520,44 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                         </p>
                       </>
                     )}
+                    {documents.length > 0 && isDeckTab && (
+                      <>
+                        <div className="w-10 h-10 bg-zinc-100 dark:bg-zinc-800/50 rounded-full flex items-center justify-center mb-3">
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            className="text-zinc-500 dark:text-zinc-400"
+                            strokeWidth="1.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <rect x="2" y="3" width="20" height="18" rx="2" />
+                            <path d="M8 7h8" />
+                            <path d="M8 11h6" />
+                            <path d="M8 15h4" />
+                          </svg>
+                        </div>
+                        {onStartDeck && (
+                          <button
+                            onClick={onStartDeck}
+                            disabled={isDeckLoading}
+                            className="px-5 py-1.5 rounded-full text-[11px] font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors mb-2"
+                          >
+                            Start Guided Deck
+                          </button>
+                        )}
+                        <p className="text-[10px] text-zinc-400 dark:text-zinc-500 font-light max-w-xs">
+                          Plan and generate a complete card deck through a guided conversation
+                        </p>
+                      </>
+                    )}
                   </div>
                 )}
 
-                {messages.map((msg) => {
+                {activeMessages.map((msg) => {
                   // System messages — collapsible, collapsed by default
                   if (msg.role === 'system') {
                     const noticeHtml = sanitizeHtml(marked.parse(msg.content, { async: false }) as string);
@@ -485,9 +661,11 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                     );
                   }
 
-                  // Assistant messages — parse doc-log first, then card suggestions on remaining body
+                  // Assistant messages — parse doc-log first, then deck outline, then card suggestions
                   const { body: bodyAfterDocLog, docLog } = parseDocumentLog(msg.content);
-                  const { body, suggestions } = parseCardSuggestions(bodyAfterDocLog);
+                  const { body: bodyAfterOutline, outlineEntries } = parseDeckOutline(bodyAfterDocLog);
+                  const { body: bodyAfterContent, cardContents } = parseDeckContent(bodyAfterOutline);
+                  const { body, suggestions, multiSelect } = parseCardSuggestions(bodyAfterContent);
                   const docLogKey = msg.id + '-doclog';
                   const docLogLineCount = docLog ? docLog.split('\n').filter((l) => l.trim()).length : 0;
                   return (
@@ -719,20 +897,118 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                               )}
                             </div>
 
-                            {suggestions.length > 0 && (
-                              <div className="mt-3 flex flex-wrap gap-1.5">
-                                {suggestions.map((s, i) => (
+                            {/* Deck outline — rendered as a styled card list with Create Deck button */}
+                            {isDeckTab && outlineEntries.length > 0 && (
+                              <div className="mt-3 rounded-xl border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 p-3">
+                                <div className="text-[11px] font-semibold text-blue-700 dark:text-blue-400 mb-2">
+                                  Deck Outline — {outlineEntries.length} cards
+                                </div>
+                                <ol className="space-y-1.5 list-decimal list-inside">
+                                  {outlineEntries.map((entry, i) => {
+                                    const lodColor = entry.detailLevel === 'Executive'
+                                      ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                      : entry.detailLevel === 'Detailed'
+                                        ? 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                                        : 'bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400';
+                                    return (
+                                      <li key={i} className="text-[11px] text-zinc-700 dark:text-zinc-300">
+                                        <span className="font-medium">{entry.title}</span>
+                                        {entry.description && (
+                                          <span className="text-zinc-500 dark:text-zinc-400"> — {entry.description}</span>
+                                        )}
+                                        <span className={`ml-1.5 inline-block text-[9px] font-medium rounded px-1.5 py-0.5 ${lodColor}`}>
+                                          {entry.detailLevel}
+                                        </span>
+                                      </li>
+                                    );
+                                  })}
+                                </ol>
+                                {onCreateDeck && (
                                   <button
-                                    key={i}
-                                    onClick={() => {
-                                      setInputText(s);
-                                      textareaRef.current?.focus();
-                                    }}
-                                    className="text-[11px] text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-full px-3 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors text-left"
+                                    onClick={() => onCreateDeck(outlineEntries)}
+                                    className="mt-3 text-[11px] font-medium text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 rounded-full px-4 py-1.5 transition-colors"
                                   >
-                                    {s}
+                                    Create Deck ({outlineEntries.length} cards)
                                   </button>
-                                ))}
+                                )}
+                              </div>
+                            )}
+
+                            {/* Deck content — full card content with Create Deck button */}
+                            {isDeckTab && cardContents.length > 0 && (
+                              <div className="mt-3 rounded-xl border border-green-200 dark:border-green-800 bg-green-50/50 dark:bg-green-950/20 p-3">
+                                <div className="text-[11px] font-semibold text-green-700 dark:text-green-400 mb-2">
+                                  Card Content Ready — {cardContents.length} cards
+                                </div>
+                                <ol className="space-y-1 list-decimal list-inside">
+                                  {cardContents.map((card, i) => (
+                                    <li key={i} className="text-[11px] text-zinc-700 dark:text-zinc-300">
+                                      <span className="font-medium">{card.title}</span>
+                                    </li>
+                                  ))}
+                                </ol>
+                                {onCreateDeckFromContent && (
+                                  <button
+                                    onClick={() => onCreateDeckFromContent(cardContents)}
+                                    className="mt-3 text-[11px] font-medium text-white bg-green-600 hover:bg-green-700 dark:bg-green-700 dark:hover:bg-green-600 rounded-full px-4 py-1.5 transition-colors"
+                                  >
+                                    Create Deck ({cardContents.length} cards with content)
+                                  </button>
+                                )}
+                              </div>
+                            )}
+
+                            {suggestions.length > 0 && (
+                              <div className="mt-3">
+                                <div className="flex flex-wrap gap-1.5">
+                                  {suggestions.map((s, i) => {
+                                    const isMulti = isDeckTab && multiSelect;
+                                    const isSelected = isMulti && selectedChips.has(s);
+                                    return (
+                                      <button
+                                        key={i}
+                                        onClick={() => {
+                                          if (isMulti) {
+                                            // Toggle chip selection
+                                            setSelectedChips((prev) => {
+                                              const next = new Set(prev);
+                                              if (next.has(s)) next.delete(s);
+                                              else next.add(s);
+                                              return next;
+                                            });
+                                          } else if (isDeckTab && onSendDeckMessage) {
+                                            onSendDeckMessage(s);
+                                          } else {
+                                            setInputText(s);
+                                            textareaRef.current?.focus();
+                                          }
+                                        }}
+                                        className={`text-[11px] rounded-full px-3 py-1 transition-colors text-left border ${
+                                          isSelected
+                                            ? 'bg-blue-100 dark:bg-blue-900/40 border-blue-400 dark:border-blue-600 text-blue-700 dark:text-blue-300'
+                                            : 'text-zinc-600 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-800 border-zinc-200 dark:border-zinc-700 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'
+                                        }`}
+                                      >
+                                        {isSelected && <span className="mr-1">✓</span>}
+                                        {s}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                                {/* Send button for multi-select when chips are selected */}
+                                {isDeckTab && multiSelect && selectedChips.size > 0 && (
+                                  <button
+                                    onClick={() => {
+                                      if (onSendDeckMessage) {
+                                        onSendDeckMessage(Array.from(selectedChips).join(', '));
+                                        setSelectedChips(new Set());
+                                      }
+                                    }}
+                                    className="mt-2 text-[11px] text-white bg-blue-500 hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-500 rounded-full px-4 py-1 transition-colors"
+                                  >
+                                    Send {selectedChips.size} selected
+                                  </button>
+                                )}
                               </div>
                             )}
                           </>
@@ -746,6 +1022,84 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
               </div>
 
               {/* Input area */}
+              {isDeckTab ? (
+                /* ── Deck input: simple textarea + send/stop ── */
+                <div className="shrink-0 px-4 py-3 max-w-2xl mx-auto w-full">
+                  <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 transition-shadow">
+                    <textarea
+                      ref={textareaRef}
+                      value={deckInputText}
+                      onChange={(e) => setDeckInputText(e.target.value)}
+                      onKeyDown={handleDeckKeyDown}
+                      placeholder="Reply to continue the guided deck conversation..."
+                      aria-label="Deck message"
+                      disabled={isDeckLoading || (deckDocHashChanged && (deckMessages ?? []).length > 0)}
+                      rows={2}
+                      className="w-full resize-none bg-transparent px-4 pt-3 pb-1 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none disabled:opacity-50 placeholder:text-zinc-500"
+                    />
+                    <div className="flex items-center justify-between px-2 pb-2">
+                      {/* Left actions */}
+                      <div className="flex items-center gap-1.5">
+                        {(deckMessages ?? []).length > 0 && (
+                          <button
+                            onClick={handleCopyChatMarkdown}
+                            title="Copy deck chat as Markdown"
+                            className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                          >
+                            {copied ? (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            ) : (
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <rect width="16" height="16" x="8" y="8" rx="2" ry="2" />
+                                <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+                              </svg>
+                            )}
+                          </button>
+                        )}
+                        {(deckMessages ?? []).length > 0 && (
+                          <button
+                            onClick={onClearDeck}
+                            title="Clear deck chat"
+                            className="w-7 h-7 rounded-lg flex items-center justify-center text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-zinc-100 dark:hover:bg-zinc-700 transition-colors"
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 6h18" />
+                              <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      {isDeckLoading ? (
+                        <button
+                          onClick={onStopDeck}
+                          title="Stop response"
+                          className="w-8 h-8 rounded-lg bg-zinc-900 text-white flex items-center justify-center hover:bg-zinc-700 transition-colors animate-pulse"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" strokeLinecap="round" strokeLinejoin="round" className="animate-[spin_3s_linear_infinite]">
+                            <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="2" strokeDasharray="20 43" />
+                            <rect x="9" y="9" width="6" height="6" rx="1" fill="currentColor" />
+                          </svg>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={handleDeckSend}
+                          disabled={!deckInputText.trim()}
+                          title="Send"
+                          className="w-8 h-8 rounded-lg bg-zinc-900 text-white flex items-center justify-center hover:bg-zinc-800 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                        >
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M6 12L3.269 3.126A59.768 59.768 0 0 1 21.485 12 59.77 59.77 0 0 1 3.27 20.876L5.999 12Zm0 0h7.5" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ) : (
+              /* ── Chat input: full send menu + left actions ── */
               <div className="shrink-0 px-4 py-3 max-w-2xl mx-auto w-full">
                 <div className="rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 transition-shadow">
                   <textarea
@@ -892,15 +1246,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                   </div>
                 </div>
               </div>
+              )}
 
-              {/* Document change notice */}
-              {showDocChangeNotice && pendingDocChanges && pendingDocChanges.length > 0 && (
+              {/* Document change notice — chat tab only */}
+              {!isDeckTab && showDocChangeNotice && pendingDocChanges && pendingDocChanges.length > 0 && (
                 <DocumentChangeNotice
                   changes={pendingDocChanges}
                   onContinue={() => {
                     setShowDocChangeNotice(false);
                     onDocChangeContinue?.(pendingSendText, pendingSendIsCard, pendingSendLevel);
-                    setInputText('');
+                    setChatInputText('');
                   }}
                   onStartFresh={() => {
                     setShowDocChangeNotice(false);
@@ -911,8 +1266,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                 />
               )}
 
-              {/* Send menu — rendered as portal to escape overflow clipping */}
-              {showSendMenu &&
+              {/* Send menu — chat tab only, rendered as portal to escape overflow clipping */}
+              {!isDeckTab && showSendMenu &&
                 createPortal(
                   <div
                     ref={sendMenuRef}

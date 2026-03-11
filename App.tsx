@@ -40,6 +40,7 @@ import { useImageOperations } from './hooks/useImageOperations';
 import { useProjectOperations, AskPdfProcessorFn } from './hooks/useProjectOperations';
 import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
+import { useGuidedDeck } from './hooks/useGuidedDeck';
 import { useDocumentQualityCheck } from './hooks/useDocumentQualityCheck';
 import { useAutoDeck } from './hooks/useAutoDeck';
 import { useTokenUsage, TokenUsageTotals } from './hooks/useTokenUsage';
@@ -138,6 +139,17 @@ const App: React.FC = () => {
     handleDocChangeContinue,
     handleDocChangeStartFresh,
   } = useInsightsLab(recordUsage);
+
+  // ── Guided Deck workflow ──
+  const {
+    messages: deckMessages,
+    isLoading: deckLoading,
+    startDeck,
+    sendDeckMessage,
+    clearDeck,
+    stopDeckResponse,
+    docHashChanged: deckDocHashChanged,
+  } = useGuidedDeck(recordUsage);
 
   // ── Document quality check (DQAF v2) ──
   const {
@@ -819,6 +831,69 @@ const App: React.FC = () => {
                       onInitiateChat={initiateInsightsChat}
                       qualityStatus={qualityStatus}
                       onViewLog={() => appGatedAction(() => { setQualityActiveTab('logs'); setExpandedPanel('quality'); })}
+                      deckMessages={deckMessages}
+                      isDeckLoading={deckLoading}
+                      onStartDeck={startDeck}
+                      onSendDeckMessage={sendDeckMessage}
+                      onClearDeck={clearDeck}
+                      onStopDeck={stopDeckResponse}
+                      deckDocHashChanged={deckDocHashChanged}
+                      onCreateDeck={(outline) => {
+                        if (!selectedNugget || outline.length === 0) return;
+                        const titles = outline.map((e) => e.title);
+                        const levels = outline.map((e) => e.detailLevel);
+                        const folderName = `Deck — ${selectedNugget.name}`;
+
+                        if (titles.length >= 2) {
+                          const result = createPlaceholderCardsInFolder(titles, levels, { folderName });
+                          if (result) {
+                            for (const card of result.cards) {
+                              const entry = outline.find((e) => e.title === card.title);
+                              if (entry) {
+                                fillPlaceholderCard(card.id, entry.detailLevel, `# ${card.title}\n\n${entry.description}`);
+                              }
+                            }
+                          }
+                        } else {
+                          const entry = outline[0];
+                          const placeholders = createPlaceholderCards(titles, entry.detailLevel);
+                          for (const ph of placeholders) {
+                            fillPlaceholderCard(ph.id, entry.detailLevel, `# ${ph.title}\n\n${entry.description}`);
+                          }
+                        }
+
+                        setExpandedPanel('cards');
+                        addToast({ type: 'success', message: `Created deck with ${outline.length} cards` });
+                      }}
+                      onCreateDeckFromContent={(cards) => {
+                        if (!selectedNugget || cards.length === 0) return;
+                        const titles = cards.map((c) => c.title);
+                        const detailLevel: DetailLevel = 'Standard';
+                        const folderName = `Deck — ${selectedNugget.name}`;
+
+                        if (titles.length >= 2) {
+                          const result = createPlaceholderCardsInFolder(titles, detailLevel, { folderName });
+                          if (result) {
+                            for (const card of result.cards) {
+                              const entry = cards.find((c) => c.title === card.title);
+                              if (entry) {
+                                fillPlaceholderCard(card.id, detailLevel, entry.content);
+                              }
+                            }
+                          }
+                        } else {
+                          const placeholders = createPlaceholderCards(titles, detailLevel);
+                          for (const ph of placeholders) {
+                            const entry = cards.find((c) => c.title === ph.title);
+                            if (entry) {
+                              fillPlaceholderCard(ph.id, detailLevel, entry.content);
+                            }
+                          }
+                        }
+
+                        setExpandedPanel('cards');
+                        addToast({ type: 'success', message: `Created deck with ${cards.length} cards (with content)` });
+                      }}
                     />
                   </ErrorBoundary>
 
