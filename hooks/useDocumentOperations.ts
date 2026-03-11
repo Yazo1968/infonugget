@@ -358,7 +358,7 @@ export function useDocumentOperations({
       // Re-upload to Files API with updated content
       let fileId = doc.fileId;
       try {
-        if (doc.fileId) deleteFromFilesAPI(doc.fileId);
+        if (doc.fileId) await deleteFromFilesAPI(doc.fileId);
         fileId = await uploadToFilesAPI(newContent, doc.name, 'text/plain');
       } catch (err) {
         log.warn('Files API re-upload failed (will use inline fallback):', err);
@@ -477,7 +477,7 @@ export function useDocumentOperations({
       }));
       // If move, also remove from source nugget (and delete the original's Files API file)
       if (mode === 'move') {
-        if (doc.fileId) deleteFromFilesAPI(doc.fileId);
+        if (doc.fileId) await deleteFromFilesAPI(doc.fileId);
         removeNuggetDocument(docId);
       }
     },

@@ -18,7 +18,7 @@ export interface NuggetContextValue {
 
   // Nugget CRUD
   addNugget: (nugget: Nugget) => void;
-  deleteNugget: (nuggetId: string) => void;
+  deleteNugget: (nuggetId: string) => Promise<void>;
   updateNugget: (nuggetId: string, updater: (n: Nugget) => Nugget) => void;
 
   // Card helpers (operate on selected nugget)

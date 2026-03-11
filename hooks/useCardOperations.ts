@@ -190,41 +190,44 @@ export function useCardOperations() {
   );
 
   const deleteInsightsCard = useCallback(
-    (cardId: string) => {
+    async (cardId: string) => {
       if (!selectedNugget) return;
       const nuggetId = selectedNugget.id;
+      // Storage-first: delete images before removing card from state
+      try {
+        await manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId });
+      } catch (err) {
+        log.warn('Failed to cascade-delete card albums:', err);
+      }
       updateNugget(nuggetId, (n) => ({
         ...n,
         cards: removeCard(n.cards, cardId),
         lastModifiedAt: Date.now(),
       }));
-      // Cascade-delete all album images for this card
-      manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
-        log.warn('Failed to cascade-delete card albums:', err);
-      });
-      // Fall back to first remaining card (or null)
       const remaining = flattenCards(removeCard(selectedNugget.cards, cardId));
       setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
     },
     [selectedNugget, updateNugget, setActiveCardId],
   );
 
-  const deleteSelectedInsightsCards = useCallback(() => {
+  const deleteSelectedInsightsCards = useCallback(async () => {
     if (!selectedNugget) return;
     const nuggetId = selectedNugget.id;
     const selectedIds = new Set(flattenCards(selectedNugget.cards).filter((c) => c.selected).map((c) => c.id));
     if (selectedIds.size === 0) return;
+    // Storage-first: delete all albums before removing cards from state
+    await Promise.allSettled(
+      [...selectedIds].map((cardId) =>
+        manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
+          log.warn('Failed to cascade-delete card albums:', err);
+        }),
+      ),
+    );
     updateNugget(nuggetId, (n) => ({
       ...n,
       cards: removeCardsWhere(n.cards, (c) => selectedIds.has(c.id)),
       lastModifiedAt: Date.now(),
     }));
-    // Cascade-delete albums for each deleted card
-    for (const cardId of selectedIds) {
-      manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
-        log.warn('Failed to cascade-delete card albums:', err);
-      });
-    }
     const remaining = flattenCards(removeCardsWhere(selectedNugget.cards, (c) => selectedIds.has(c.id)));
     setActiveCardId(remaining.length > 0 ? remaining[0].id : null);
   }, [selectedNugget, updateNugget, setActiveCardId]);
@@ -600,27 +603,30 @@ export function useCardOperations() {
   );
 
   const deleteFolder = useCallback(
-    (folderId: string) => {
+    async (folderId: string) => {
       if (!selectedNugget) return;
       const nuggetId = selectedNugget.id;
-      // If active card is inside this folder, clear it
       const folder = selectedNugget.cards.find(
         (item): item is CardFolder => isCardFolder(item) && item.id === folderId,
       );
       const folderCardIds = folder ? new Set(folder.cards.map((c) => c.id)) : new Set<string>();
+
+      // Storage-first: delete all card albums before removing folder from state
+      if (folderCardIds.size > 0) {
+        await Promise.allSettled(
+          [...folderCardIds].map((cardId) =>
+            manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
+              log.warn('Failed to cascade-delete card albums:', err);
+            }),
+          ),
+        );
+      }
 
       updateNugget(nuggetId, (n) => ({
         ...n,
         cards: removeFolder(n.cards, folderId),
         lastModifiedAt: Date.now(),
       }));
-
-      // Cascade-delete albums for each card in the folder
-      for (const cardId of folderCardIds) {
-        manageImagesApi({ action: 'delete_card_albums', nuggetId, cardId }).catch((err) => {
-          log.warn('Failed to cascade-delete card albums:', err);
-        });
-      }
 
       if (activeCardId && folderCardIds.has(activeCardId)) {
         const remaining = flattenCards(removeFolder(selectedNugget.cards, folderId));

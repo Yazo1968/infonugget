@@ -8,7 +8,7 @@ import { buildExpertPriming } from './promptUtils';
 // the SourcesPanel. The heading text becomes the title; Claude
 // derives subtitle/tagline/takeaway from the section content.
 //
-// Cover planner, visualizer, and content instruction prompts have
+// Cover visualizer and content instruction prompts have
 // moved server-side to the generate-card Edge Function.
 // ─────────────────────────────────────────────────────────────────
 

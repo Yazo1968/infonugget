@@ -472,7 +472,7 @@ export function buildNarrativeStyleBlock(settings: StylingOptions): string {
 // ─────────────────────────────────────────────────────────────────
 // Prompt Assembler — 4-Section Template
 // ─────────────────────────────────────────────────────────────────
-// Subject → Instructions (static) → Style (injected) → Content (as-is)
+// Instructions (static) → Subject → Content (as-is) → Style (injected)
 // ─────────────────────────────────────────────────────────────────
 
 export function assembleRendererPrompt(
@@ -488,15 +488,12 @@ export function assembleRendererPrompt(
   let refLine = '';
   if (referenceNote) refLine = `\n\n${referenceNote}`;
 
-  return `• Subject:
-${subjectLine}
-
-• Instructions:
-Generate a slide for this content showing the relations, hierarchy, flow, logic to make the content fully understandable by the viewer. When applicable use charts (bar, column, radar, tornado, graph or any other suitable chart), use infographics, use stats, timelines, diagrams (hierarchy, flow...etc.). Use the content given and do not assume, extrapolate or infer content other than the content provided.
-
-• Style:
-${styleBlock}${refLine}
-
-• Content:
-${contentBlock}`;
+  return `INSTRUCTIONS: Role: Act as an expert Information Architect and Presentation Designer. Task: Transform the provided text into a highly visual, logically connected slide. Use a step-by-step cognitive process:
+* Step 1: Macro-Relational Synthesis. Before visualizing individual points, analyze the holistic relationship between all provided content sections. Identify if they form a cause-and-effect loop, a problem-solution bridge, a timeline, or a comparative matrix. The final layout must visually connect these sections (using arrows, overlapping shapes, or bridging elements), not just list them in disconnected silos.
+* Step 2: Visual Framework Selection. Based strictly on Step 1, select the most effective overall layout. Ensure the flow of information (e.g., left-to-right, center-out) matches the logical relationship you identified.
+* Step 3: Component Design. For quantitative data, use precise charts (bar, pie, line). For categories/lists, use modular grids with relevant iconography.
+* Step 4: Strict Content Constraint. Use only the data, facts, and text provided in the "CONTENT" section. Elevate key metrics or critical statements as bold callouts. Do not hallucinate, assume, extrapolate, or invent any external context, statistics, or filler text.
+SUBJECT: ${subjectLine}
+CONTENT: ${contentBlock}
+STYLE: ${styleBlock}${refLine}`;
 }

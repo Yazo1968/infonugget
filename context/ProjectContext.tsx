@@ -8,7 +8,7 @@ export interface ProjectContextValue {
   setProjects: React.Dispatch<React.SetStateAction<Project[]>>;
 
   addProject: (project: Project) => void;
-  deleteProject: (projectId: string) => void;
+  deleteProject: (projectId: string) => Promise<void>;
   updateProject: (projectId: string, updater: (p: Project) => Project) => void;
   addNuggetToProject: (projectId: string, nuggetId: string) => void;
   removeNuggetFromProject: (projectId: string, nuggetId: string) => void;

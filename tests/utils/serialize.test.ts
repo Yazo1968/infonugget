@@ -22,7 +22,6 @@ function makeCard(overrides: Partial<Card> = {}): Card {
     selected: true,
     detailLevel: 'Standard',
     synthesisMap: { Standard: 'Synthesized content here' },
-    visualPlanMap: { Standard: 'Visual plan text' },
     lastGeneratedContentMap: { Standard: 'Last gen content' },
     lastPromptMap: { Standard: 'Full prompt' },
     isSynthesizingMap: { Standard: false },
@@ -115,7 +114,6 @@ describe('Card serialization', () => {
     expect(restored.selected).toBe(card.selected);
     expect(restored.detailLevel).toBe('Standard');
     expect(restored.synthesisMap?.Standard).toBe('Synthesized content here');
-    expect(restored.visualPlanMap?.Standard).toBe('Visual plan text');
     expect(restored.cardUrlMap?.Standard).toBe('blob:http://localhost/abc');
     expect(restored.imageHistoryMap?.Standard).toHaveLength(1);
     expect(restored.sourceDocuments).toEqual(['doc-a.md', 'doc-b.pdf']);

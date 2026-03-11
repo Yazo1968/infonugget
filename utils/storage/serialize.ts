@@ -80,7 +80,7 @@ export function serializeCard(card: Card, fileId: string): StoredHeading {
     detailLevel: card.detailLevel,
     settings: card.settings,
     synthesisMap: card.synthesisMap,
-    visualPlanMap: card.visualPlanMap,
+    // visualPlanMap: omitted — planner pipeline removed
     lastGeneratedContentMap: card.lastGeneratedContentMap,
     lastPromptMap: card.lastPromptMap,
     createdAt: card.createdAt,

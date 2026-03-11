@@ -48,6 +48,7 @@ export interface StoredHeading {
   detailLevel?: DetailLevel;
   settings?: StylingOptions;
   synthesisMap?: Partial<Record<DetailLevel, string>>;
+  /** @deprecated Planner pipeline removed — kept for backward compat with stored cards */
   visualPlanMap?: Partial<Record<DetailLevel, string>>;
   lastGeneratedContentMap?: Partial<Record<DetailLevel, string>>;
   lastPromptMap?: Partial<Record<DetailLevel, string>>;

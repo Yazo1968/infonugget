@@ -121,10 +121,11 @@ export function usePersistence({
     const storedNuggetIds = await storage.loadAllNuggetIds();
     for (const id of storedNuggetIds) {
       if (!currentIds.has(id)) {
-        await storage.deleteNugget(id);
+        // Storage-first: clean up files before deleting DB rows (CASCADE would remove paths)
         await storage.deleteNuggetDocuments(id);
-        await storage.deleteNuggetHeadings(id);
         await storage.deleteNuggetImages(id);
+        await storage.deleteNuggetHeadings(id);
+        await storage.deleteNugget(id);
       }
     }
 

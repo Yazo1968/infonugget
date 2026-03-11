@@ -123,15 +123,15 @@ describe('AppContext — Project CRUD', () => {
     expect(result.current.projects[0].name).toBe('Updated');
   });
 
-  it('deleteProject removes the project and its nuggets', () => {
+  it('deleteProject removes the project and its nuggets', async () => {
     const nugget = makeNugget({ id: 'n1' });
     const project = makeProject({ id: 'p1', nuggetIds: ['n1'] });
     const { result } = renderHook(() => useAppContext(), {
       wrapper: makeWrapper({ projects: [project], nuggets: [nugget] }),
     });
 
-    act(() => {
-      result.current.deleteProject('p1');
+    await act(async () => {
+      await result.current.deleteProject('p1');
     });
 
     expect(result.current.projects).toHaveLength(0);
@@ -152,15 +152,15 @@ describe('AppContext — Nugget CRUD', () => {
     expect(result.current.nuggets[0].name).toBe('Research');
   });
 
-  it('deleteNugget removes nugget and cleans up project references', () => {
+  it('deleteNugget removes nugget and cleans up project references', async () => {
     const nugget = makeNugget({ id: 'n1' });
     const project = makeProject({ id: 'p1', nuggetIds: ['n1', 'n2'] });
     const { result } = renderHook(() => useAppContext(), {
       wrapper: makeWrapper({ nuggets: [nugget], projects: [project] }),
     });
 
-    act(() => {
-      result.current.deleteNugget('n1');
+    await act(async () => {
+      await result.current.deleteNugget('n1');
     });
 
     expect(result.current.nuggets).toHaveLength(0);

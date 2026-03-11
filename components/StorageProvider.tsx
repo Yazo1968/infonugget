@@ -73,10 +73,11 @@ async function cleanupOrphanedData(storageBackend: StorageBackend, hydratedNugge
     for (const id of storedNuggetIds) {
       if (!hydratedNuggetIds.has(id)) {
         log.warn('Cleaning up orphaned nugget:', id);
-        await storageBackend.deleteNugget(id);
+        // Storage-first: clean up files before deleting DB rows (CASCADE would remove paths)
         await storageBackend.deleteNuggetDocuments(id);
-        await storageBackend.deleteNuggetHeadings(id);
         await storageBackend.deleteNuggetImages(id);
+        await storageBackend.deleteNuggetHeadings(id);
+        await storageBackend.deleteNugget(id);
         orphanCount++;
       }
     }

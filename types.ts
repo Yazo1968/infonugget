@@ -109,7 +109,7 @@ export interface Card {
   isGeneratingMap?: Partial<Record<DetailLevel, boolean>>;
   /** Per-level album of all generated/modified images */
   albumMap?: Partial<Record<DetailLevel, AlbumImage[]>>;
-  /** Per-level visual layout plan from the planner step */
+  /** @deprecated Planner pipeline removed — kept for backward compat with stored cards */
   visualPlanMap?: Partial<Record<DetailLevel, string>>;
   /** Per-level snapshot of synthesis content used for card generation — used to detect content changes */
   lastGeneratedContentMap?: Partial<Record<DetailLevel, string>>;

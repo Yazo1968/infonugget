@@ -47,8 +47,8 @@ The app is transitioning from client-side AI calls to server-side Edge Function 
 
 **Note**: Only `generate-card` and `document-quality` have local source under `supabase/functions/`. The other Edge Functions (`manage-images`, `chat-message`, `auto-deck`) are deployed remotely and do not have local source in this repo.
 
-### 3-Phase Card Pipeline
-Content Synthesis (Claude, client-side) → Layout Planning + Image Generation + Storage (server-side via `generate-card`). See `hooks/useCardGeneration.ts`. Images are stored as signed Supabase Storage URLs (not blob URLs).
+### Card Generation Pipeline
+Content Synthesis (Claude, client-side) → Image Generation + Storage (server-side via `generate-card`). Layout planning has been removed — Gemini handles visualization directly. See `hooks/useCardGeneration.ts`. Images are stored as signed Supabase Storage URLs (not blob URLs).
 
 #### Card Content Structure
 Content synthesis enforces a strict format across ALL detail levels (Executive, Standard, Detailed). Only these content types are allowed under any heading/subheading:
@@ -120,9 +120,9 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx` (project cards, crea
 - **Supabase Client**: `utils/supabase.ts` — singleton `createClient` using `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`.
 
 ### Prompt Anti-Leakage & Anti-Hallucination
-Content prepared via `prepareContentBlock()` — strips bold/italic/HR, preserves native markdown (headings, bullets). Wrapped in `<content>` tags. Legacy `transformContentToTags()` is a deprecated alias. See `utils/prompts/promptUtils.ts`.
+Content prepared via `prepareContentBlock()` — strips H1 headings (title provided separately), collapses blank lines, preserves native markdown (headings, bullets). See `utils/prompts/promptUtils.ts`.
 
-Image generation rules enforce exclusivity: "Render ONLY text from the content section" (not just "render ALL"). Layout brief is isolated: "do NOT render any words from the layout_brief as visible text." Planner prompt has anti-elaboration constraint: "Do NOT elaborate, expand, or invent details beyond what is explicitly stated in the content." See `supabase/functions/generate-card/index.ts`.
+Image generation uses a 4-section master prompt template (INSTRUCTIONS → SUBJECT → CONTENT → STYLE) with strict content constraints: "Use only the data, facts, and text provided in the CONTENT section. Do not hallucinate, assume, extrapolate, or invent any external context." See `supabase/functions/generate-card/index.ts`.
 
 ### Subject Generation
 `utils/subjectGeneration.ts` — generates a 30-40 word domain-specific subject sentence from document TOC + opening paragraphs via Claude. Used for expert priming across all content-generating pipelines via `buildExpertPriming()`.

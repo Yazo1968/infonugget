@@ -15,7 +15,7 @@ import {
   CardItem,
 } from '../types';
 import { findCard, flattenCards, mapCardById, mapCards } from '../utils/cardUtils';
-import { deleteFromFilesAPI } from '../utils/ai';
+import { cleanupNuggetExternalFiles } from '../utils/deletionCleanup';
 import { ThemeContext, useThemeContext } from './ThemeContext';
 import { NuggetContext, useNuggetContext } from './NuggetContext';
 import { ProjectContext, useProjectContext } from './ProjectContext';
@@ -170,7 +170,7 @@ interface AppContextValue {
 
   // Helpers
   addNugget: (nugget: Nugget) => void;
-  deleteNugget: (nuggetId: string) => void;
+  deleteNugget: (nuggetId: string) => Promise<void>;
   updateNugget: (nuggetId: string, updater: (n: Nugget) => Nugget) => void;
 
   updateNuggetCard: (cardId: string, updater: (c: Card) => Card) => void;
@@ -191,7 +191,7 @@ interface AppContextValue {
 
   // Project helpers
   addProject: (project: Project) => void;
-  deleteProject: (projectId: string) => void;
+  deleteProject: (projectId: string) => Promise<void>;
   updateProject: (projectId: string, updater: (p: Project) => Project) => void;
   addNuggetToProject: (projectId: string, nuggetId: string) => void;
   removeNuggetFromProject: (projectId: string, nuggetId: string) => void;
@@ -401,18 +401,14 @@ export const AppProvider: React.FC<{
   }, []);
 
   const deleteNugget = useCallback(
-    (nuggetId: string) => {
-      // Clean up Files API files for all documents in this nugget
-      setNuggets((prev) => {
-        const nugget = prev.find((n) => n.id === nuggetId);
-        if (nugget) {
-          for (const doc of nugget.documents) {
-            if (doc.fileId) deleteFromFilesAPI(doc.fileId);
-          }
-        }
-        return prev.filter((n) => n.id !== nuggetId);
-      });
-      // Also remove from whichever project contains it
+    async (nuggetId: string) => {
+      // Storage-first: clean up external files before removing from state
+      const nugget = nuggets.find((n) => n.id === nuggetId);
+      if (nugget) {
+        await cleanupNuggetExternalFiles(nugget);
+      }
+      // Then remove from state
+      setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
       setProjects((prev) =>
         prev.map((p) =>
           p.nuggetIds.includes(nuggetId)
@@ -425,7 +421,7 @@ export const AppProvider: React.FC<{
         setSelectionLevel(null);
       }
     },
-    [selectedNuggetId],
+    [nuggets, selectedNuggetId],
   );
 
   const updateNugget = useCallback((nuggetId: string, updater: (n: Nugget) => Nugget) => {
@@ -727,29 +723,25 @@ export const AppProvider: React.FC<{
   }, []);
 
   const deleteProject = useCallback(
-    (projectId: string) => {
+    async (projectId: string) => {
       const project = projects.find((p) => p.id === projectId);
       if (project) {
-        // Cascade: delete all nuggets and clean up their Files API files
-        for (const nuggetId of project.nuggetIds) {
-          setNuggets((prev) => {
-            const nugget = prev.find((n) => n.id === nuggetId);
-            if (nugget) {
-              for (const doc of nugget.documents) {
-                if (doc.fileId) deleteFromFilesAPI(doc.fileId);
-              }
-            }
-            return prev.filter((n) => n.id !== nuggetId);
-          });
-          if (selectedNuggetId === nuggetId) {
-            setSelectedNuggetId(null);
-            setSelectionLevel(null);
-          }
+        // Storage-first: clean up all external files across all nuggets
+        const nuggetsToDel = project.nuggetIds
+          .map((nid) => nuggets.find((n) => n.id === nid))
+          .filter((n): n is Nugget => !!n);
+        await Promise.allSettled(nuggetsToDel.map((n) => cleanupNuggetExternalFiles(n)));
+        // Remove all nuggets from state in a single batch
+        const nuggetIdSet = new Set(project.nuggetIds);
+        setNuggets((prev) => prev.filter((n) => !nuggetIdSet.has(n.id)));
+        if (selectedNuggetId && nuggetIdSet.has(selectedNuggetId)) {
+          setSelectedNuggetId(null);
+          setSelectionLevel(null);
         }
       }
       setProjects((prev) => prev.filter((p) => p.id !== projectId));
     },
-    [projects, selectedNuggetId],
+    [projects, nuggets, selectedNuggetId],
   );
 
   const updateProject = useCallback((projectId: string, updater: (p: Project) => Project) => {
