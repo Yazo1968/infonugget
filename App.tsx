@@ -844,6 +844,7 @@ const App: React.FC = () => {
                       onRetryFromReview={autoDeckRetryFromReview}
                       briefing={selectedNugget?.briefing}
                       onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
+                      onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
                     />
                   </ErrorBoundary>
 

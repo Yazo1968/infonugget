@@ -34,6 +34,7 @@ interface AutoDeckPanelProps {
   // Briefing (read from nugget, edited via Brief & Quality panel)
   briefing?: AutoDeckBriefing;
   onOpenBriefTab?: () => void;
+  onOpenSourcesTab?: () => void;
 }
 
 // ── Component ──
@@ -56,6 +57,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   tabBarRef,
   briefing: propBriefing,
   onOpenBriefTab,
+  onOpenSourcesTab,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -253,6 +255,134 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
         )}
       </div>
 
+      {/* ── Active Documents (read-only list) ── */}
+      <div style={{ marginBottom: '20px' }}>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '10px',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '12px',
+              fontWeight: 700,
+              textTransform: 'uppercase',
+              letterSpacing: '0.05em',
+              color: labelColor,
+            }}
+          >
+            Active Documents
+            <span style={{ fontWeight: 400, textTransform: 'none', fontSize: '11px', opacity: 0.7, marginLeft: '6px' }}>
+              ({selectedDocs.length})
+            </span>
+          </div>
+          {onOpenSourcesTab && (
+            <button
+              onClick={onOpenSourcesTab}
+              style={{
+                fontSize: '11px',
+                color: darkMode ? '#4db8e0' : '#2289b5',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                textDecoration: 'underline',
+                padding: 0,
+              }}
+            >
+              Edit Sources
+            </button>
+          )}
+        </div>
+
+        {selectedDocs.length > 0 ? (
+          <div
+            style={{
+              padding: '8px 12px',
+              borderRadius: '8px',
+              border: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+              backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'white',
+            }}
+          >
+            {selectedDocs.map((doc, i) => (
+              <div
+                key={doc.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  padding: '5px 4px',
+                  borderBottom: i < selectedDocs.length - 1
+                    ? `1px solid ${darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.05)'}`
+                    : 'none',
+                }}
+              >
+                {/* Document type icon */}
+                <span style={{ fontSize: '12px', opacity: 0.5, flexShrink: 0 }}>
+                  {doc.sourceType === 'native-pdf' ? '📄' : '📝'}
+                </span>
+                <span
+                  style={{
+                    fontSize: '12px',
+                    color: inputColor,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    flex: 1,
+                    minWidth: 0,
+                  }}
+                >
+                  {doc.name}
+                </span>
+                {doc.sourceType === 'native-pdf' && !doc.content && (
+                  <span
+                    style={{
+                      fontSize: '10px',
+                      color: darkMode ? '#fbbf24' : '#d97706',
+                      flexShrink: 0,
+                    }}
+                  >
+                    PDF
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div
+            style={{
+              padding: '16px',
+              borderRadius: '8px',
+              border: `2px dashed ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+              textAlign: 'center',
+            }}
+          >
+            <div style={{ fontSize: '12px', color: hintColor, marginBottom: '6px' }}>
+              No active documents
+            </div>
+            {onOpenSourcesTab && (
+              <button
+                onClick={onOpenSourcesTab}
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  border: 'none',
+                  backgroundColor: darkMode ? '#1d7ca8' : '#2289b5',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Add Sources
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
       {/* LOD selector */}
       <div style={{ marginBottom: '20px' }}>
         <div
@@ -302,45 +432,6 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           })}
         </div>
       </div>
-
-      {/* Estimate badge */}
-      {estimate && (
-        <div
-          style={{
-            padding: '10px 16px',
-            borderRadius: '8px',
-            backgroundColor: darkMode ? 'rgba(42,159,212,0.1)' : 'rgba(42,159,212,0.06)',
-            border: `1px solid ${darkMode ? 'rgba(42,159,212,0.2)' : 'rgba(42,159,212,0.15)'}`,
-            marginBottom: '20px',
-            fontSize: '13px',
-            color: darkMode ? '#5abdd9' : '#1a7aaa',
-            textAlign: 'center',
-          }}
-        >
-          Rough estimate:{' '}
-          <strong>
-            ~{estimate.min}&ndash;{estimate.max} cards
-          </strong>
-          <div style={{ fontSize: '11px', marginTop: '4px', opacity: 0.7 }}>
-            AI will determine the optimal count based on content
-          </div>
-          {selectedDocs.some((d) => d.sourceType === 'native-pdf' && !d.content) && (
-            <div style={{ fontSize: '11px', marginTop: '4px', opacity: 0.75 }}>
-              Estimate excludes PDF documents (word count unavailable)
-            </div>
-          )}
-          {estimate.max > AUTO_DECK_LIMITS.maxCardsWarning && (
-            <div style={{ color: darkMode ? '#fbbf24' : '#d97706', fontSize: '12px', marginTop: '4px' }}>
-              Large deck — consider Executive LOD or reducing source material.
-            </div>
-          )}
-          {estimate.min < AUTO_DECK_LIMITS.minCards && totalWordCount > 0 && (
-            <div style={{ color: darkMode ? '#fbbf24' : '#d97706', fontSize: '12px', marginTop: '4px' }}>
-              Source may be too short for this detail level.
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Card count range (optional) */}
       <div style={{ marginBottom: '20px' }}>
@@ -433,6 +524,53 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           Range: 5–50. Leave blank to let the AI decide.
         </div>
       </div>
+
+      {/* Content metrics — input word count + estimated output range */}
+      {selectedLod && totalWordCount > 0 && (() => {
+        const lodCfg = AUTO_DECK_LOD_LEVELS[selectedLod];
+        const pMin = cardMin ? parseInt(cardMin, 10) : NaN;
+        const pMax = cardMax ? parseInt(cardMax, 10) : NaN;
+        const effMin = !isNaN(pMin) ? Math.max(5, Math.min(50, pMin)) : estimate?.min ?? 0;
+        const effMax = !isNaN(pMax) ? Math.max(5, Math.min(50, pMax)) : estimate?.max ?? 0;
+        const outMin = effMin * lodCfg.wordCountMin;
+        const outMax = effMax * lodCfg.wordCountMax;
+        const hasPdfNoContent = selectedDocs.some((d) => d.sourceType === 'native-pdf' && !d.content);
+        return (
+          <div
+            style={{
+              padding: '10px 16px',
+              borderRadius: '8px',
+              backgroundColor: darkMode ? 'rgba(42,159,212,0.08)' : 'rgba(42,159,212,0.05)',
+              border: `1px solid ${darkMode ? 'rgba(42,159,212,0.15)' : 'rgba(42,159,212,0.1)'}`,
+              marginBottom: '20px',
+              fontSize: '12px',
+              color: darkMode ? '#93afc5' : '#5a7a8f',
+            }}
+          >
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline' }}>
+              <span style={{ fontWeight: 600, minWidth: '48px', color: darkMode ? '#5abdd9' : '#1a7aaa' }}>Input</span>
+              <span>
+                {totalWordCount.toLocaleString()} words &middot; {selectedDocs.length} document
+                {selectedDocs.length !== 1 ? 's' : ''}
+              </span>
+            </div>
+            {effMin > 0 && effMax > 0 && (
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'baseline', marginTop: '5px' }}>
+                <span style={{ fontWeight: 600, minWidth: '48px', color: darkMode ? '#5abdd9' : '#1a7aaa' }}>Output</span>
+                <span>
+                  ~{outMin.toLocaleString()}&ndash;{outMax.toLocaleString()} words &middot; {effMin}&ndash;{effMax} cards
+                  &times; {lodCfg.label} {lodCfg.wordCountMin}&ndash;{lodCfg.wordCountMax}/card
+                </span>
+              </div>
+            )}
+            {hasPdfNoContent && (
+              <div style={{ fontSize: '11px', marginTop: '6px', opacity: 0.65 }}>
+                Word counts exclude PDF documents without extracted text
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Deck options (checkboxes) */}
       <div style={{ marginBottom: '20px' }}>
