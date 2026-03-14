@@ -35,6 +35,10 @@ interface AutoDeckPanelProps {
   briefing?: AutoDeckBriefing;
   onOpenBriefTab?: () => void;
   onOpenSourcesTab?: () => void;
+  // Pre-flight gates — subject & brief must be resolved before planning
+  subject?: string;
+  subjectReviewNeeded?: boolean;
+  briefReviewNeeded?: boolean;
 }
 
 // ── Component ──
@@ -58,6 +62,9 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   briefing: propBriefing,
   onOpenBriefTab,
   onOpenSourcesTab,
+  subject,
+  subjectReviewNeeded,
+  briefReviewNeeded,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
@@ -95,12 +102,15 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
 
   const status = session?.status ?? 'configuring';
   const hasBriefing = propBriefing?.objective?.trim() || propBriefing?.audience?.trim() || propBriefing?.type?.trim();
+  const hasSubject = !!subject?.trim();
+  const preFlightOk = hasSubject && !subjectReviewNeeded && !briefReviewNeeded;
   const canGenerate =
     propBriefing?.objective?.trim() &&
     propBriefing?.audience?.trim() &&
     propBriefing?.type?.trim() &&
     selectedLod &&
-    selectedDocs.length > 0;
+    selectedDocs.length > 0 &&
+    preFlightOk;
   const includedCount = session?.reviewState
     ? Object.values(session.reviewState.cardStates).filter((s) => s.included).length
     : 0;
@@ -660,9 +670,37 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
       >
         Generate Plan
       </button>
-      {!canGenerate && !hasBriefing && selectedDocs.length > 0 && (
-        <div style={{ fontSize: '11px', color: hintColor, textAlign: 'center', marginTop: '6px' }}>
-          Set a briefing to enable generation
+      {!canGenerate && selectedDocs.length > 0 && (
+        <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '6px' }}>
+          {!hasSubject && (
+            <div style={{ color: darkMode ? '#f59e0b' : '#d97706', marginBottom: '2px' }}>
+              Generate a subject before planning
+              {onOpenBriefTab && (
+                <> — <button onClick={onOpenBriefTab} style={{ color: darkMode ? '#4db8e0' : '#2289b5', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '11px' }}>Open Brief</button></>
+              )}
+            </div>
+          )}
+          {hasSubject && subjectReviewNeeded && (
+            <div style={{ color: darkMode ? '#f59e0b' : '#d97706', marginBottom: '2px' }}>
+              Review subject changes before planning
+              {onOpenBriefTab && (
+                <> — <button onClick={onOpenBriefTab} style={{ color: darkMode ? '#4db8e0' : '#2289b5', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '11px' }}>Open Brief</button></>
+              )}
+            </div>
+          )}
+          {briefReviewNeeded && (
+            <div style={{ color: darkMode ? '#f59e0b' : '#d97706', marginBottom: '2px' }}>
+              Review briefing changes before planning
+              {onOpenBriefTab && (
+                <> — <button onClick={onOpenBriefTab} style={{ color: darkMode ? '#4db8e0' : '#2289b5', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '11px' }}>Open Brief</button></>
+              )}
+            </div>
+          )}
+          {!hasBriefing && (
+            <div style={{ color: hintColor }}>
+              Set a briefing to enable generation
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -1395,7 +1433,7 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
           <>
           <div
             data-panel-overlay
-            className="fixed z-[104] flex flex-col bg-white dark:bg-zinc-900 border-4 shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
+            className="fixed z-[104] flex flex-col bg-white dark:bg-zinc-900 border shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
             style={{
               borderColor,
               ...overlayStyle,

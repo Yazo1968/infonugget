@@ -2,17 +2,10 @@ import React, { useState, useRef, useEffect, useCallback, useMemo, useImperative
 import { createPortal } from 'react-dom';
 import {
   DQAFReport,
-  DQAFDocumentAssessment,
   DQAFCrossDocFinding,
   DQAFPerDocumentFlag,
-  DQAFCompatibilityRecord,
-  DQAFCheckResult,
   DQAFProductionNotice,
-  DQAFDocumentRegister,
-  DQAFKPIs,
-  DQAFSeverity,
   DQAFPass1CheckId,
-  DQAFPass2CheckId,
   DQAFVerdict,
   UploadedFile,
   AutoDeckBriefing,
@@ -25,6 +18,7 @@ import {
 } from '../types';
 import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
+import { useResizeDrag } from '../hooks/useResizeDrag';
 import { QualityStatus } from '../hooks/useDocumentQualityCheck';
 import { BRIEFING_LIMITS, countWords } from '../utils/autoDeck/constants';
 import { UnsavedChangesDialog } from './Dialogs';
@@ -99,38 +93,8 @@ const PASS1_LABELS: Record<DQAFPass1CheckId, string> = {
   'P1-06': 'Structural Coherence',
 };
 
-const PASS2_LABELS: Record<DQAFPass2CheckId, string> = {
-  'P2-02': 'Data Point Conflicts',
-  'P2-03': 'Terminology Consistency',
-  'P2-04': 'Scope Overlap',
-  'P2-05': 'Version Conflict',
-  'P2-06': 'Orphaned Document',
-};
-
-const DIMENSION_LABELS: Record<string, string> = {
-  objective: 'Objective',
-  audience: 'Audience',
-  type: 'Type',
-  focus: 'Focus',
-  tone: 'Tone',
-};
-
-const DIMENSION_WEIGHTS: Record<string, number> = {
-  objective: 0.30,
-  audience: 0.20,
-  type: 0.15,
-  focus: 0.25,
-  tone: 0.10,
-};
-
 const SEVERITY_ORDER: Record<string, number> = { critical: 0, moderate: 1, minor: 2 };
 const severityRank = (s: string): number => SEVERITY_ORDER[s] ?? 3;
-
-const SEVERITY_SUBLABELS: Record<string, string> = {
-  critical: 'will directly distort output',
-  moderate: 'usable with disclosed caveat',
-  minor: 'no material impact',
-};
 
 // ─────────────────────────────────────────────────────────────────
 // Constants (Brief)
@@ -244,8 +208,6 @@ export function deriveEngagementPurpose(briefing?: AutoDeckBriefing, subject?: s
 // Tab bar
 // ─────────────────────────────────────────────────────────────────
 
-type SidebarSection = 'overview' | 'conflicts' | 'register' | `doc-${string}`;
-
 const TAB_ITEMS: { id: SubjectQualityTab; label: string }[] = [
   { id: 'logs', label: 'Logs' },
   { id: 'brief', label: 'Subject & Brief' },
@@ -281,6 +243,9 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
     anchorRef: tabBarRef,
   });
 
+  // ── Resize dividers ──
+  const [logsWidth, handleLogsResize] = useResizeDrag({ initialWidth: 400, minWidth: 160, maxWidth: 500, direction: 'right' });
+
   // ── Brief draft-mode gating ──
   const briefTabRef = useRef<BriefTabHandle>(null);
   const [briefDirty, setBriefDirty] = useState(false);
@@ -303,7 +268,6 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
 
   const handleTabClick = useCallback((tab: SubjectQualityTab) => {
     if (tab === activeTab) return;
-    // If leaving the brief tab with unsaved changes, intercept
     if (activeTab === 'brief' && briefDirty) {
       setPendingTab(tab);
       return;
@@ -334,91 +298,147 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
   return createPortal(
     <div
       data-panel-overlay
-      className={`fixed z-[106] flex flex-col ${darkMode ? 'bg-zinc-900 text-zinc-200' : 'bg-white text-zinc-800'} border-l shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden`}
-      style={overlayStyle}
+      className={`fixed z-[106] flex flex-col ${darkMode ? 'bg-zinc-900 text-zinc-200' : 'bg-white text-zinc-800'} border shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden`}
+      style={{
+        ...overlayStyle,
+        borderColor: effectiveStatus === 'red' ? '#ef4444'
+          : effectiveStatus === 'amber' ? '#f59e0b'
+          : effectiveStatus === 'green' ? '#22c55e'
+          : effectiveStatus === 'stale' ? '#a1a1aa'
+          : undefined,
+      }}
     >
-      {/* ── Tab Bar ── */}
-      <div className={`shrink-0 border-b ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-        <div className="flex max-w-2xl mx-auto w-full">
-          {TAB_ITEMS.map((tab) => {
-            const isActive = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => handleTabClick(tab.id)}
-                className={`flex-1 py-2.5 text-[11px] font-semibold tracking-wide transition-colors relative ${
-                  isActive
-                    ? darkMode ? 'text-zinc-100' : 'text-zinc-800'
-                    : darkMode ? 'text-zinc-500 hover:text-zinc-400' : 'text-zinc-400 hover:text-zinc-600'
-                }`}
-              >
-                {tab.label}
-                {isActive && (
-                  <div className={`absolute bottom-0 left-2 right-2 h-[2px] rounded-full ${darkMode ? 'bg-blue-400' : 'bg-blue-600'}`} />
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      {/* ── Side-by-side Vertical Sections ── */}
+      <div className="flex-1 flex overflow-hidden min-h-0">
 
-      {/* ── Tab Content ── */}
-      {activeTab === 'logs' && (
-        <LogsTab
-          darkMode={darkMode}
-          sourcesLog={sourcesLog}
-          sourcesLogStats={sourcesLogStats}
-          hasPendingChanges={hasPendingChanges}
-          onDeleteLogEntry={onDeleteLogEntry}
-          onDeleteAllLogEntries={onDeleteAllLogEntries}
-          onRenameLogEntry={onRenameLogEntry}
-          onCreateLogEntry={onCreateLogEntry}
-        />
-      )}
-      {activeTab === 'brief' && (
-        <BriefTab
-          ref={briefTabRef}
-          darkMode={darkMode}
-          // Subject
-          nuggetId={nuggetId}
-          nuggetName={nuggetName}
-          currentSubject={currentSubject}
-          isRegeneratingSubject={isRegeneratingSubject}
-          subjectReviewNeeded={subjectReviewNeeded}
-          onSaveSubject={onSaveSubject}
-          onRegenerateSubject={onRegenerateSubject}
-          onDismissSubjectReview={onDismissSubjectReview}
-          // Brief
-          briefing={briefing}
-          briefingSuggestions={briefingSuggestions}
-          briefReviewNeeded={briefReviewNeeded}
-          onBriefingChange={onBriefingChange}
-          onSuggestionsChange={onSuggestionsChange}
-          onDismissBriefReview={onDismissBriefReview}
-          onDirtyChange={handleBriefDirtyChange}
-          documents={documents}
-          subject={subject}
-          onGenerateSuggestions={onGenerateSuggestions}
-          onAbortSuggestions={onAbortSuggestions}
-          isOpen={isOpen}
-        />
-      )}
-      {activeTab === 'assessment' && (
-        <AssessmentTab
-          darkMode={darkMode}
-          dqafReport={dqafReport}
-          effectiveStatus={effectiveStatus}
-          isChecking={isChecking}
-          checkError={checkError}
-          onRunCheck={onRunCheck}
-          onAbortCheck={onAbortCheck}
-          onFixDocuments={onFixDocuments}
-          documents={documents}
-          briefing={briefing}
-          subject={subject}
-          onTabChange={onTabChange}
-        />
-      )}
+        {/* ── Section 1: Logs ── */}
+        <div className="shrink-0 flex flex-col overflow-hidden" style={{ width: logsWidth }}>
+          <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+            <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(30,58,100)' : 'rgb(190,215,245)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+            </div>
+            <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Sources Log</span>
+          </div>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <LogsTab
+              darkMode={darkMode}
+              sourcesLog={sourcesLog}
+              sourcesLogStats={sourcesLogStats}
+              hasPendingChanges={hasPendingChanges}
+              onDeleteLogEntry={onDeleteLogEntry}
+              onDeleteAllLogEntries={onDeleteAllLogEntries}
+              onRenameLogEntry={onRenameLogEntry}
+              onCreateLogEntry={onCreateLogEntry}
+            />
+          </div>
+        </div>
+
+        {/* Resize divider */}
+        <div
+          onMouseDown={handleLogsResize}
+          className="shrink-0 w-[5px] cursor-col-resize group relative select-none flex items-center justify-center"
+        >
+          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-zinc-200 dark:bg-zinc-600 group-hover:bg-zinc-400 dark:group-hover:bg-zinc-500 transition-colors" />
+          <div className="w-[5px] h-6 rounded-full bg-zinc-300 dark:bg-zinc-500 group-hover:bg-zinc-400 dark:group-hover:bg-zinc-400 transition-colors" />
+        </div>
+
+        {/* ── Section 2: Subject & Brief ── */}
+        <div className="flex-1 flex flex-col overflow-hidden border-r border-zinc-200 dark:border-zinc-600 min-w-0">
+          <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+            <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                <rect width="18" height="18" x="3" y="3" rx="2" />
+                <path d="M9 3v18" />
+              </svg>
+            </div>
+            <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Subject & Brief</span>
+          </div>
+          <div className="flex-1 overflow-y-auto min-h-0">
+            <BriefTab
+              ref={briefTabRef}
+              darkMode={darkMode}
+              nuggetId={nuggetId}
+              nuggetName={nuggetName}
+              currentSubject={currentSubject}
+              isRegeneratingSubject={isRegeneratingSubject}
+              subjectReviewNeeded={subjectReviewNeeded}
+              onSaveSubject={onSaveSubject}
+              onRegenerateSubject={onRegenerateSubject}
+              onDismissSubjectReview={onDismissSubjectReview}
+              briefing={briefing}
+              briefingSuggestions={briefingSuggestions}
+              briefReviewNeeded={briefReviewNeeded}
+              onBriefingChange={onBriefingChange}
+              onSuggestionsChange={onSuggestionsChange}
+              onDismissBriefReview={onDismissBriefReview}
+              onDirtyChange={handleBriefDirtyChange}
+              documents={documents}
+              subject={subject}
+              onGenerateSuggestions={onGenerateSuggestions}
+              onAbortSuggestions={onAbortSuggestions}
+              isOpen={isOpen}
+            />
+          </div>
+        </div>
+
+        {/* Resize divider */}
+        <div className="shrink-0 w-[5px] relative select-none flex items-center justify-center">
+          <div className="absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-zinc-200 dark:bg-zinc-600" />
+        </div>
+
+        {/* ── Section 3: Assessment ── */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+            <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(30,60,100)' : 'rgb(200,225,250)' }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                <path d="M22 11.08V12a10 10 0 11-5.93-9.14" />
+                <polyline points="22 4 12 14.01 9 11.01" />
+              </svg>
+            </div>
+            <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Assessment</span>
+          </div>
+          {/* Toolbar */}
+          <div className="shrink-0 px-4 pt-3 pb-2 flex items-center justify-between">
+            <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+              Status
+            </h3>
+            <button
+              onClick={() => {
+                const purpose = deriveEngagementPurpose(briefing, subject);
+                if (purpose.trim()) onRunCheck(purpose);
+              }}
+              disabled={isChecking || !deriveEngagementPurpose(briefing, subject).trim()}
+              className={`text-[10px] font-medium px-2.5 py-1 rounded-md transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+                darkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'
+              }`}
+            >
+              {isChecking ? 'Running…' : dqafReport ? 'Re-run' : 'Run Assessment'}
+            </button>
+          </div>
+          <div className="flex-1 flex flex-col overflow-y-auto min-h-0">
+            <AssessmentTab
+              darkMode={darkMode}
+              dqafReport={dqafReport}
+              effectiveStatus={effectiveStatus}
+              isChecking={isChecking}
+              checkError={checkError}
+              onRunCheck={onRunCheck}
+              onAbortCheck={onAbortCheck}
+              onFixDocuments={onFixDocuments}
+              documents={documents}
+              briefing={briefing}
+              subject={subject}
+              onTabChange={onTabChange}
+            />
+          </div>
+        </div>
+
+      </div>
 
       {/* ── Unsaved brief changes dialog ── */}
       {pendingTab !== null && (
@@ -506,6 +526,12 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSubject, isRegeneratingSubject]);
 
+  // Auto-resize textarea on value change
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
+  }, [localSubject]);
+
   const handleSave = useCallback(() => {
     const trimmed = localSubject.trim();
     if (trimmed && trimmed !== currentSubject) {
@@ -567,13 +593,20 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
       <textarea
         ref={textareaRef}
         value={localSubject}
-        onChange={(e) => setLocalSubject(e.target.value)}
-        rows={2}
+        onChange={(e) => {
+          setLocalSubject(e.target.value);
+          // Auto-resize
+          const el = e.target;
+          el.style.height = 'auto';
+          el.style.height = el.scrollHeight + 'px';
+        }}
+        rows={1}
         disabled={isRegeneratingSubject}
-        className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed ${
+        className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden ${
           darkMode ? 'border-zinc-700 bg-zinc-800 text-zinc-100' : 'border-zinc-200 bg-white text-zinc-800'
         }`}
         placeholder="e.g. Quarterly financial performance analysis for a mid-cap technology company covering revenue, margins, and growth projections."
+        style={{ minHeight: 32 }}
       />
       <p className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
         Topic sentence to prime AI as a domain expert. Keep it specific (15-40 words).
@@ -664,7 +697,7 @@ function SourcesLogSection({
       {/* Header row */}
       <div className="shrink-0 px-4 pt-3 pb-2 flex items-center justify-between">
         <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-          Sources Log
+          Status
         </h3>
         <div className="flex items-center gap-2">
           {hasPendingChanges && !confirmDeleteAll && (
@@ -695,29 +728,29 @@ function SourcesLogSection({
 
       {/* Stats bar */}
       <div className="shrink-0 px-4 pb-2">
-        <div className={`flex items-center gap-3 text-[10px] rounded-lg px-3 py-2 ${darkMode ? 'text-zinc-500 bg-zinc-800/50' : 'text-zinc-400 bg-zinc-50'}`}>
+        <div className={`flex items-center gap-3 text-[8px] rounded-lg px-3 py-1.5 ${darkMode ? 'text-zinc-500 bg-zinc-800' : 'text-zinc-400 bg-zinc-100'}`}>
           <div className="flex flex-col items-center">
-            <span className={`font-semibold text-xs ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.lastUpdated ? formatLogTimestamp(sourcesLogStats.lastUpdated) : '—'}</span>
+            <span className={`font-semibold text-[9px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.lastUpdated ? formatLogTimestamp(sourcesLogStats.lastUpdated) : '—'}</span>
             <span>Last updated</span>
           </div>
-          <div className={`w-px h-6 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
+          <div className={`w-px h-5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
           <div className="flex flex-col items-center">
-            <span className={`font-semibold text-xs ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLog.length}</span>
+            <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLog.length}</span>
             <span>Shown</span>
           </div>
-          <div className={`w-px h-6 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
+          <div className={`w-px h-5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
           <div className="flex flex-col items-center">
-            <span className={`font-semibold text-xs ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsCreated}</span>
+            <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsCreated}</span>
             <span>Created</span>
           </div>
-          <div className={`w-px h-6 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
+          <div className={`w-px h-5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
           <div className="flex flex-col items-center">
-            <span className={`font-semibold text-xs ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsDeleted}</span>
+            <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsDeleted}</span>
             <span>Deleted</span>
           </div>
-          <div className={`w-px h-6 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
+          <div className={`w-px h-5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
           <div className="flex flex-col items-center">
-            <span className={`font-semibold text-xs ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsArchived}</span>
+            <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{sourcesLogStats.logsArchived}</span>
             <span>Archived</span>
           </div>
         </div>
@@ -922,7 +955,10 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
   // Combined dirty: subject OR brief
   const isDirty = briefDirtyOnly || subjectDirty;
 
-  useEffect(() => { onDirtyChange(isDirty); }, [isDirty, onDirtyChange]);
+  useEffect(() => {
+    onDirtyChange(isDirty);
+    return () => { onDirtyChange(false); };
+  }, [isDirty, onDirtyChange]);
 
   // Imperative handle for parent — saves/discards BOTH subject + brief
   useImperativeHandle(ref, () => ({
@@ -1074,8 +1110,15 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
                   <option value="" disabled>{isSuggesting ? 'Generating...' : localSuggestions ? 'Select a suggestion...' : 'No suggestions yet'}</option>
                   {localSuggestions?.[field as BriefingFieldName]?.map((opt, i) => (<option key={i} value={opt.text}>{opt.label}</option>))}
                 </select>
-                <textarea value={localBriefing[field] || ''} onChange={(e) => updateField(field, e.target.value)} placeholder={hint} rows={2}
-                  className={`w-full py-2 px-2.5 rounded-b-md border text-[13px] resize-y focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 ${darkMode ? 'border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600' : 'border-zinc-300 bg-white text-zinc-800 placeholder:text-zinc-400'}`} />
+                <textarea value={localBriefing[field] || ''} onChange={(e) => {
+                    updateField(field, e.target.value);
+                    const el = e.target;
+                    el.style.height = 'auto';
+                    el.style.height = el.scrollHeight + 'px';
+                  }} placeholder={hint} rows={1}
+                  ref={(el) => { if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; } }}
+                  className={`w-full py-2 px-2.5 rounded-b-md border text-[13px] resize-none overflow-hidden focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 ${darkMode ? 'border-zinc-700 bg-zinc-800/50 text-zinc-200 placeholder:text-zinc-600' : 'border-zinc-300 bg-white text-zinc-800 placeholder:text-zinc-400'}`}
+                  style={{ minHeight: 32 }} />
               </div>
             );
           })}
@@ -1122,8 +1165,6 @@ function AssessmentTab({
   subject?: string;
   onTabChange: (tab: SubjectQualityTab) => void;
 }) {
-  const [activeSection, setActiveSection] = useState<SidebarSection>('overview');
-
   const derivedPurpose = deriveEngagementPurpose(briefing, subject);
   const hasPurpose = !!derivedPurpose.trim();
   const hasNoReport = !dqafReport;
@@ -1134,8 +1175,8 @@ function AssessmentTab({
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-center gap-3">
         <div className="w-8 h-8 border-2 border-zinc-300 dark:border-zinc-600 border-t-blue-500 rounded-full animate-spin" />
-        <p className={`text-xs font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>Running DQAF Assessment</p>
-        <p className={`text-[10px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Profiling documents, running structural checks, analyzing cross-document relationships...</p>
+        <p className={`text-xs font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>Analyzing documents…</p>
+        <p className={`text-[10px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Checking structure, relevance, and cross-document consistency</p>
         <button onClick={onAbortCheck} className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors mt-2 ${darkMode ? 'bg-red-900/30 hover:bg-red-900/50 text-red-400' : 'bg-red-50 hover:bg-red-100 text-red-600'}`}>Cancel</button>
       </div>
     );
@@ -1203,631 +1244,303 @@ function AssessmentTab({
     );
   }
 
-  // ── Full report view ──
-  return (
-    <div className="flex flex-col flex-1 overflow-hidden max-w-4xl mx-auto w-full">
-      {/* Header bar */}
-      <div className={`shrink-0 px-4 py-3 border-b ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-        <div className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <VerdictBadge verdict={dqafReport.overallVerdict} size="sm" />
-            <div className="min-w-0">
-              <h2 className="text-sm font-semibold truncate">Document Quality Assessment</h2>
-              <p className={`text-[10px] truncate mt-0.5 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{derivedPurpose}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <button onClick={() => onRunCheck(derivedPurpose)}
-              className={`text-[11px] font-medium px-3 py-1.5 rounded-lg transition-colors ${darkMode ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300' : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-700'}`}>
-              Re-run Assessment
-            </button>
-          </div>
-        </div>
-        <div className="flex items-center gap-3 mt-2">
-          <MetadataChip label={`${dqafReport.documentCountSubmitted} doc${dqafReport.documentCountSubmitted !== 1 ? 's' : ''}`} darkMode={darkMode} />
-          <MetadataChip label={formatAssessmentTimestamp(dqafReport.lastCheckTimestamp)} darkMode={darkMode} />
-          {dqafReport.flagsSummary && <FlagChips flags={dqafReport.flagsSummary} darkMode={darkMode} />}
-        </div>
-      </div>
-
-      {/* Sidebar + Content */}
-      <div className="flex flex-1 overflow-hidden">
-        <AssessmentSidebar darkMode={darkMode} activeSection={activeSection} onSelect={setActiveSection} report={dqafReport} />
-        <div className="flex-1 overflow-y-auto px-5 py-4">
-          {activeSection === 'overview' ? (
-            <SetOverview report={dqafReport} darkMode={darkMode} />
-          ) : activeSection === 'conflicts' ? (
-            <ConflictsAndFlags report={dqafReport} darkMode={darkMode} />
-          ) : activeSection === 'register' ? (
-            <DocumentRegisterView report={dqafReport} darkMode={darkMode} />
-          ) : activeSection.startsWith('doc-') ? (
-            <PerDocumentDetail docId={activeSection.slice(4)} report={dqafReport} darkMode={darkMode} />
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════
-// Assessment Sub-Components (from QualityPanel.tsx)
-// ═════════════════════════════════════════════════════════════════
-
-function AssessmentSidebar({ darkMode, activeSection, onSelect, report }: { darkMode: boolean; activeSection: SidebarSection; onSelect: (s: SidebarSection) => void; report: DQAFReport }) {
-  const totalFlags = (report.flagsSummary?.critical ?? 0) + (report.flagsSummary?.moderate ?? 0) + (report.flagsSummary?.minor ?? 0);
-  return (
-    <div className={`shrink-0 w-[170px] border-r overflow-y-auto ${darkMode ? 'border-zinc-800 bg-zinc-900/50' : 'border-zinc-200 bg-zinc-50/50'}`}>
-      <div className={`px-3 pt-3 pb-1.5 text-[9px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Set Level</div>
-      <SidebarItem active={activeSection === 'overview'} onClick={() => onSelect('overview')} darkMode={darkMode}>
-        <span className="flex-1 truncate">Set Overview</span>
-        <ScoreBadge score={report.kpis.overallSetReadinessScore} size="xs" />
-      </SidebarItem>
-      <div className={`px-3 pt-3 pb-1.5 text-[9px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Documents</div>
-      {report.documents.map((doc) => (
-        <SidebarItem key={doc.documentId} active={activeSection === `doc-${doc.documentId}`} onClick={() => onSelect(`doc-${doc.documentId}`)} darkMode={darkMode}>
-          <span className="flex-1 truncate text-[10px]">{doc.documentLabel}</span>
-          <ScoreBadge score={doc.documentReadinessScore} size="xs" />
-        </SidebarItem>
-      ))}
-      <div className={`px-3 pt-3 pb-1.5 text-[9px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>Cross Documents</div>
-      <SidebarItem active={activeSection === 'conflicts'} onClick={() => onSelect('conflicts')} darkMode={darkMode}>
-        <span className="flex-1 truncate">Conflicts & Flags</span>
-        {totalFlags > 0 && <span className="shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-red-500/15 text-red-500">{totalFlags}</span>}
-      </SidebarItem>
-      <SidebarItem active={activeSection === 'register'} onClick={() => onSelect('register')} darkMode={darkMode}>
-        <span className="flex-1 truncate">Document Register</span>
-      </SidebarItem>
-    </div>
-  );
-}
-
-function SidebarItem({ active, onClick, darkMode, children }: { active: boolean; onClick: () => void; darkMode: boolean; children: React.ReactNode }) {
-  return (
-    <button onClick={onClick} className={`w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors ${active ? (darkMode ? 'bg-zinc-800 text-zinc-200' : 'bg-zinc-200/70 text-zinc-800') : (darkMode ? 'text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-300' : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-700')}`}>
-      {children}
-    </button>
-  );
-}
-
-// ── Set Overview ──
-
-function SetOverview({ report, darkMode }: { report: DQAFReport; darkMode: boolean }) {
-  const kpis = report.kpis;
-  return (
-    <div className="space-y-5">
-      <VerdictBanner verdict={report.overallVerdict} rationale={report.verdictRationale} flags={report.flagsSummary} darkMode={darkMode} />
-      <div>
-        <SectionLabel darkMode={darkMode}>Key Performance Indicators</SectionLabel>
-        <div className="grid grid-cols-2 xl:grid-cols-3 gap-3 mt-2">
-          <KpiTile label="Document Relevance" value={kpis.documentRelevanceRate} description="Avg relevance of all docs to engagement purpose" darkMode={darkMode} />
-          <KpiTile label="Internal Integrity" value={kpis.internalIntegrityRate} description="Docs with perfect internal consistency" darkMode={darkMode} />
-          <KpiTile label="Cross-Doc Consistency" value={kpis.crossDocumentConsistencyScore} description="Cross-document checks without findings" darkMode={darkMode} />
-          <KpiTile label="Version Confidence" value={kpis.versionConfidenceRate} description="Version clarity within and across docs" darkMode={darkMode} />
-          <KpiTile label="Structural Coherence" value={kpis.structuralCoherenceRate} description="Docs with complete structural integrity" darkMode={darkMode} />
-        </div>
-      </div>
-      <div>
-        <SectionLabel darkMode={darkMode}>Weighted Readiness Score</SectionLabel>
-        <div className={`mt-2 rounded-lg p-4 ${darkMode ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
-          <div className="flex items-center gap-4 mb-3">
-            <ScoreRing score={kpis.overallSetReadinessScore} size={56} />
-            <div>
-              <p className="text-[13px] font-semibold">{kpis.overallSetReadinessScore.toFixed(1)}%</p>
-              <p className={`text-[10px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                {kpis.overallSetReadinessScore >= 90 ? 'Ready for production' : kpis.overallSetReadinessScore >= 70 ? 'Conditional — review flagged items' : 'Not ready — critical issues found'}
-              </p>
-            </div>
-          </div>
-          <div className="space-y-2">
-            <WeightedBar label="Internal Integrity" value={kpis.internalIntegrityRate} weight="30%" darkMode={darkMode} />
-            <WeightedBar label="Cross-Doc Consistency" value={kpis.crossDocumentConsistencyScore} weight="30%" darkMode={darkMode} />
-            <WeightedBar label="Document Relevance" value={kpis.documentRelevanceRate} weight="20%" darkMode={darkMode} />
-            <WeightedBar label="Version Confidence" value={kpis.versionConfidenceRate} weight="10%" darkMode={darkMode} />
-            <WeightedBar label="Structural Coherence" value={kpis.structuralCoherenceRate} weight="10%" darkMode={darkMode} />
-          </div>
-        </div>
-      </div>
-      {report.engagementPurposeProfile && (
-        <div><SectionLabel darkMode={darkMode}>Engagement Purpose Profile</SectionLabel><ProfileTable profile={report.engagementPurposeProfile} darkMode={darkMode} /></div>
-      )}
-      {report.mandatoryProductionNotice && <ProductionNoticeBlock notice={report.mandatoryProductionNotice} darkMode={darkMode} />}
-    </div>
-  );
-}
-
-// ── Per Document Detail ──
-
-function PerDocumentDetail({ docId, report, darkMode }: { docId: string; report: DQAFReport; darkMode: boolean }) {
-  const doc = report.documents.find((d) => d.documentId === docId);
-  if (!doc) return <p className={`text-xs ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Document not found in this assessment.</p>;
-  return (
-    <div className="space-y-5">
-      <div className="flex items-start gap-3">
-        <ScoreRing score={doc.documentReadinessScore} size={48} />
-        <div className="min-w-0 flex-1">
-          <h3 className="text-[13px] font-semibold truncate">{doc.documentLabel}</h3>
-          <div className="flex flex-wrap items-center gap-1.5 mt-1">
-            <VerdictBadge verdict={doc.documentVerdict} size="xs" />
-            {doc.metadata.detectedTitle && <MetadataTag label={doc.metadata.detectedTitle} darkMode={darkMode} />}
-            {doc.metadata.detectedDate && <MetadataTag label={doc.metadata.detectedDate} darkMode={darkMode} />}
-            {doc.metadata.detectedVersion && <MetadataTag label={doc.metadata.detectedVersion} darkMode={darkMode} />}
-            {doc.metadata.detectedSource && <MetadataTag label={doc.metadata.detectedSource} darkMode={darkMode} />}
-          </div>
-        </div>
-      </div>
-      <div>
-        <SectionLabel darkMode={darkMode}>Relevance Profile</SectionLabel>
-        <div className={`mt-2 rounded-lg ${darkMode ? 'bg-zinc-800/50' : 'bg-zinc-50'}`}>
-          <div className="p-3 flex items-center gap-3">
-            <div className="flex-1">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-medium">Score A: {doc.relevanceScoreA.toFixed(0)}%</span>
-                <RelevanceLabel interpretation={doc.relevanceInterpretation} />
-              </div>
-              <ProgressBar value={doc.relevanceScoreA} darkMode={darkMode} />
-            </div>
-          </div>
-          <div className={`border-t px-3 py-2 ${darkMode ? 'border-zinc-700' : 'border-zinc-200'}`}>
-            <table className="w-full text-[10px]">
-              <thead><tr className={darkMode ? 'text-zinc-500' : 'text-zinc-400'}>
-                <th className="text-left py-1 font-medium">Dimension</th>
-                <th className="text-left py-1 font-medium">Engagement Profile</th>
-                <th className="text-left py-1 font-medium">Document Profile</th>
-                <th className="text-center py-1 font-medium w-16">Score</th>
-              </tr></thead>
-              <tbody>
-                {(['objective', 'focus', 'audience', 'type', 'tone'] as const).map((dim) => {
-                  const dimScore = doc.relevanceDimensionScores[dim];
-                  const engProfile = report.engagementPurposeProfile;
-                  return (
-                    <tr key={dim} className={`border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
-                      <td className="py-1.5 font-medium">{DIMENSION_LABELS[dim]}<span className={`ml-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>({(DIMENSION_WEIGHTS[dim] * 100).toFixed(0)}%)</span></td>
-                      <td className={`py-1.5 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{engProfile?.[dim] ?? '—'}</td>
-                      <td className={`py-1.5 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{doc.documentProfile[dim]}</td>
-                      <td className="py-1.5 text-center">{dimScore ? <ScorePill score={dimScore.alignmentScore} maxScore={2} label={dimScore.alignmentLabel} /> : '—'}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-      <div>
-        <SectionLabel darkMode={darkMode}>Structural Checks (Pass 1)</SectionLabel>
-        <div className="grid grid-cols-2 gap-2 mt-2">
-          {(Object.keys(PASS1_LABELS) as DQAFPass1CheckId[]).map((checkId) => (
-            <CheckCard key={checkId} checkId={checkId} label={PASS1_LABELS[checkId]} result={doc.pass1Scores[checkId]} darkMode={darkMode} />
-          ))}
-        </div>
-      </div>
-      <div><SectionLabel darkMode={darkMode}>Document Profile</SectionLabel><ProfileTable profile={doc.documentProfile} darkMode={darkMode} /></div>
-    </div>
-  );
-}
-
-// ── Conflicts & Flags ──
-
-function ConflictsAndFlags({ report, darkMode }: { report: DQAFReport; darkMode: boolean }) {
-  const compatibility = report.interDocumentCompatibility;
-  const findings = report.crossDocumentFindings;
-  const perDocFlags = report.perDocumentFlags ?? [];
-
+  // ── Full report view — clean dashboard ──
   const docLabels = useMemo(() => {
     const m = new Map<string, string>();
-    for (const d of report.documents) m.set(d.documentId, d.documentLabel);
+    for (const d of dqafReport.documents) m.set(d.documentId, d.documentLabel);
     return m;
-  }, [report.documents]);
+  }, [dqafReport.documents]);
 
-  // Split cross-doc findings by scope
-  const setLevelFindings = useMemo(() =>
-    findings.filter(f => f.scope === 'whole_set').sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
-    [findings]
-  );
-  const betweenFindings = useMemo(() =>
-    findings.filter(f => f.scope !== 'whole_set').sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
-    [findings]
-  );
-  const sortedPerDocFlags = useMemo(() =>
-    [...perDocFlags].sort((a, b) => severityRank(a.severity) - severityRank(b.severity)),
-    [perDocFlags]
-  );
+  // Collect all issues into a flat sorted list
+  const allIssues = useMemo(() => {
+    const items: Array<{ severity: string; description: string; impact?: string; docs: string[] }> = [];
+    for (const f of dqafReport.crossDocumentFindings) {
+      items.push({
+        severity: f.severity,
+        description: f.description,
+        impact: f.productionImpact,
+        docs: f.documentsInvolved.map(id => docLabels.get(id) ?? id),
+      });
+    }
+    for (const f of (dqafReport.perDocumentFlags ?? [])) {
+      items.push({
+        severity: f.severity,
+        description: f.description,
+        impact: f.crossDocumentConsequence,
+        docs: [docLabels.get(f.documentId) ?? f.documentId],
+      });
+    }
+    return items.sort((a, b) => severityRank(a.severity) - severityRank(b.severity));
+  }, [dqafReport, docLabels]);
 
-  const hasGroupA = compatibility.length > 0 || setLevelFindings.length > 0;
-  const hasGroupB = betweenFindings.length > 0;
-  const hasGroupC = sortedPerDocFlags.length > 0;
-
-  if (!hasGroupA && !hasGroupB && !hasGroupC) {
-    return (
-      <div className={`rounded-lg px-4 py-6 text-center text-[11px] ${darkMode ? 'bg-zinc-800/50 text-zinc-500' : 'bg-zinc-50 text-zinc-400'}`}>
-        No cross-document conflicts or issues found.
+  return (
+    <div className="flex flex-col flex-1 overflow-hidden max-w-2xl mx-auto w-full">
+      {/* ── 1. Verdict Banner (fixed above scroll) ── */}
+      <div className="shrink-0 px-4 pb-2">
+        <DashboardVerdictBanner
+          verdict={dqafReport.overallVerdict}
+          rationale={dqafReport.verdictRationale}
+          flags={dqafReport.flagsSummary}
+          timestamp={dqafReport.lastCheckTimestamp}
+          docCount={dqafReport.documentCountSubmitted}
+          darkMode={darkMode}
+          onRerun={() => onRunCheck(derivedPurpose)}
+        />
       </div>
-    );
-  }
+      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
 
-  return (
-    <div className="space-y-6">
-      <ScopeLegend darkMode={darkMode} />
-
-      {/* Group A: Whole Set */}
-      {hasGroupA && (
+        {/* ── 2. Document Cards ── */}
         <div>
-          <ScopeStripe scope="set" label="Whole Set" note="Inter-document compatibility — describes the set as a whole" darkMode={darkMode} />
-          {compatibility.length > 0 && (
-            <div className="mt-3 space-y-3">
-              {compatibility.map((record, i) => <CompatibilityCard key={i} record={record} docLabels={docLabels} darkMode={darkMode} />)}
-            </div>
-          )}
-          {setLevelFindings.length > 0 && (
-            <div className="mt-3">
-              <SeverityGroupedFindings findings={setLevelFindings} docLabels={docLabels} darkMode={darkMode} />
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Group B: Between Documents */}
-      {hasGroupB && (
-        <div>
-          <ScopeStripe scope="between" label="Between Documents" note="Issues from comparing documents against each other" darkMode={darkMode} />
-          <div className="mt-3">
-            <SeverityGroupedFindings findings={betweenFindings} docLabels={docLabels} darkMode={darkMode} />
-          </div>
-        </div>
-      )}
-
-      {/* Group C: This Document */}
-      {hasGroupC && (
-        <div>
-          <ScopeStripe scope="doc" label="This Document" note="Internal to one document, but with cross-document consequences" darkMode={darkMode} />
-          <div className="mt-3">
-            <SeverityGroupedPerDocFlags flags={sortedPerDocFlags} docLabels={docLabels} darkMode={darkMode} />
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Scope helpers ──
-
-type ScopeKind = 'set' | 'between' | 'doc';
-
-const SCOPE_STYLES: Record<ScopeKind, { light: string; dark: string; dot: string }> = {
-  set:     { light: 'bg-blue-50 text-blue-600 border-blue-200', dark: 'bg-blue-500/10 text-blue-400 border-blue-500/20', dot: 'bg-blue-500' },
-  between: { light: 'bg-amber-50 text-amber-600 border-amber-200', dark: 'bg-amber-500/10 text-amber-400 border-amber-500/20', dot: 'bg-amber-500' },
-  doc:     { light: 'bg-purple-50 text-purple-600 border-purple-200', dark: 'bg-purple-500/10 text-purple-400 border-purple-500/20', dot: 'bg-purple-500' },
-};
-
-const SCOPE_LEGEND_ITEMS: Array<{ scope: ScopeKind; label: string }> = [
-  { scope: 'set', label: 'Whole Set' },
-  { scope: 'between', label: 'Between Documents' },
-  { scope: 'doc', label: 'This Document' },
-];
-
-function ScopeLegend({ darkMode }: { darkMode: boolean }) {
-  return (
-    <div className="flex flex-wrap gap-4">
-      {SCOPE_LEGEND_ITEMS.map(({ scope, label }) => (
-        <div key={scope} className="flex items-center gap-1.5">
-          <div className={`w-2 h-2 rounded-sm ${SCOPE_STYLES[scope].dot}`} />
-          <span className={`text-[9px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{label}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ScopeStripe({ scope, label, note, darkMode }: { scope: ScopeKind; label: string; note: string; darkMode: boolean }) {
-  const styles = SCOPE_STYLES[scope];
-  return (
-    <div className={`flex items-center gap-2.5 rounded-md border px-3 py-2 ${darkMode ? styles.dark : styles.light}`}>
-      <div className={`w-1.5 h-1.5 rounded-full shrink-0 ${styles.dot}`} />
-      <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
-      <span className={`text-[9px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{note}</span>
-    </div>
-  );
-}
-
-function ScopeTag({ scope, label, darkMode }: { scope: ScopeKind; label?: string; darkMode: boolean }) {
-  const styles = SCOPE_STYLES[scope];
-  const defaultLabels: Record<ScopeKind, string> = { set: 'Whole Set', between: 'Between Documents', doc: 'This Document' };
-  return (
-    <span className={`inline-flex items-center gap-1.5 text-[8px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded border ${darkMode ? styles.dark : styles.light}`}>
-      <span className={`w-1 h-1 rounded-full ${styles.dot}`} />
-      {label ?? defaultLabels[scope]}
-    </span>
-  );
-}
-
-function SeverityGroupHeader({ severity, darkMode }: { severity: string; darkMode: boolean }) {
-  const colors: Record<string, string> = { critical: 'text-red-500', moderate: 'text-amber-500', minor: darkMode ? 'text-zinc-400' : 'text-zinc-500' };
-  const dotColors: Record<string, string> = { critical: 'bg-red-500', moderate: 'bg-amber-500', minor: darkMode ? 'bg-zinc-500' : 'bg-zinc-400' };
-  const sublabel = SEVERITY_SUBLABELS[severity] ?? '';
-  return (
-    <div className="flex items-center gap-2.5 mt-4 mb-2 first:mt-0">
-      <div className={`w-2 h-2 rounded-full shrink-0 ${dotColors[severity] ?? 'bg-zinc-400'}`} />
-      <span className={`text-[10px] font-semibold ${colors[severity] ?? 'text-zinc-400'}`}>
-        {severity.charAt(0).toUpperCase() + severity.slice(1)}
-      </span>
-      {sublabel && <span className={`text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>— {sublabel}</span>}
-      <div className={`flex-1 h-px ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`} />
-    </div>
-  );
-}
-
-function SeverityGroupedFindings({ findings, docLabels, darkMode }: { findings: DQAFCrossDocFinding[]; docLabels: Map<string, string>; darkMode: boolean }) {
-  const groups = useMemo(() => {
-    const result: { severity: string; items: DQAFCrossDocFinding[] }[] = [];
-    for (const sev of ['critical', 'moderate', 'minor']) {
-      const items = findings.filter(f => f.severity === sev);
-      if (items.length > 0) result.push({ severity: sev, items });
-    }
-    return result;
-  }, [findings]);
-  return (
-    <div>
-      {groups.map(({ severity, items }) => (
-        <div key={severity}>
-          <SeverityGroupHeader severity={severity} darkMode={darkMode} />
-          <div className="space-y-2">
-            {items.map((finding, i) => <FindingCard key={i} finding={finding} docLabels={docLabels} darkMode={darkMode} />)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function SeverityGroupedPerDocFlags({ flags, docLabels, darkMode }: { flags: DQAFPerDocumentFlag[]; docLabels: Map<string, string>; darkMode: boolean }) {
-  const groups = useMemo(() => {
-    const result: { severity: string; items: DQAFPerDocumentFlag[] }[] = [];
-    for (const sev of ['critical', 'moderate', 'minor']) {
-      const items = flags.filter(f => f.severity === sev);
-      if (items.length > 0) result.push({ severity: sev, items });
-    }
-    return result;
-  }, [flags]);
-  return (
-    <div>
-      {groups.map(({ severity, items }) => (
-        <div key={severity}>
-          <SeverityGroupHeader severity={severity} darkMode={darkMode} />
-          <div className="space-y-2">
-            {items.map((flag, i) => <PerDocFlagCard key={i} flag={flag} docLabels={docLabels} darkMode={darkMode} />)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-// ── Document Register ──
-
-function DocumentRegisterView({ report, darkMode }: { report: DQAFReport; darkMode: boolean }) {
-  return (
-    <div className="space-y-5">
-      <SectionLabel darkMode={darkMode}>Document Register</SectionLabel>
-      <div className={`rounded-lg overflow-hidden border ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-        <table className="w-full text-[10px]">
-          <thead className={darkMode ? 'bg-zinc-800/80' : 'bg-zinc-100'}>
-            <tr>
-              <th className="text-left py-2 px-3 font-medium">Document</th>
-              <th className="text-left py-2 px-3 font-medium">Version & Date</th>
-              <th className="text-center py-2 px-3 font-medium w-20">Relevance</th>
-              <th className="text-center py-2 px-3 font-medium w-20">Readiness</th>
-              <th className="text-left py-2 px-3 font-medium">Required Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {report.documentRegister.map((entry, i) => (
-              <tr key={i} className={`border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
-                <td className="py-2 px-3 font-medium">{entry.documentLabel}</td>
-                <td className={`py-2 px-3 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{[entry.detectedVersion, entry.detectedDate].filter(Boolean).join(' · ') || '—'}</td>
-                <td className="py-2 px-3 text-center">
-                  <div className="flex flex-col items-center gap-0.5"><ScoreBadge score={entry.relevanceScoreA} size="xs" /><span className={`text-[8px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{entry.relevanceInterpretation?.replace(/_/g, ' ')}</span></div>
-                </td>
-                <td className="py-2 px-3 text-center">
-                  <div className="flex flex-col items-center gap-0.5"><ScoreBadge score={entry.documentReadinessScore} size="xs" /><VerdictBadge verdict={entry.documentVerdict} size="xs" /></div>
-                </td>
-                <td className={`py-2 px-3 ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{entry.requiredAction || '—'}</td>
-              </tr>
+          <DashboardSectionLabel darkMode={darkMode}>Documents</DashboardSectionLabel>
+          <div className="space-y-2 mt-2">
+            {dqafReport.documents.map((doc) => (
+              <DocumentCard key={doc.documentId} doc={doc} darkMode={darkMode} />
             ))}
-          </tbody>
-        </table>
+          </div>
+        </div>
+
+        {/* ── 3. Cross-Document Issues ── */}
+        {allIssues.length > 0 && (
+          <div>
+            <DashboardSectionLabel darkMode={darkMode}>Cross-Document Issues</DashboardSectionLabel>
+            <div className="space-y-2 mt-2">
+              {allIssues.map((issue, i) => (
+                <IssueCard key={i} issue={issue} darkMode={darkMode} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* ── 4. Action Items ── */}
+        {dqafReport.documentRegister.length > 0 && (
+          <div>
+            <DashboardSectionLabel darkMode={darkMode}>Action Items</DashboardSectionLabel>
+            <div className={`mt-2 rounded-lg border ${darkMode ? 'border-zinc-800 bg-zinc-800/30' : 'border-zinc-200 bg-white'}`}>
+              {dqafReport.documentRegister.map((entry, i) => {
+                const action = entry.requiredAction || 'No action required';
+                const isClean = action.toLowerCase().includes('no action') || action.toLowerCase().includes('use as-is');
+                return (
+                  <div key={i} className={`flex items-start gap-2.5 px-3 py-2.5 ${i > 0 ? `border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}` : ''}`}>
+                    <span className="mt-0.5 shrink-0">
+                      {isClean ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-500">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                          <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+                        </svg>
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <span className={`text-[11px] font-medium ${darkMode ? 'text-zinc-200' : 'text-zinc-700'}`}>{entry.documentLabel}</span>
+                      <p className={`text-[11px] mt-0.5 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{action}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* ── 5. Production Notice ── */}
+        {dqafReport.mandatoryProductionNotice && (
+          <ProductionNoticeBlock notice={dqafReport.mandatoryProductionNotice} darkMode={darkMode} />
+        )}
       </div>
-      {report.mandatoryProductionNotice && <ProductionNoticeBlock notice={report.mandatoryProductionNotice} darkMode={darkMode} />}
     </div>
   );
 }
+
 
 // ═════════════════════════════════════════════════════════════════
-// Shared UI Atoms
+// Dashboard Components
 // ═════════════════════════════════════════════════════════════════
 
-function VerdictBadge({ verdict, size = 'sm' }: { verdict?: DQAFVerdict; size?: 'xs' | 'sm' }) {
-  if (!verdict) return <span className={`inline-flex items-center rounded-full ${size === 'xs' ? 'px-1.5 py-0.5 text-[8px]' : 'px-2 py-0.5 text-[10px]'} font-medium bg-zinc-200 dark:bg-zinc-700 text-zinc-500 dark:text-zinc-400`}>No Assessment</span>;
-  const styles: Record<DQAFVerdict, string> = { ready: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400', conditional: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', not_ready: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400' };
-  const labels: Record<DQAFVerdict, string> = { ready: 'Ready', conditional: 'Conditional', not_ready: 'Not Ready' };
-  return <span className={`inline-flex items-center rounded-full font-medium ${size === 'xs' ? 'px-1.5 py-0.5 text-[8px]' : 'px-2 py-0.5 text-[10px]'} ${styles[verdict]}`}>{labels[verdict]}</span>;
-}
-
-function VerdictBanner({ verdict, rationale, flags, darkMode }: { verdict: DQAFVerdict; rationale: string; flags: DQAFReport['flagsSummary']; darkMode: boolean }) {
-  const bg = verdict === 'ready' ? (darkMode ? 'bg-emerald-500/10 border-emerald-500/20' : 'bg-emerald-50 border-emerald-200') : verdict === 'conditional' ? (darkMode ? 'bg-amber-500/10 border-amber-500/20' : 'bg-amber-50 border-amber-200') : (darkMode ? 'bg-red-500/10 border-red-500/20' : 'bg-red-50 border-red-200');
-  return (
-    <div className={`rounded-lg border p-4 ${bg}`}>
-      <div className="flex items-center gap-2 mb-2"><VerdictBadge verdict={verdict} size="sm" />{flags && <FlagChips flags={flags} darkMode={darkMode} />}</div>
-      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{rationale}</p>
-    </div>
-  );
-}
-
-function FlagChips({ flags, darkMode }: { flags: DQAFReport['flagsSummary']; darkMode: boolean }) {
-  if (!flags) return null;
-  const items: Array<{ label: string; count: number; color: string }> = [];
-  if (flags.critical > 0) items.push({ label: 'critical', count: flags.critical, color: 'text-red-500' });
-  if (flags.moderate > 0) items.push({ label: 'moderate', count: flags.moderate, color: 'text-amber-500' });
-  if (flags.minor > 0) items.push({ label: 'minor', count: flags.minor, color: darkMode ? 'text-zinc-400' : 'text-zinc-500' });
-  if (items.length === 0) return null;
-  return <span className="flex items-center gap-2 text-[9px]">{items.map((it) => <span key={it.label} className={`${it.color} font-medium`}>{it.count} {it.label}</span>)}</span>;
-}
-
-function ScoreBadge({ score, size = 'sm' }: { score: number; size?: 'xs' | 'sm' }) {
-  const color = score >= 90 ? 'text-emerald-600 dark:text-emerald-400' : score >= 70 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400';
-  return <span className={`font-semibold ${color} ${size === 'xs' ? 'text-[9px]' : 'text-[10px]'}`}>{score.toFixed(0)}%</span>;
-}
-
-function ScoreRing({ score, size = 48 }: { score: number; size?: number }) {
-  const r = (size - 8) / 2;
-  const circ = 2 * Math.PI * r;
-  const offset = circ - (score / 100) * circ;
-  const color = score >= 90 ? 'stroke-emerald-500' : score >= 70 ? 'stroke-amber-500' : 'stroke-red-500';
-  return (
-    <svg width={size} height={size} className="shrink-0 -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" className="text-zinc-200 dark:text-zinc-700" strokeWidth={4} />
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" className={color} strokeWidth={4} strokeDasharray={circ} strokeDashoffset={offset} strokeLinecap="round" />
-      <text x={size / 2} y={size / 2} textAnchor="middle" dominantBaseline="central" className="fill-current text-[11px] font-semibold rotate-90" style={{ transformOrigin: 'center' }}>{score.toFixed(0)}</text>
-    </svg>
-  );
-}
-
-function ScorePill({ score, maxScore, label }: { score: number; maxScore: number; label: string }) {
-  const color = score === maxScore ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : score === 0 ? 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400' : 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400';
-  return <span className={`inline-flex px-1.5 py-0.5 rounded text-[8px] font-medium ${color}`}>{score}/{maxScore} {label}</span>;
-}
-
-function ProgressBar({ value, darkMode }: { value: number; darkMode: boolean }) {
-  const color = value >= 90 ? 'bg-emerald-500' : value >= 70 ? 'bg-amber-500' : 'bg-red-500';
-  return (<div className={`h-1.5 rounded-full ${darkMode ? 'bg-zinc-800' : 'bg-zinc-200'}`}><div className={`h-full rounded-full transition-all ${color}`} style={{ width: `${Math.min(100, value)}%` }} /></div>);
-}
-
-function WeightedBar({ label, value, weight, darkMode }: { label: string; value: number; weight: string; darkMode: boolean }) {
-  return (<div><div className="flex items-center justify-between mb-0.5"><span className={`text-[10px] ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{label}</span><span className={`text-[9px] ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{value.toFixed(0)}% · {weight}</span></div><ProgressBar value={value} darkMode={darkMode} /></div>);
-}
-
-function KpiTile({ label, value, description, darkMode }: { label: string; value: number; description: string; darkMode: boolean }) {
-  const color = value >= 90 ? 'border-emerald-500/30' : value >= 70 ? 'border-amber-500/30' : 'border-red-500/30';
-  return (
-    <div className={`rounded-lg border p-3 ${color} ${darkMode ? 'bg-zinc-800/50' : 'bg-white'}`}>
-      <div className="flex items-center justify-between mb-1"><span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{label}</span><ScoreBadge score={value} size="sm" /></div>
-      <ProgressBar value={value} darkMode={darkMode} />
-      <p className={`text-[9px] mt-1.5 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{description}</p>
-    </div>
-  );
-}
-
-function MetadataChip({ label, darkMode }: { label: string; darkMode: boolean }) {
-  return <span className={`text-[9px] px-2 py-0.5 rounded-full ${darkMode ? 'bg-zinc-800 text-zinc-400' : 'bg-zinc-100 text-zinc-500'}`}>{label}</span>;
-}
-
-function MetadataTag({ label, darkMode }: { label: string; darkMode: boolean }) {
-  return <span className={`text-[9px] px-1.5 py-0.5 rounded ${darkMode ? 'bg-zinc-800 text-zinc-500' : 'bg-zinc-100 text-zinc-500'}`}>{label}</span>;
-}
-
-function RelevanceLabel({ interpretation }: { interpretation: string }) {
-  const styles: Record<string, string> = { primary_source: 'text-emerald-600 dark:text-emerald-400', supporting_source: 'text-amber-600 dark:text-amber-400', orphan_review_required: 'text-red-600 dark:text-red-400' };
-  const labels: Record<string, string> = { primary_source: 'Primary Source', supporting_source: 'Supporting Source', orphan_review_required: 'Orphan — Review Required' };
-  return <span className={`text-[9px] font-medium ${styles[interpretation] ?? 'text-zinc-500'}`}>{labels[interpretation] ?? interpretation}</span>;
-}
-
-function SectionLabel({ darkMode, children }: { darkMode: boolean; children: React.ReactNode }) {
+function DashboardSectionLabel({ darkMode, children }: { darkMode: boolean; children: React.ReactNode }) {
   return <p className={`text-[10px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{children}</p>;
 }
 
-function ProfileTable({ profile, darkMode }: { profile: { objective: string; audience: string; type: string; focus: string; tone: string }; darkMode: boolean }) {
+/** Top verdict banner with status, rationale, meta, and re-run */
+function DashboardVerdictBanner({ verdict, rationale, flags, timestamp, docCount, darkMode }: {
+  verdict: DQAFVerdict; rationale: string; flags: DQAFReport['flagsSummary'];
+  timestamp: number; docCount: number; darkMode: boolean; onRerun: () => void;
+}) {
+  const verdictLabel: Record<DQAFVerdict, string> = {
+    ready: 'Ready',
+    conditional: 'Conditional',
+    not_ready: 'Not Ready',
+  };
+  const verdictColor: Record<DQAFVerdict, string> = {
+    ready: 'text-emerald-600 dark:text-emerald-400',
+    conditional: 'text-amber-600 dark:text-amber-400',
+    not_ready: 'text-red-600 dark:text-red-400',
+  };
+
+  const divider = <div className={`w-px h-5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />;
+
   return (
-    <div className={`mt-2 rounded-lg overflow-hidden border ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`}>
-      {(['objective', 'audience', 'type', 'focus', 'tone'] as const).map((dim, i) => (
-        <div key={dim} className={`flex text-[10px] ${i > 0 ? `border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}` : ''}`}>
-          <div className={`w-20 shrink-0 px-3 py-1.5 font-medium ${darkMode ? 'bg-zinc-800/50 text-zinc-400' : 'bg-zinc-50 text-zinc-500'}`}>{DIMENSION_LABELS[dim]}</div>
-          <div className={`flex-1 px-3 py-1.5 ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{profile[dim]}</div>
+    <div className="space-y-2">
+      {/* ── Stats bar ── */}
+      <div className={`flex items-center gap-3 text-[8px] rounded-lg px-3 py-1.5 ${darkMode ? 'text-zinc-500 bg-zinc-800' : 'text-zinc-400 bg-zinc-100'}`}>
+        <div className="flex flex-col items-center">
+          <span className={`font-semibold text-[9px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{new Date(timestamp).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+          <span>Last updated</span>
         </div>
-      ))}
-    </div>
-  );
-}
-
-function CheckCard({ checkId, label, result, darkMode }: { checkId: string; label: string; result?: DQAFCheckResult; darkMode: boolean }) {
-  const score = result?.score ?? -1;
-  const scoreLabel = score === 2 ? 'Pass' : score === 1 ? 'Caution' : score === 0 ? 'Fail' : '—';
-  const scoreColor = score === 2 ? 'text-emerald-600 dark:text-emerald-400' : score === 1 ? 'text-amber-600 dark:text-amber-400' : score === 0 ? 'text-red-600 dark:text-red-400' : 'text-zinc-400';
-  const borderColor = score === 2 ? 'border-emerald-500/20' : score === 1 ? 'border-amber-500/20' : score === 0 ? 'border-red-500/20' : 'border-zinc-200 dark:border-zinc-800';
-  return (
-    <div className={`rounded-lg border p-2.5 ${borderColor} ${darkMode ? 'bg-zinc-800/30' : 'bg-white'}`}>
-      <div className="flex items-center justify-between"><span className={`text-[9px] font-medium ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{checkId}</span><span className={`text-[9px] font-semibold ${scoreColor}`}>{scoreLabel}</span></div>
-      <p className={`text-[10px] font-medium mt-0.5 ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{label}</p>
-      {result?.note && <p className={`text-[9px] mt-1 leading-relaxed ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>{result.note}</p>}
-    </div>
-  );
-}
-
-function CompatibilityCard({ record, docLabels, darkMode }: { record: DQAFCompatibilityRecord; docLabels: Map<string, string>; darkMode: boolean }) {
-  const [docA, docB] = record.documentPair;
-  return (
-    <div className={`rounded-lg border p-3 ${darkMode ? 'border-zinc-800 bg-zinc-800/30' : 'border-zinc-200 bg-white'}`}>
-      <div className="flex items-center justify-between mb-2">
-        <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{docLabels.get(docA) ?? docA} ↔ {docLabels.get(docB) ?? docB}</span>
-        <ScoreBadge score={record.compatibilityScoreB} size="xs" />
+        {divider}
+        <div className="flex flex-col items-center">
+          <span className={`font-semibold text-[10px] ${verdictColor[verdict]}`}>{verdictLabel[verdict]}</span>
+          <span>Status</span>
+        </div>
+        {divider}
+        <div className="flex flex-col items-center">
+          <span className="font-semibold text-[10px] text-red-500">{flags?.critical ?? 0}</span>
+          <span>Critical</span>
+        </div>
+        {divider}
+        <div className="flex flex-col items-center">
+          <span className="font-semibold text-[10px] text-amber-500">{flags?.moderate ?? 0}</span>
+          <span>Moderate</span>
+        </div>
+        {divider}
+        <div className="flex flex-col items-center">
+          <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{flags?.minor ?? 0}</span>
+          <span>Minor</span>
+        </div>
+        {divider}
+        <div className="flex flex-col items-center">
+          <span className={`font-semibold text-[10px] ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{docCount}</span>
+          <span>Docs</span>
+        </div>
       </div>
-      <div className="flex gap-1.5 flex-wrap">
-        {(['objective', 'focus', 'audience', 'type', 'tone'] as const).map((dim) => {
-          const ds = record.dimensionScores[dim];
-          if (!ds) return null;
-          const color = ds.score === 2 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : ds.score === 1 ? 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400' : 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400';
-          return <span key={dim} className={`text-[8px] font-medium px-1.5 py-0.5 rounded ${color}`} title={ds.note ?? ''}>{DIMENSION_LABELS[dim]}: {ds.label}</span>;
-        })}
-      </div>
+      {/* ── Rationale ── */}
+      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{rationale}</p>
     </div>
   );
 }
 
-function FindingCard({ finding, docLabels, darkMode }: { finding: DQAFCrossDocFinding; docLabels: Map<string, string>; darkMode: boolean }) {
-  const severityColor: Record<string, string> = { critical: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', moderate: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', minor: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-700/50 dark:text-zinc-400' };
+/** Per-document card showing relevance, contribution, and issues */
+function DocumentCard({ doc, darkMode }: { doc: DQAFReport['documents'][0]; darkMode: boolean }) {
+  const [expanded, setExpanded] = useState(true);
+
+  // Relevance tag
+  const relevanceConfig: Record<string, { label: string; color: string }> = {
+    primary_source: { label: 'Primary', color: darkMode ? 'bg-emerald-500/15 text-emerald-400' : 'bg-emerald-100 text-emerald-700' },
+    supporting_source: { label: 'Supporting', color: darkMode ? 'bg-amber-500/15 text-amber-400' : 'bg-amber-100 text-amber-700' },
+    orphan_review_required: { label: 'Weak Fit', color: darkMode ? 'bg-red-500/15 text-red-400' : 'bg-red-100 text-red-700' },
+  };
+  const rel = relevanceConfig[doc.relevanceInterpretation] ?? { label: doc.relevanceInterpretation, color: darkMode ? 'bg-zinc-700 text-zinc-400' : 'bg-zinc-100 text-zinc-500' };
+
+  // Contribution — use the objective dimension note, or fall back to profile objective
+  const contribution = doc.relevanceDimensionScores?.objective?.note || doc.documentProfile?.objective || '';
+
+  // Issues from Pass 1 checks
+  const issues: Array<{ label: string; note: string; severity: 'fail' | 'caution' }> = [];
+  if (doc.pass1Scores) {
+    for (const [checkId, result] of Object.entries(doc.pass1Scores)) {
+      if (result.score < 2 && result.note) {
+        issues.push({
+          label: PASS1_LABELS[checkId as DQAFPass1CheckId] ?? checkId,
+          note: result.note,
+          severity: result.score === 0 ? 'fail' : 'caution',
+        });
+      }
+    }
+  }
+
+  const hasIssues = issues.length > 0;
+
+  return (
+    <div className={`rounded-lg border ${darkMode ? 'border-zinc-800 bg-zinc-800/30' : 'border-zinc-200 bg-white'}`}>
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-2.5 px-3 py-2.5 text-left"
+      >
+        {/* Chevron */}
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          className={`shrink-0 transition-transform ${darkMode ? 'text-zinc-500' : 'text-zinc-400'} ${expanded ? '' : '-rotate-90'}`}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`text-[12px] font-medium truncate ${darkMode ? 'text-zinc-200' : 'text-zinc-700'}`}>{doc.documentLabel}</span>
+            <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${rel.color}`}>{rel.label}</span>
+          </div>
+        </div>
+
+        {/* Issue count badge */}
+        {hasIssues && (
+          <span className={`text-[9px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${
+            issues.some(i => i.severity === 'fail')
+              ? 'bg-red-500/15 text-red-500'
+              : 'bg-amber-500/15 text-amber-500'
+          }`}>
+            {issues.length} issue{issues.length !== 1 ? 's' : ''}
+          </span>
+        )}
+      </button>
+
+      {expanded && (
+        <div className={`px-3 pb-3 pt-0 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
+          {/* Contribution line */}
+          {contribution && (
+            <p className={`text-[11px] mt-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{contribution}</p>
+          )}
+
+          {/* Issues */}
+          {hasIssues ? (
+            <div className="mt-2 space-y-1.5">
+              {issues.map((issue, i) => (
+                <div key={i} className="flex items-start gap-2">
+                  <span className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${issue.severity === 'fail' ? 'bg-red-500' : 'bg-amber-500'}`} />
+                  <div className="min-w-0">
+                    <span className={`text-[10px] font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{issue.label}: </span>
+                    <span className={`text-[10px] ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{issue.note}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className={`text-[10px] mt-2 flex items-center gap-1.5 ${darkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+              All checks passed
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Cross-document issue card — simplified from FindingCard */
+function IssueCard({ issue, darkMode }: { issue: { severity: string; description: string; impact?: string; docs: string[] }; darkMode: boolean }) {
   const leftBorder: Record<string, string> = { critical: 'border-l-red-500', moderate: 'border-l-amber-500', minor: darkMode ? 'border-l-zinc-500' : 'border-l-zinc-400' };
-  const scope: ScopeKind = finding.scope === 'whole_set' ? 'set' : 'between';
+  const sevColor: Record<string, string> = { critical: 'text-red-500', moderate: 'text-amber-500', minor: darkMode ? 'text-zinc-400' : 'text-zinc-500' };
+
   return (
-    <div className={`rounded-lg border border-l-[3px] p-3 ${darkMode ? 'border-zinc-800 bg-zinc-900/50' : 'border-zinc-200 bg-white'} ${leftBorder[finding.severity]}`}>
-      <div className={`flex items-center gap-2 mb-2 pb-2 border-b ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
-        <ScopeTag scope={scope} darkMode={darkMode} />
-        <span className={`text-[8px] font-semibold uppercase px-1.5 py-0.5 rounded border ${severityColor[finding.severity]}`}>{finding.severity}</span>
-        <span className={`text-[9px] ${darkMode ? 'text-zinc-600 bg-zinc-800 border-zinc-700' : 'text-zinc-400 bg-zinc-50 border-zinc-200'} px-1.5 py-0.5 rounded border`}>{finding.checkId} · {PASS2_LABELS[finding.checkId] ?? finding.checkId}</span>
+    <div className={`rounded-lg border border-l-[3px] px-3 py-2.5 ${darkMode ? 'border-zinc-800 bg-zinc-800/30' : 'border-zinc-200 bg-white'} ${leftBorder[issue.severity] ?? ''}`}>
+      <div className="flex items-center gap-2 mb-1">
+        <span className={`text-[9px] font-semibold uppercase ${sevColor[issue.severity] ?? ''}`}>{issue.severity}</span>
+        {issue.docs.length > 0 && (
+          <span className={`text-[9px] ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+            {issue.docs.join(' · ')}
+          </span>
+        )}
       </div>
-      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{finding.description}</p>
-      {finding.documentsInvolved.length > 0 && (
-        <div className="flex flex-wrap gap-1 mt-2">
-          {finding.documentsInvolved.map((id) => <span key={id} className={`text-[8px] px-1.5 py-0.5 rounded border ${darkMode ? 'bg-blue-500/10 border-blue-500/20 text-blue-400' : 'bg-blue-50 border-blue-200 text-blue-600'}`}>{docLabels.get(id) ?? id}</span>)}
-        </div>
-      )}
-      {finding.productionImpact && (
-        <div className={`mt-2 rounded px-3 py-2 text-[10px] leading-relaxed ${darkMode ? 'bg-zinc-800/80 text-zinc-500' : 'bg-zinc-50 text-zinc-500'}`}>
-          <span className={`font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>Production impact: </span>{finding.productionImpact}
-        </div>
+      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{issue.description}</p>
+      {issue.impact && (
+        <p className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+          Impact: {issue.impact}
+        </p>
       )}
     </div>
   );
 }
 
-function PerDocFlagCard({ flag, docLabels, darkMode }: { flag: DQAFPerDocumentFlag; docLabels: Map<string, string>; darkMode: boolean }) {
-  const severityColor: Record<string, string> = { critical: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-400', moderate: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-400', minor: 'bg-zinc-100 text-zinc-600 dark:bg-zinc-700/50 dark:text-zinc-400' };
-  const leftBorder: Record<string, string> = { critical: 'border-l-red-500', moderate: 'border-l-amber-500', minor: darkMode ? 'border-l-zinc-500' : 'border-l-zinc-400' };
-  const docName = docLabels.get(flag.documentId) ?? flag.documentId;
-  return (
-    <div className={`rounded-lg border border-l-[3px] p-3 ${darkMode ? 'border-zinc-800 bg-zinc-900/50' : 'border-zinc-200 bg-white'} ${leftBorder[flag.severity]}`}>
-      <div className={`flex items-center gap-2 mb-2 pb-2 border-b ${darkMode ? 'border-zinc-800' : 'border-zinc-100'}`}>
-        <ScopeTag scope="doc" label={docName} darkMode={darkMode} />
-        <span className={`text-[8px] font-semibold uppercase px-1.5 py-0.5 rounded border ${severityColor[flag.severity]}`}>{flag.severity}</span>
-        <span className={`text-[9px] ${darkMode ? 'text-zinc-600 bg-zinc-800 border-zinc-700' : 'text-zinc-400 bg-zinc-50 border-zinc-200'} px-1.5 py-0.5 rounded border`}>{flag.checkId} · {PASS1_LABELS[flag.checkId] ?? flag.checkId}</span>
-      </div>
-      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{flag.description}</p>
-      {flag.crossDocumentConsequence && (
-        <div className={`mt-2 rounded px-3 py-2 text-[10px] leading-relaxed ${darkMode ? 'bg-zinc-800/80 text-zinc-500' : 'bg-zinc-50 text-zinc-500'}`}>
-          <span className={`font-medium ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>Production impact: </span>{flag.crossDocumentConsequence}
-        </div>
-      )}
-    </div>
-  );
-}
-
+/** Production notice — shown when critical issues exist */
 function ProductionNoticeBlock({ notice, darkMode }: { notice: DQAFProductionNotice; darkMode: boolean }) {
   return (
     <div className={`rounded-lg border-2 p-4 ${darkMode ? 'border-red-500/30 bg-red-500/5' : 'border-red-200 bg-red-50/50'}`}>
@@ -1835,16 +1548,11 @@ function ProductionNoticeBlock({ notice, darkMode }: { notice: DQAFProductionNot
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-red-500 shrink-0">
           <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
         </svg>
-        <span className={`text-[11px] font-semibold ${darkMode ? 'text-red-400' : 'text-red-700'}`}>Mandatory Production Notice</span>
+        <span className={`text-[11px] font-semibold ${darkMode ? 'text-red-400' : 'text-red-700'}`}>Production Notice</span>
       </div>
-      <p className={`text-[11px] leading-relaxed mb-2 ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{notice.summary}</p>
-      {notice.conflictsDescribed && <p className={`text-[10px] leading-relaxed mb-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{notice.conflictsDescribed}</p>}
-      {notice.productionConsequence && <p className={`text-[10px] leading-relaxed mb-2 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}><span className="font-medium">Consequence:</span> {notice.productionConsequence}</p>}
-      {notice.suggestedDisclosure && (
-        <div className={`mt-3 rounded p-3 text-[10px] leading-relaxed font-mono ${darkMode ? 'bg-zinc-800 text-zinc-300 border border-zinc-700' : 'bg-white text-zinc-700 border border-zinc-200'}`}>
-          <p className={`text-[9px] font-semibold uppercase tracking-wider mb-1 font-sans ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Suggested Disclosure</p>
-          {notice.suggestedDisclosure}
-        </div>
+      <p className={`text-[11px] leading-relaxed ${darkMode ? 'text-zinc-300' : 'text-zinc-600'}`}>{notice.summary}</p>
+      {notice.productionConsequence && (
+        <p className={`text-[10px] mt-1.5 ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{notice.productionConsequence}</p>
       )}
     </div>
   );

@@ -371,9 +371,15 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
 
       appendNuggetMessage(assistantMessage);
 
-      // Update lastDocHash
+      // Update lastDocHash + advance doc-change sync (initiate chat has full doc context)
       const currentHash = computeDocumentHash(selectedNugget.documents);
-      setNuggets((prev) => prev.map((n) => (n.id === selectedNugget.id ? { ...n, lastDocHash: currentHash } : n)));
+      const docLog = selectedNugget.docChangeLog || [];
+      const maxSyncSeq = docLog.length > 0 ? Math.max(...docLog.map((e) => e.seq)) : 0;
+      setNuggets((prev) =>
+        prev.map((n) =>
+          n.id === selectedNugget.id ? { ...n, lastDocHash: currentHash, lastDocChangeSyncSeq: maxSyncSeq } : n,
+        ),
+      );
     } catch (err: any) {
       if (isAbortError(err)) return;
       log.error('Initiate chat error:', err);

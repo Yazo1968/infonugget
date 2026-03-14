@@ -73,7 +73,7 @@ export type BookmarkSource = 'pdf_bookmarks' | 'ai_generated' | 'manual';
 export interface AlbumImage {
   /** Database row UUID */
   id: string;
-  /** Signed URL (hydrated at load time from storage_path) */
+  /** Public CDN URL (derived from storage_path) */
   imageUrl: string;
   /** Path in the card-images Storage bucket */
   storagePath: string;
@@ -669,10 +669,6 @@ export interface Nugget {
   cards: CardItem[];
   messages?: ChatMessage[];
   lastDocHash?: string; // hash of active documents at time of last API call
-  /** Messages for the Guided Deck conversation (separate from chat). */
-  deckMessages?: ChatMessage[];
-  /** Hash of active documents at time of last deck API call — for doc change detection. */
-  lastDeckDocHash?: string;
   /** Ordered log of document mutations for change notification (capped at 20 entries) */
   docChangeLog?: DocChangeEvent[];
   /** Seq of the last docChangeLog event synced to the chat agent */
@@ -836,6 +832,8 @@ export interface AutoDeckSession {
   nuggetId: string;
   briefing: AutoDeckBriefing;
   lod: AutoDeckLod;
+  /** Subject snapshot — captured at plan start, used consistently through all phases */
+  subject?: string;
   /** Ordered document IDs selected by user (preserved across revisions) */
   orderedDocIds: string[];
   status: AutoDeckStatus;

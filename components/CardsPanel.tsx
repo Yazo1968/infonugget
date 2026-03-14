@@ -8,6 +8,7 @@ import InsightsCardList from './InsightsCardList';
 import DocumentEditorModal, { DocumentEditorHandle } from './DocumentEditorModal';
 import { UnsavedChangesDialog } from './Dialogs';
 import { useSelectionContext } from '../context/SelectionContext';
+import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 
 const DEFAULT_SIDEBAR_WIDTH = 220;
@@ -132,6 +133,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
     ref,
   ) => {
     const { activeCardId, setActiveCardId } = useSelectionContext();
+    const { darkMode } = useThemeContext();
     const { shouldRender, isClosing, overlayStyle } = usePanelOverlay({
       isOpen,
       defaultWidth: Math.min(window.innerWidth * 0.75, 1200),
@@ -426,7 +428,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
             <>
               <div
                 data-panel-overlay
-                className="fixed z-[103] flex flex-col bg-white dark:bg-zinc-900 border-4 shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
+                className="fixed z-[103] flex flex-col bg-white dark:bg-zinc-900 border shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
                 style={{
                   borderColor: 'rgb(120,170,230)',
                   ...overlayStyle,
@@ -444,20 +446,18 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
                           className="shrink-0 overflow-y-auto bg-white dark:bg-zinc-900"
                           style={{ width: sidebarWidth }}
                         >
-                          <div className="shrink-0 sticky top-0 z-10 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-600">
-                            <div className="shrink-0 flex flex-row items-center pt-2 pb-1">
-                              <div className="w-8 shrink-0 flex items-center justify-center">
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
-                                  <line x1="8" y1="6" x2="21" y2="6" />
-                                  <line x1="8" y1="12" x2="21" y2="12" />
-                                  <line x1="8" y1="18" x2="21" y2="18" />
-                                  <line x1="3" y1="6" x2="3.01" y2="6" />
-                                  <line x1="3" y1="12" x2="3.01" y2="12" />
-                                  <line x1="3" y1="18" x2="3.01" y2="18" />
-                                </svg>
+                          <div className="shrink-0 sticky top-0 z-10 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+                              <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(20,45,80)' : 'rgb(160,200,240)' }}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                                <line x1="8" y1="6" x2="21" y2="6" />
+                                <line x1="8" y1="12" x2="21" y2="12" />
+                                <line x1="8" y1="18" x2="21" y2="18" />
+                                <line x1="3" y1="6" x2="3.01" y2="6" />
+                                <line x1="3" y1="12" x2="3.01" y2="12" />
+                                <line x1="3" y1="18" x2="3.01" y2="18" />
+                              </svg>
                               </div>
                               <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Cards List</span>
-                            </div>
                           </div>
                           {cardListSidebar}
                         </aside>
@@ -475,8 +475,21 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
                             contentMinWidth={contentWidth}
                           />
                         ) : (
-                          <div className="flex-1 flex items-center justify-center">
-                            <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-light">Select a card to edit</p>
+                          <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden" style={{ minWidth: 200 }}>
+                            <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+                                <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                                  <rect width="18" height="18" x="3" y="3" rx="2" />
+                                  <path d="M9 3v18" />
+                                </svg>
+                                </div>
+                                <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
+                                  Card Content
+                                </span>
+                            </div>
+                            <div className="flex-1 flex items-center justify-center">
+                              <p className="text-[11px] text-zinc-500 dark:text-zinc-400 font-light">Select a card to edit</p>
+                            </div>
                           </div>
                         )}
                       </div>

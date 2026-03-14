@@ -23,12 +23,13 @@ import {
 } from '../utils/autoDeck/parsers';
 import { AUTO_DECK_LOD_LEVELS, AUTO_DECK_LIMITS, BRIEFING_SUGGESTION_COUNT, BRIEFING_LIMITS, countWords } from '../utils/autoDeck/constants';
 import { getUniqueName } from '../utils/naming';
-import { estimateTokens } from '../utils/tokenEstimation';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
 import { useAbortController } from './useAbortController';
 import { resolveOrderedDocs } from '../utils/documentResolution';
 import { autoDeckApi, chatMessageApi, ChatMessageDocument } from '../utils/api';
+import { uploadToFilesAPI } from '../utils/ai';
+import { base64ToBlob } from '../utils/fileProcessing';
 
 const log = createLogger('AutoDeck');
 
@@ -52,7 +53,7 @@ export function useAutoDeck(
     removePlaceholderCard: (cardId: string, detailLevel: import('../types').DetailLevel) => void;
   },
 ) {
-  const { selectedNugget, updateNugget, createLogCheckpoint } = useNuggetContext();
+  const { selectedNugget, updateNugget, updateNuggetDocument, createLogCheckpoint } = useNuggetContext();
 
   const { addToast } = useToast();
 
@@ -61,6 +62,55 @@ export function useAutoDeck(
   const { create: createSuggestAbort, abort: abortSuggest, clear: clearSuggestAbort, isAbortError: isSuggestAbortError } = useAbortController();
 
   // ── Helpers ──
+
+  /**
+   * Ensure all documents have a Files API fileId.
+   * Uploads any doc missing one (mirrors useCardGeneration auto-upload pattern).
+   * Returns the docs array with fileId populated, or null if all uploads failed.
+   */
+  const ensureDocFileIds = useCallback(
+    async (docs: import('../types').UploadedFile[]): Promise<import('../types').UploadedFile[] | null> => {
+      const needsUpload = docs.filter((d) => !d.fileId);
+      if (needsUpload.length === 0) return docs;
+
+      addToast({ type: 'info', message: 'Uploading documents to Files API...', duration: 4000 });
+
+      for (const doc of needsUpload) {
+        try {
+          let newFileId: string | undefined;
+          if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
+            newFileId = await uploadToFilesAPI(
+              base64ToBlob(doc.pdfBase64, 'application/pdf'),
+              doc.name,
+              'application/pdf',
+            );
+          } else if (doc.content) {
+            newFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
+          }
+          if (newFileId) {
+            updateNuggetDocument(doc.id, { ...doc, fileId: newFileId });
+            (doc as any).fileId = newFileId;
+          }
+        } catch (err: any) {
+          log.warn(`Files API upload failed for "${doc.name}":`, err);
+          addToast({
+            type: 'error',
+            message: `Upload failed for "${doc.name}"`,
+            detail: err.message || 'Check network connection.',
+            duration: 8000,
+          });
+        }
+      }
+
+      const uploaded = docs.filter((d) => d.fileId);
+      if (uploaded.length === 0) {
+        addToast({ type: 'error', message: 'All document uploads failed. Cannot proceed.', duration: 8000 });
+        return null;
+      }
+      return docs;
+    },
+    [addToast, updateNuggetDocument],
+  );
 
   const updateSession = useCallback((updater: (s: AutoDeckSession) => AutoDeckSession) => {
     setSession((prev) => (prev ? updater(prev) : prev));
@@ -91,6 +141,10 @@ export function useAutoDeck(
         return;
       }
 
+      // Ensure all documents have Files API fileIds (upload any missing ones)
+      const docsWithFiles = await ensureDocFileIds(orderedSelectedDocs);
+      if (!docsWithFiles) return;
+
       // Create a Sources Log checkpoint — captures document state at Auto-Deck start
       createLogCheckpoint('auto_deck');
 
@@ -101,6 +155,7 @@ export function useAutoDeck(
         nuggetId: selectedNugget.id,
         briefing,
         lod,
+        subject: selectedNugget.subject,
         orderedDocIds,
         status: 'planning',
         parsedPlan: null,
@@ -113,35 +168,19 @@ export function useAutoDeck(
       };
       setSession(newSession);
 
-      // Compute total word count and pre-flight token check (inline docs only — Files API docs handled server-side)
-      const inlineContent = orderedSelectedDocs
-        .filter((d) => !d.fileId)
-        .map((d) => d.content || '');
-      const totalWordCount = inlineContent.reduce((sum, c) => sum + countWords(c), 0);
-
-      // Pre-flight token check
-      const estimatedInputTokens = estimateTokens(inlineContent.join(''));
-      if (estimatedInputTokens > 180000) {
-        setSession((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: 'error',
-                error: 'Documents are too large for a single API call. Consider splitting into smaller nuggets.',
-              }
-            : prev,
-        );
-        return;
-      }
+      // Compute total word count from metadata (content is handled via Files API)
+      const totalWordCount = docsWithFiles.reduce(
+        (sum, d) => sum + (d.content ? countWords(d.content) : (d.structure || []).reduce((s, h) => s + (h.wordCount ?? 0), 0)),
+        0,
+      );
 
       const abortController = createAbort();
 
       try {
-        // Build document payload for the Edge Function
-        const apiDocs = orderedSelectedDocs.map((d) => ({
+        // Build document payload — only fileId references, no inline content
+        const apiDocs = docsWithFiles.map((d) => ({
           id: d.id,
           name: d.name,
-          content: d.fileId ? undefined : (d.content || ''),
           fileId: d.fileId,
           sourceType: d.sourceType,
           structure: d.structure,
@@ -151,7 +190,7 @@ export function useAutoDeck(
           action: 'plan',
           briefing,
           lod,
-          subject: selectedNugget?.subject,
+          subject: newSession.subject,
           qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           totalWordCount,
@@ -227,7 +266,7 @@ export function useAutoDeck(
         clearAbort();
       }
     },
-    [selectedNugget, recordUsage, addToast, createLogCheckpoint],
+    [selectedNugget, recordUsage, addToast, createLogCheckpoint, ensureDocFileIds],
   );
 
   /**
@@ -245,10 +284,15 @@ export function useAutoDeck(
     // Resolve documents in the same order as the original session
     const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
 
-    // Compute total word count of inline docs (Files API docs don't count)
-    const totalWordCount = orderedSelectedDocs
-      .filter((d) => !d.fileId)
-      .reduce((sum, d) => sum + (d.content ? countWords(d.content) : 0), 0);
+    // Ensure all documents have Files API fileIds
+    const docsWithFiles = await ensureDocFileIds(orderedSelectedDocs);
+    if (!docsWithFiles) { setStatus('reviewing'); return; }
+
+    // Compute total word count from metadata
+    const totalWordCount = docsWithFiles.reduce(
+      (sum, d) => sum + (d.content ? countWords(d.content) : (d.structure || []).reduce((s, h) => s + (h.wordCount ?? 0), 0)),
+      0,
+    );
 
     // Collect excluded cards
     const excludedCards: number[] = [];
@@ -259,11 +303,10 @@ export function useAutoDeck(
     const abortController = createAbort();
 
     try {
-      // Build document payload for the Edge Function
-      const apiDocs = orderedSelectedDocs.map((d) => ({
+      // Build document payload — only fileId references, no inline content
+      const apiDocs = docsWithFiles.map((d) => ({
         id: d.id,
         name: d.name,
-        content: d.fileId ? undefined : (d.content || ''),
         fileId: d.fileId,
         sourceType: d.sourceType,
         structure: d.structure,
@@ -273,7 +316,7 @@ export function useAutoDeck(
         action: 'revise',
         briefing: session.briefing,
         lod: session.lod,
-        subject: selectedNugget?.subject,
+        subject: session.subject,
         qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
         documents: apiDocs,
         totalWordCount,
@@ -356,7 +399,7 @@ export function useAutoDeck(
     } finally {
       clearAbort();
     }
-  }, [session, selectedNugget, recordUsage, setStatus, addToast]);
+  }, [session, selectedNugget, recordUsage, setStatus, addToast, ensureDocFileIds]);
 
   /**
    * Submit the reviewed plan: finalize (AI bakes in decisions) then produce content.
@@ -370,6 +413,10 @@ export function useAutoDeck(
 
     // Resolve documents in the same order as the original session
     const orderedSelectedDocs = resolveOrderedDocs(selectedNugget.documents, session.orderedDocIds);
+
+    // Ensure all documents have Files API fileIds
+    const docsWithFiles = await ensureDocFileIds(orderedSelectedDocs);
+    if (!docsWithFiles) return;
 
     // Filter to only included cards
     const includedCards = session.parsedPlan.cards.filter(
@@ -409,7 +456,7 @@ export function useAutoDeck(
           action: 'finalize',
           briefing: session.briefing,
           lod: session.lod,
-          subject: selectedNugget?.subject,
+          subject: session.subject,
           plan: filteredPlan,
           questions: session.parsedPlan.questions || [],
           questionAnswers: session.reviewState.questionAnswers,
@@ -450,11 +497,10 @@ export function useAutoDeck(
       // ── Phase 2: Produce ──
       setStatus('producing');
 
-      // Build document payload for the Edge Function
-      const apiDocs = orderedSelectedDocs.map((d) => ({
+      // Build document payload — only fileId references, no inline content
+      const apiDocs = docsWithFiles.map((d) => ({
         id: d.id,
         name: d.name,
-        content: d.fileId ? undefined : (d.content || ''),
         fileId: d.fileId,
         sourceType: d.sourceType,
         structure: d.structure,
@@ -472,7 +518,7 @@ export function useAutoDeck(
         batches.push(finalCards);
       }
 
-      const enabledDocNames = orderedSelectedDocs.map((d) => d.name);
+      const enabledDocNames = docsWithFiles.map((d) => d.name);
       const detailLevel = AUTO_DECK_LOD_LEVELS[session.lod].detailLevel;
 
       // Create placeholder cards from the plan so they appear instantly with spinners
@@ -522,7 +568,7 @@ export function useAutoDeck(
           action: 'produce',
           briefing: session.briefing,
           lod: session.lod,
-          subject: selectedNugget?.subject,
+          subject: session.subject,
           qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           planCards: batch,
@@ -558,7 +604,7 @@ export function useAutoDeck(
       }
 
       // If placeholders were NOT used, create cards the legacy way (root level)
-      if (!placeholderFns || placeholderMap.size === 0) {
+      if (!placeholderFns) {
         const existingCardNames = cardNamesInScope(selectedNugget.cards);
         const newCards: Card[] = allProducedCards.map((pc) => {
           const uniqueName = getUniqueName(pc.title, [
@@ -623,7 +669,7 @@ export function useAutoDeck(
     } finally {
       clearAbort();
     }
-  }, [session, selectedNugget, recordUsage, updateNugget, setStatus, addToast, placeholderFns]);
+  }, [session, selectedNugget, recordUsage, updateNugget, setStatus, addToast, placeholderFns, ensureDocFileIds]);
 
   // ── Review state helpers ──
 

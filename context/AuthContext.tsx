@@ -4,15 +4,25 @@ import type { User, Session } from '@supabase/supabase-js';
 
 // ── Auth context — Supabase session management ──
 
+export interface UserProfile {
+  displayName: string | null;
+  avatarInitials: string | null;
+  avatarUrl: string | null;
+}
+
 export interface AuthContextValue {
   user: User | null;
   session: Session | null;
+  profile: UserProfile | null;
   loading: boolean;
+  passwordRecovery: boolean;
+  clearPasswordRecovery: () => void;
   signInWithEmail: (email: string, password: string) => Promise<{ error: string | null }>;
   signUpWithEmail: (email: string, password: string) => Promise<{ error: string | null }>;
   signInWithGoogle: () => Promise<{ error: string | null }>;
   resetPassword: (email: string) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -26,14 +36,42 @@ export function useAuth(): AuthContextValue {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [passwordRecovery, setPasswordRecovery] = useState(false);
+
+  const clearPasswordRecovery = useCallback(() => setPasswordRecovery(false), []);
+
+  const fetchProfile = useCallback(async (userId: string) => {
+    const { data } = await supabase
+      .from('profiles')
+      .select('display_name, avatar_initials, avatar_url')
+      .eq('id', userId)
+      .single();
+    if (data) {
+      setProfile({
+        displayName: data.display_name,
+        avatarInitials: data.avatar_initials,
+        avatarUrl: data.avatar_url,
+      });
+    }
+  }, []);
+
+  const refreshProfile = useCallback(async () => {
+    if (user) await fetchProfile(user.id);
+  }, [user, fetchProfile]);
 
   useEffect(() => {
     // Listen for auth state changes (fires INITIAL_SESSION, SIGNED_IN, etc.)
     // With detectSessionInUrl: true, Supabase auto-handles PKCE code exchange
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, s) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setPasswordRecovery(true);
+      }
       setSession(s);
       setUser(s?.user ?? null);
+      if (s?.user) fetchProfile(s.user.id);
+      else setProfile(null);
       setLoading(false);
     });
 
@@ -42,6 +80,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data: { session: s } } = await supabase.auth.getSession();
       setSession(prev => prev ?? s);
       setUser(prev => prev ?? s?.user ?? null);
+      if (s?.user) fetchProfile(s.user.id);
       setLoading(false);
     }, 3000);
 
@@ -49,6 +88,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       clearTimeout(timeout);
       subscription.unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signInWithEmail = useCallback(async (email: string, password: string) => {
@@ -81,11 +121,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // then tell Supabase to clean up the stored session
     setSession(null);
     setUser(null);
+    setProfile(null);
     await supabase.auth.signOut({ scope: 'local' });
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword, signOut }}>
+    <AuthContext.Provider value={{ user, session, profile, loading, passwordRecovery, clearPasswordRecovery, signInWithEmail, signUpWithEmail, signInWithGoogle, resetPassword, signOut, refreshProfile }}>
       {children}
     </AuthContext.Provider>
   );

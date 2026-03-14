@@ -95,13 +95,13 @@ export function usePanelOverlay({ isOpen, defaultWidth, minWidth = 300, anchorRe
   // ── Overlay positioning style ──
   const anchor = anchorRef?.current ?? stripRef.current;
   const rect = anchor?.getBoundingClientRect();
-  const overlayLeft = (rect?.right ?? 0) - 2;
+  const overlayLeft = (rect?.right ?? 0) + 4;
   const overlayStyle: React.CSSProperties = {
     ...(!isOpen ? { display: 'none' } : undefined),
     top: rect?.top ?? 0,
     left: overlayLeft,
     height: rect?.height ?? 0,
-    right: 0,
+    right: 4,
   };
 
   return {

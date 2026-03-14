@@ -480,20 +480,6 @@ export const AppProvider: React.FC<{
     [selectedNuggetId],
   );
 
-  const appendNuggetDeckMessage = useCallback(
-    (message: ChatMessage) => {
-      if (!selectedNuggetId) return;
-      setNuggets((prev) =>
-        prev.map((n) =>
-          n.id === selectedNuggetId
-            ? { ...n, deckMessages: [...(n.deckMessages || []), message], lastModifiedAt: Date.now() }
-            : n,
-        ),
-      );
-    },
-    [selectedNuggetId],
-  );
-
   // ── Nugget document mutation helpers ──
 
   const addNuggetDocument = useCallback(
@@ -812,14 +798,14 @@ export const AppProvider: React.FC<{
       selectedDocumentId, setSelectedDocumentId,
       selectedDocument,
       addNugget, deleteNugget, updateNugget,
-      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage, appendNuggetDeckMessage,
+      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
       addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
       deleteDocChangeLogEntry, deleteAllDocChangeLogEntries, renameDocChangeLogEntry, createLogCheckpoint,
     }),
     [
       nuggets, selectedNuggetId, selectedNugget, selectedDocumentId, selectedDocument,
       addNugget, deleteNugget, updateNugget,
-      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage, appendNuggetDeckMessage,
+      updateNuggetCard, updateNuggetCards, updateNuggetContentAndCards, appendNuggetMessage,
       addNuggetDocument, updateNuggetDocument, removeNuggetDocument, renameNuggetDocument, toggleNuggetDocument,
       deleteDocChangeLogEntry, deleteAllDocChangeLogEntries, renameDocChangeLogEntry, createLogCheckpoint,
     ],

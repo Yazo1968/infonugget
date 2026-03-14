@@ -40,7 +40,6 @@ import { useImageOperations } from './hooks/useImageOperations';
 import { useProjectOperations, AskPdfProcessorFn } from './hooks/useProjectOperations';
 import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
-import { useGuidedDeck } from './hooks/useGuidedDeck';
 import { useDocumentQualityCheck } from './hooks/useDocumentQualityCheck';
 import { useAutoDeck } from './hooks/useAutoDeck';
 import { useTokenUsage, TokenUsageTotals } from './hooks/useTokenUsage';
@@ -139,17 +138,6 @@ const App: React.FC = () => {
     handleDocChangeContinue,
     handleDocChangeStartFresh,
   } = useInsightsLab(recordUsage);
-
-  // ── Guided Deck workflow ──
-  const {
-    messages: deckMessages,
-    isLoading: deckLoading,
-    startDeck,
-    sendDeckMessage,
-    clearDeck,
-    stopDeckResponse,
-    docHashChanged: deckDocHashChanged,
-  } = useGuidedDeck(recordUsage);
 
   // ── Document quality check (DQAF v2) ──
   const {
@@ -409,7 +397,10 @@ const App: React.FC = () => {
     const panel = appPendingDirtyPanel;
     if (panel === 'cards') cardsPanelRef.current?.save();
     else if (panel === 'sources') sourcesPanelRef.current?.save();
-    else if (panel === 'brief') briefSaveRef.current?.();
+    else if (panel === 'brief') {
+      briefSaveRef.current?.();
+      setBriefLockActive(false); // Explicit clear — panel may unmount before effect propagates
+    }
     // After saving, re-check: is another panel dirty?
     if (panel !== 'brief') {
       const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
@@ -429,7 +420,10 @@ const App: React.FC = () => {
     const panel = appPendingDirtyPanel;
     if (panel === 'cards') cardsPanelRef.current?.discard();
     else if (panel === 'sources') sourcesPanelRef.current?.discard();
-    else if (panel === 'brief') briefDiscardRef.current?.();
+    else if (panel === 'brief') {
+      briefDiscardRef.current?.();
+      setBriefLockActive(false); // Explicit clear — panel may unmount before effect propagates
+    }
     if (panel !== 'brief') {
       const otherRef = panel === 'cards' ? sourcesPanelRef : cardsPanelRef;
       const otherLabel = panel === 'cards' ? 'sources' : 'cards';
@@ -536,6 +530,7 @@ const App: React.FC = () => {
       if (target.closest('[data-panel-overlay]')) return;
       if (target.closest('[data-panel-strip]')) return;
       if (target.closest('[data-breadcrumb-dropdown]')) return;
+      if (target.closest('header')) return;
       // Don't close when clicking portal-rendered menus, modals, dialogs
       // Walk up through nested .fixed elements (e.g. backdrop → menu) to find one portaled to body
       let fixed: Element | null = target.closest('.fixed');
@@ -570,7 +565,7 @@ const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-white overflow-x-hidden">
       {!openProjectId ? (
         <Dashboard
           projects={projects}
@@ -665,7 +660,7 @@ const App: React.FC = () => {
           {zoomState.imageUrl && <ZoomOverlay zoomState={zoomState} onClose={closeZoom} />}
 
           <div
-            className="flex flex-col h-screen overflow-hidden"
+            className="flex flex-col h-screen w-screen overflow-hidden"
             style={{
               background: darkMode ? '#18181b' : 'linear-gradient(180deg, #f0f4f8 0%, #e8edf2 40%, #f5f7fa 100%)',
             }}
@@ -675,6 +670,7 @@ const App: React.FC = () => {
               onReturnToLanding={handleReturnToLanding}
               usageTotals={usageTotals}
               resetUsage={resetUsage}
+              projectName={openProject?.name}
             />
 
 
@@ -724,6 +720,7 @@ const App: React.FC = () => {
                 hasSelectedNugget={!!selectedNugget}
                 darkMode={darkMode}
                 qualityStatus={qualityStatus}
+                onGoHome={handleReturnToLanding}
               />
 
               {selectedNugget ? (
@@ -831,69 +828,6 @@ const App: React.FC = () => {
                       onInitiateChat={initiateInsightsChat}
                       qualityStatus={qualityStatus}
                       onViewLog={() => appGatedAction(() => { setQualityActiveTab('logs'); setExpandedPanel('quality'); })}
-                      deckMessages={deckMessages}
-                      isDeckLoading={deckLoading}
-                      onStartDeck={startDeck}
-                      onSendDeckMessage={sendDeckMessage}
-                      onClearDeck={clearDeck}
-                      onStopDeck={stopDeckResponse}
-                      deckDocHashChanged={deckDocHashChanged}
-                      onCreateDeck={(outline) => {
-                        if (!selectedNugget || outline.length === 0) return;
-                        const titles = outline.map((e) => e.title);
-                        const levels = outline.map((e) => e.detailLevel);
-                        const folderName = `Deck — ${selectedNugget.name}`;
-
-                        if (titles.length >= 2) {
-                          const result = createPlaceholderCardsInFolder(titles, levels, { folderName });
-                          if (result) {
-                            for (const card of result.cards) {
-                              const entry = outline.find((e) => e.title === card.title);
-                              if (entry) {
-                                fillPlaceholderCard(card.id, entry.detailLevel, `# ${card.title}\n\n${entry.description}`);
-                              }
-                            }
-                          }
-                        } else {
-                          const entry = outline[0];
-                          const placeholders = createPlaceholderCards(titles, entry.detailLevel);
-                          for (const ph of placeholders) {
-                            fillPlaceholderCard(ph.id, entry.detailLevel, `# ${ph.title}\n\n${entry.description}`);
-                          }
-                        }
-
-                        setExpandedPanel('cards');
-                        addToast({ type: 'success', message: `Created deck with ${outline.length} cards` });
-                      }}
-                      onCreateDeckFromContent={(cards) => {
-                        if (!selectedNugget || cards.length === 0) return;
-                        const titles = cards.map((c) => c.title);
-                        const detailLevel: DetailLevel = 'Standard';
-                        const folderName = `Deck — ${selectedNugget.name}`;
-
-                        if (titles.length >= 2) {
-                          const result = createPlaceholderCardsInFolder(titles, detailLevel, { folderName });
-                          if (result) {
-                            for (const card of result.cards) {
-                              const entry = cards.find((c) => c.title === card.title);
-                              if (entry) {
-                                fillPlaceholderCard(card.id, detailLevel, entry.content);
-                              }
-                            }
-                          }
-                        } else {
-                          const placeholders = createPlaceholderCards(titles, detailLevel);
-                          for (const ph of placeholders) {
-                            const entry = cards.find((c) => c.title === ph.title);
-                            if (entry) {
-                              fillPlaceholderCard(ph.id, detailLevel, entry.content);
-                            }
-                          }
-                        }
-
-                        setExpandedPanel('cards');
-                        addToast({ type: 'success', message: `Created deck with ${cards.length} cards (with content)` });
-                      }}
                     />
                   </ErrorBoundary>
 
@@ -920,6 +854,9 @@ const App: React.FC = () => {
                       briefing={selectedNugget?.briefing}
                       onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
                       onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
+                      subject={selectedNugget?.subject}
+                      subjectReviewNeeded={selectedNugget?.subjectReviewNeeded}
+                      briefReviewNeeded={selectedNugget?.briefReviewNeeded}
                     />
                   </ErrorBoundary>
 

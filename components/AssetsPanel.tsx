@@ -252,58 +252,32 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 
       {/* ─── Design Toolbar ─── */}
       <div className="relative z-30">
-        {/* ─── Title row ─── */}
-        <div className="shrink-0 flex flex-row items-center pt-2 pb-1 border-b border-zinc-200 dark:border-zinc-600">
-          <div className="w-8 shrink-0 flex items-center justify-center">
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="shrink-0 text-zinc-500 dark:text-zinc-400"
-            >
+        {/* ─── Title row + Mode toggle ─── */}
+        <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+            <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(30,60,100)' : 'rgb(200,225,250)' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
               <rect width="16" height="16" x="3" y="3" rx="2" ry="2" />
               <circle cx="8.5" cy="8.5" r="1.5" />
               <path d="m21 15-5-5L5 21" />
             </svg>
-          </div>
+            </div>
           <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
-            Assets
+            Card Image
           </span>
-        </div>
-        {/* ─── Mode toggle ─── */}
-        <div className="shrink-0 border-y border-zinc-200/60 dark:border-zinc-700/60">
-          <div className="flex items-center justify-center gap-1.5 px-3 py-1.5 min-h-[32px]">
-            <button
-              onClick={() => setCardLabMode('generate')}
-              title="Generate mode"
-              className={`text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                cardLabMode === 'generate'
-                  ? 'text-zinc-800 dark:text-zinc-200'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer'
-              }`}
+          <div className="flex items-center gap-2 ml-auto pr-3">
+            <span className="text-[11px] font-medium text-[#2a9fd4]">Mode</span>
+            <select
+              value={cardLabMode}
+              onChange={(e) => {
+                const val = e.target.value as 'generate' | 'inpaint';
+                if (val === 'inpaint' && !hasImage) return;
+                setCardLabMode(val);
+              }}
+              className="text-[11px] font-medium px-2 py-0.5 rounded-md border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-zinc-700 dark:text-zinc-200 cursor-pointer outline-none"
             >
-              Generate
-            </button>
-            <span className="text-zinc-500 dark:text-zinc-400 text-[10px]">·</span>
-            <button
-              onClick={() => hasImage && setCardLabMode('inpaint')}
-              disabled={!hasImage}
-              title={hasImage ? 'Inpaint mode' : 'Generate a card first to use inpainting'}
-              className={`text-[10px] font-semibold uppercase tracking-wider transition-colors ${
-                !hasImage
-                  ? 'text-zinc-600 dark:text-zinc-400 opacity-40 cursor-not-allowed'
-                  : cardLabMode === 'inpaint'
-                    ? 'text-zinc-800 dark:text-zinc-200'
-                    : 'text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 cursor-pointer'
-              }`}
-            >
-              Inpaint
-            </button>
+              <option value="generate">Generate</option>
+              <option value="inpaint" disabled={!hasImage}>Edit</option>
+            </select>
           </div>
         </div>
         {/* ─── Toolbar row ─── */}

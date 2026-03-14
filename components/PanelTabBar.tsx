@@ -1,4 +1,4 @@
-import React, { forwardRef } from 'react';
+import React, { forwardRef, useState, useCallback, useRef } from 'react';
 
 type PanelId = 'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality';
 
@@ -34,7 +34,6 @@ const TABS: TabConfig[] = [
     id: 'quality',
     label: 'Brief & Quality',
     requiresNugget: true,
-    // Default blue — overridden dynamically based on qualityStatus
     color: { dark: 'rgb(51,115,196)', light: 'rgb(51,115,196)' },
     dimColor: { dark: 'rgb(28,62,110)', light: 'rgb(28,62,110)' },
     icon: (
@@ -106,6 +105,9 @@ const QUALITY_COLORS: Record<string, { color: { dark: string; light: string }; d
   },
 };
 
+const COLLAPSED_WIDTH = 36;
+const EXPANDED_WIDTH = 160;
+
 interface PanelTabBarProps {
   expandedPanel: PanelId | null;
   onTogglePanel: (panel: PanelId) => void;
@@ -113,11 +115,14 @@ interface PanelTabBarProps {
   darkMode: boolean;
   disabledPanels?: PanelId[];
   qualityStatus?: QualityStatus;
+  onGoHome?: () => void;
 }
 
 const PanelTabBar = forwardRef<HTMLDivElement, PanelTabBarProps>(
-  ({ expandedPanel, onTogglePanel, hasSelectedNugget, darkMode, disabledPanels, qualityStatus }, ref) => {
-    // Resolve dynamic colors for the quality tab
+  ({ expandedPanel, onTogglePanel, hasSelectedNugget, darkMode, disabledPanels, qualityStatus, onGoHome }, ref) => {
+    const [isExpanded, setIsExpanded] = useState(false);
+    const collapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
     const getTabColors = (tab: TabConfig) => {
       if (tab.id === 'quality' && qualityStatus && QUALITY_COLORS[qualityStatus]) {
         return QUALITY_COLORS[qualityStatus];
@@ -125,39 +130,103 @@ const PanelTabBar = forwardRef<HTMLDivElement, PanelTabBarProps>(
       return { color: tab.color, dimColor: tab.dimColor };
     };
 
+    const handleMouseEnter = useCallback(() => {
+      if (collapseTimerRef.current) {
+        clearTimeout(collapseTimerRef.current);
+        collapseTimerRef.current = null;
+      }
+      setIsExpanded(true);
+    }, []);
+
+    const handleMouseLeave = useCallback(() => {
+      collapseTimerRef.current = setTimeout(() => {
+        setIsExpanded(false);
+        collapseTimerRef.current = null;
+      }, 200);
+    }, []);
+
+    const handleClick = useCallback(
+      (tab: TabConfig, isDisabled: boolean) => {
+        if (isDisabled) return;
+        onTogglePanel(tab.id);
+        setIsExpanded(false);
+      },
+      [onTogglePanel],
+    );
+
     return (
       <div
         ref={ref}
         data-panel-strip
-        className="flex flex-col shrink-0 w-8 overflow-visible border-r-2"
-        style={{ backgroundColor: 'transparent', borderColor: 'rgb(84,148,218)' }}
+        className="flex flex-col shrink-0 overflow-hidden border-r transition-[width] duration-200 ease-in-out relative z-[135]"
+        style={{
+          width: isExpanded ? EXPANDED_WIDTH : COLLAPSED_WIDTH,
+          backgroundColor: darkMode ? '#18181b' : '#ffffff',
+          borderColor: darkMode ? 'rgba(100,160,230,0.25)' : 'rgba(30,90,180,0.2)',
+        }}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
-        {TABS.map((tab, tabIndex) => {
+        {/* Home button */}
+        {onGoHome && (
+          <button
+            onClick={() => { onGoHome(); setIsExpanded(false); }}
+            className="flex items-center gap-2.5 px-2.5 py-3 transition-colors duration-150 cursor-pointer hover:bg-white/5"
+            style={{
+              color: 'rgb(84,148,218)',
+              borderBottom: `1px solid ${darkMode ? 'rgba(100,160,230,0.15)' : 'rgba(30,90,180,0.1)'}`,
+            }}
+            title="Dashboard"
+          >
+            <div className="w-4 h-4 flex items-center justify-center shrink-0">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                <polyline points="9 22 9 12 15 12 15 22" />
+              </svg>
+            </div>
+            <span
+              className="text-[11px] font-medium whitespace-nowrap overflow-hidden transition-opacity duration-200"
+              style={{ opacity: isExpanded ? 1 : 0 }}
+            >
+              Dashboard
+            </span>
+          </button>
+        )}
+
+        {TABS.map((tab) => {
           const isActive = expandedPanel === tab.id;
           const isDisabled = (tab.requiresNugget && !hasSelectedNugget) || disabledPanels?.includes(tab.id);
           const colors = getTabColors(tab);
+          const mode = darkMode ? 'dark' : 'light';
+
           return (
             <button
               key={tab.id}
-              onClick={() => !isDisabled && onTogglePanel(tab.id)}
-              className={`flex flex-col items-center justify-center gap-1.5 px-1 py-4 transition-colors relative rounded-l-[12px] -mt-2 first:mt-0 ${
-                isDisabled ? 'cursor-not-allowed' : 'cursor-pointer'
+              onClick={() => handleClick(tab, !!isDisabled)}
+              className={`flex items-center gap-2.5 px-2.5 py-3 transition-colors duration-150 relative ${
+                isDisabled ? 'cursor-not-allowed' : 'cursor-pointer hover:bg-white/5'
               }`}
               style={{
-                backgroundColor: isDisabled
-                  ? colors.dimColor[darkMode ? 'dark' : 'light']
-                  : colors.color[darkMode ? 'dark' : 'light'],
-                color: isDisabled ? 'rgba(255,255,255,0.3)' : 'white',
-                zIndex: TABS.length - tabIndex,
-                boxShadow: isActive
-                  ? '0 3px 6px rgba(0,0,0,0.4)'
-                  : '0 3px 6px rgba(0,0,0,0.4)',
+                backgroundColor: isActive
+                  ? darkMode
+                    ? 'rgba(100,160,230,0.15)'
+                    : 'rgba(30,90,180,0.10)'
+                  : undefined,
+                color: isDisabled
+                  ? 'rgba(120,120,120,0.5)'
+                  : colors.color[mode],
+                borderLeft: isActive
+                  ? `2px solid ${colors.color[mode]}`
+                  : '2px solid transparent',
               }}
               title={isDisabled ? `Create a nugget to access ${tab.label}` : tab.label}
               aria-disabled={isDisabled || undefined}
             >
-              <div className="w-4 h-4 flex items-center justify-center">{tab.icon}</div>
-              <span className="text-[9px] font-semibold uppercase leading-none tracking-wider" style={{ writingMode: 'vertical-rl', textOrientation: 'mixed', transform: 'rotate(180deg)' }}>
+              <div className="w-4 h-4 flex items-center justify-center shrink-0">{tab.icon}</div>
+              <span
+                className="text-[11px] font-medium whitespace-nowrap overflow-hidden transition-opacity duration-200"
+                style={{ opacity: isExpanded ? 1 : 0 }}
+              >
                 {tab.label}
               </span>
             </button>

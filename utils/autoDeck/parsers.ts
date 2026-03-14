@@ -71,6 +71,67 @@ function repairJsonControlChars(raw: string): string {
   return result;
 }
 
+/**
+ * Aggressive JSON repair: handles both control characters AND unescaped
+ * double quotes inside string values (common in LLM-generated JSON with
+ * markdown content). Uses a look-ahead heuristic: when a `"` is encountered
+ * inside a string, check if the next non-whitespace character is a valid
+ * JSON structural character (`,`, `}`, `]`, `:`). If not, escape it.
+ */
+function repairJsonAggressive(raw: string): string {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i];
+
+    if (escaped) {
+      result += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\' && inString) {
+      result += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      if (!inString) {
+        inString = true;
+        result += ch;
+      } else {
+        // Look ahead: skip whitespace, check next meaningful character
+        let j = i + 1;
+        while (j < raw.length && (raw[j] === ' ' || raw[j] === '\n' || raw[j] === '\r' || raw[j] === '\t')) j++;
+        const next = j < raw.length ? raw[j] : '';
+
+        if (next === '' || next === ',' || next === '}' || next === ']' || next === ':') {
+          // Real string terminator
+          inString = false;
+          result += ch;
+        } else {
+          // Unescaped internal quote — escape it
+          result += '\\"';
+        }
+      }
+      continue;
+    }
+
+    if (inString) {
+      if (ch === '\n') { result += '\\n'; continue; }
+      if (ch === '\r') { result += '\\r'; continue; }
+      if (ch === '\t') { result += '\\t'; continue; }
+    }
+
+    result += ch;
+  }
+
+  return result;
+}
+
 // ── Planner response parser ──
 
 type PlannerResult =
@@ -225,6 +286,7 @@ export function parseSuggestBriefingResponse(raw: string): SuggestBriefingResult
   const attempts: { label: string; text: string }[] = [
     { label: 'strict', text: extracted },
     { label: 'repaired', text: repairJsonControlChars(extracted) },
+    { label: 'aggressive', text: repairJsonAggressive(extracted) },
   ];
 
   let lastError = '';
@@ -339,10 +401,12 @@ export function parseProducerResponse(raw: string): ProducerResult {
   const extracted = extractJson(raw);
 
   // Step 1: Try strict JSON parse
-  // Step 2: Repair unescaped control characters (common LLM issue — literal newlines in content strings)
+  // Step 2: Repair unescaped control characters (literal newlines/tabs in content strings)
+  // Step 3: Aggressive repair (also fixes unescaped double quotes inside strings)
   const attempts: { label: string; text: string }[] = [
     { label: 'strict', text: extracted },
     { label: 'repaired', text: repairJsonControlChars(extracted) },
+    { label: 'aggressive', text: repairJsonAggressive(extracted) },
   ];
 
   let lastError = '';

@@ -116,11 +116,15 @@ export async function generateCardApi(
 // ─────────────────────────────────────────────────────────────────
 
 export interface ManageImagesRequest {
-  action: 'set_active' | 'delete_image' | 'delete_album' | 'delete_card_albums' | 'delete_all_albums' | 'get_album';
+  action: 'set_active' | 'delete_image' | 'delete_album' | 'delete_card_albums' | 'delete_all_albums' | 'get_album' | 'upload_image';
   nuggetId: string;
   cardId?: string;
   detailLevel?: string;
   imageId?: string;
+  // upload_image fields
+  imageBase64?: string;
+  imageMimeType?: string;
+  label?: string;
 }
 
 export interface ManageImagesResponse {

@@ -5,6 +5,7 @@ import { Card, DetailLevel, StylingOptions, ZoomState, ReferenceImage, AlbumImag
 import { findCard, flattenCards, mapCardById } from '../utils/cardUtils';
 import { detectSettingsMismatch } from '../utils/ai';
 import { manageImagesApi } from '../utils/api';
+import { extractBase64, extractMime } from '../utils/modificationEngine';
 import { createLogger } from '../utils/logger';
 
 const log = createLogger('ImageOps');
@@ -96,7 +97,7 @@ export function useImageOperations({
   // ── Card image CRUD ──
 
   const handleInsightsImageModified = useCallback(
-    (cardId: string, newImageUrl: string, history: any[]) => {
+    (cardId: string, newImageUrl: string, _history: any[]) => {
       if (!selectedNugget) return;
       const card = findCard(selectedNugget.cards, cardId);
       const level = card?.detailLevel || activeLogicTab;
@@ -104,16 +105,18 @@ export function useImageOperations({
       // Build updated album: deactivate existing, add modification as new active entry
       const existingAlbum = card?.albumMap?.[level] || [];
       const deactivated = existingAlbum.map((img) => ({ ...img, isActive: false }));
+      const modLabel = `Modification ${deactivated.filter((i) => i.label.startsWith('Modification')).length + 1}`;
       const newItem: AlbumImage = {
         id: `mod-${Date.now()}`,
         imageUrl: newImageUrl,
         storagePath: '',
-        label: `Modification ${deactivated.filter((i) => i.label.startsWith('Modification')).length + 1}`,
+        label: modLabel,
         isActive: true,
         createdAt: Date.now(),
         sortOrder: deactivated.length,
       };
 
+      // Optimistic local update — user sees the modified image immediately
       updateNugget(selectedNugget.id, (n) => ({
         ...n,
         cards: mapCardById(n.cards, cardId, (c) => ({
@@ -123,6 +126,41 @@ export function useImageOperations({
         })),
         lastModifiedAt: Date.now(),
       }));
+
+      // Background upload to server — persists the image to Storage + card_images table
+      const nuggetId = selectedNugget.id;
+      (async () => {
+        try {
+          const base64 = extractBase64(newImageUrl);
+          const mimeType = extractMime(newImageUrl);
+          const response = await manageImagesApi({
+            action: 'upload_image',
+            nuggetId,
+            cardId,
+            detailLevel: level,
+            imageBase64: base64,
+            imageMimeType: mimeType,
+            label: modLabel,
+          });
+          // Reconcile: replace local mod-* entry with real server album
+          if (response.album) {
+            updateNugget(nuggetId, (n) => ({
+              ...n,
+              cards: mapCardById(n.cards, cardId, (c) => ({
+                ...c,
+                albumMap: { ...(c.albumMap || {}), [level]: response.album! },
+                activeImageMap: {
+                  ...(c.activeImageMap || {}),
+                  [level]: response.activeImageUrl || c.activeImageMap?.[level] || '',
+                },
+              })),
+            }));
+          }
+        } catch (err) {
+          log.warn('Failed to upload modified image to server:', err);
+          // Graceful degradation: local entry remains for the session
+        }
+      })();
     },
     [selectedNugget, updateNugget, activeLogicTab],
   );

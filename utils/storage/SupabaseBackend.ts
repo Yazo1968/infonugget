@@ -74,16 +74,10 @@ export class SupabaseBackend implements StorageBackend {
     return path;
   }
 
-  /** Get a signed URL for a storage path in the card-images bucket (1-hour expiry). */
-  private async getImageUrl(path: string): Promise<string> {
-    const { data, error } = await supabase.storage
-      .from('card-images')
-      .createSignedUrl(path, 3600); // 1 hour
-    if (error || !data?.signedUrl) {
-      log.error('Failed to create signed URL for:', path, error);
-      return '';
-    }
-    return data.signedUrl;
+  /** Get a public URL for a storage path in the card-images bucket (CDN-cached). */
+  private getImageUrl(path: string): string {
+    const { data } = supabase.storage.from('card-images').getPublicUrl(path);
+    return data?.publicUrl || '';
   }
 
   /** Upload a PDF (from base64) to the pdfs bucket. Returns the storage path. */
@@ -482,8 +476,6 @@ export class SupabaseBackend implements StorageBackend {
         name: nugget.name,
         type: nugget.type,
         messages: nugget.messages ?? null,
-        deck_messages: nugget.deckMessages ?? null,
-        last_deck_doc_hash: nugget.lastDeckDocHash ?? null,
         doc_change_log: nugget.docChangeLog ?? null,
         last_doc_change_sync_index: nugget.lastDocChangeSyncSeq ?? null,
         sources_log_stats: nugget.sourcesLogStats ?? null,
@@ -520,8 +512,6 @@ export class SupabaseBackend implements StorageBackend {
       name: row.name,
       type: row.type ?? 'insights',
       messages: row.messages ?? undefined,
-      deckMessages: row.deck_messages ?? undefined,
-      lastDeckDocHash: row.last_deck_doc_hash ?? undefined,
       docChangeLog: row.doc_change_log ?? undefined,
       lastDocChangeSyncSeq: row.last_doc_change_sync_index ?? undefined,
       sourcesLogStats: row.sources_log_stats ?? undefined,
@@ -704,7 +694,7 @@ export class SupabaseBackend implements StorageBackend {
     const results: StoredAlbumImage[] = [];
     for (const row of data) {
       const imageUrl = row.storage_path
-        ? await this.getImageUrl(row.storage_path)
+        ? this.getImageUrl(row.storage_path)
         : '';
 
       results.push({

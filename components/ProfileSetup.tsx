@@ -29,6 +29,15 @@ export default function ProfileSetup({ onComplete }: ProfileSetupProps) {
     }
   }, [user]);
 
+  /** Derive 2-letter initials from a name. Single word → first two letters. */
+  const deriveInitials = (name: string): string => {
+    const parts = name.trim().split(/\s+/);
+    if (parts.length >= 2) {
+      return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+    }
+    return parts[0].substring(0, 2).toUpperCase();
+  };
+
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const trimmed = displayName.trim();
@@ -41,7 +50,11 @@ export default function ProfileSetup({ onComplete }: ProfileSetupProps) {
     try {
       const { error: dbError } = await supabase
         .from('profiles')
-        .update({ display_name: trimmed, updated_at: new Date().toISOString() })
+        .update({
+          display_name: trimmed,
+          avatar_initials: deriveInitials(trimmed),
+          updated_at: new Date().toISOString(),
+        })
         .eq('id', user!.id);
       if (dbError) {
         setError(dbError.message);
@@ -59,7 +72,11 @@ export default function ProfileSetup({ onComplete }: ProfileSetupProps) {
     const fallback = user?.email?.split('@')[0] ?? 'User';
     await supabase
       .from('profiles')
-      .update({ display_name: fallback, updated_at: new Date().toISOString() })
+      .update({
+        display_name: fallback,
+        avatar_initials: deriveInitials(fallback),
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', user!.id);
     onComplete();
   };

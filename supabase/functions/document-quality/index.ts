@@ -97,6 +97,16 @@ Every issue must be assigned a severity by asking: if someone reads the output p
 
 When uncertain between Critical and Moderate, default to Critical.
 
+## WRITING STYLE — HARD LIMIT
+
+Every free-text field MUST be 15 words or fewer. No exceptions. This applies to ALL note, description, interpretation, rationale, and profile fields. Write telegram-style: fact, location, consequence — nothing else. Never use full sentences when a fragment works.
+
+GOOD: "Revenue p.4 — row sum ≠ stated total"
+BAD: "The row totals presented on page 4 of the document do not reconcile with the summary total stated in the executive overview"
+
+GOOD: "Contains quarterly revenue data and growth metrics"
+BAD: "This document contains quarterly revenue data and growth metrics that directly support the financial analysis objective described in the engagement purpose"
+
 ## OUTPUT FORMAT
 
 Return a single JSON object with this exact structure:
@@ -113,7 +123,7 @@ Return a single JSON object with this exact structure:
   "documents": [
     {
       "documentId": "the document ID from the request",
-      "documentLabel": "short human-readable name inferred from content",
+      "documentLabel": "short name from content",
       "metadata": {
         "detectedTitle": "string or null",
         "detectedDate": "string or null",
@@ -130,17 +140,17 @@ Return a single JSON object with this exact structure:
       "relevanceScoreA": 85,
       "relevanceInterpretation": "primary_source",
       "relevanceDimensionScores": {
-        "objective": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Contains quarterly revenue data and growth metrics that directly support financial analysis objective" },
-        "focus": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Three sections devoted to risk assessment and mitigation strategies" },
-        "audience": { "alignmentScore": 1, "alignmentLabel": "supporting", "note": "Written for internal finance team; adaptable for board but requires simplification" },
-        "type": { "alignmentScore": 0, "alignmentLabel": "irrelevant", "note": "Photo documentation of office facilities — no extractable data for analytical presentation" },
-        "tone": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Formal analytical register matches the brief requirement" }
+        "objective": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Quarterly revenue data and growth metrics" },
+        "focus": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Three sections on risk assessment" },
+        "audience": { "alignmentScore": 1, "alignmentLabel": "supporting", "note": "Internal finance team; needs simplification for board" },
+        "type": { "alignmentScore": 0, "alignmentLabel": "irrelevant", "note": "Photo documentation — no extractable data" },
+        "tone": { "alignmentScore": 2, "alignmentLabel": "direct", "note": "Formal analytical register matches brief" }
       },
       "pass1Scores": {
         "P1-01": { "score": 2, "note": null },
-        "P1-02": { "score": 1, "note": "Row totals on page 4 do not reconcile with summary" },
+        "P1-02": { "score": 1, "note": "Row totals p.4 ≠ summary" },
         "P1-03": { "score": 2, "note": null },
-        "P1-04": { "score": 0, "note": "Exhibit 2 referenced on p.7 is missing — data-bearing" },
+        "P1-04": { "score": 0, "note": "Exhibit 2 (p.7) missing — data-bearing" },
         "P1-05": { "score": 2, "note": null },
         "P1-06": { "score": 2, "note": null }
       }
@@ -245,6 +255,16 @@ For each document, provide:
 - documentId, documentLabel, detectedVersion, detectedDate
 - requiredAction: plain, specific, actionable instruction for the producer
 
+## WRITING STYLE — HARD LIMIT
+
+Every free-text field MUST be 15 words or fewer. No exceptions. This applies to ALL note, description, rationale, consequence, requiredAction, and productionImpact fields. Write telegram-style: fact, location, consequence — nothing else.
+
+GOOD: "Row totals p.4 ≠ summary — combined totals unreliable"
+BAD: "These figures feed into the cross-document comparison and as a result the combined totals will be unreliable"
+
+verdictRationale: one sentence, 20 words max.
+mandatoryProductionNotice fields: one sentence each, 20 words max.
+
 ## OUTPUT FORMAT
 
 Return a single JSON object:
@@ -257,10 +277,10 @@ Return a single JSON object:
       "compatibilityScoreB": 72,
       "dimensionScores": {
         "objective": { "score": 2, "label": "aligned", "note": null },
-        "focus": { "score": 1, "label": "adjacent", "note": "explanation" },
-        "audience": { "score": 1, "label": "adjacent", "note": "explanation" },
-        "type": { "score": 0, "label": "incompatible", "note": "explanation" },
-        "tone": { "score": 1, "label": "adjacent", "note": "explanation" }
+        "focus": { "score": 1, "label": "adjacent", "note": "Different angles on same topic" },
+        "audience": { "score": 1, "label": "adjacent", "note": "Different depth levels; reconcilable" },
+        "type": { "score": 0, "label": "incompatible", "note": "Photo album vs analytical report" },
+        "tone": { "score": 1, "label": "adjacent", "note": "Formal vs semi-formal; adaptable" }
       }
     }
   ],
@@ -269,9 +289,9 @@ Return a single JSON object:
       "checkId": "P2-02",
       "scope": "between_documents",
       "severity": "critical",
-      "description": "Precise description with location references",
+      "description": "Revenue Q3: Doc A $4.2M vs Doc B $3.8M",
       "documentsInvolved": ["doc-id-1", "doc-id-2"],
-      "productionImpact": "What happens if unaddressed"
+      "productionImpact": "Output will cite conflicting revenue figures"
     }
   ],
   "perDocumentFlags": [
@@ -280,8 +300,8 @@ Return a single JSON object:
       "documentId": "doc-id-1",
       "scope": "this_document",
       "severity": "critical",
-      "description": "Row totals on page 4 do not reconcile with summary",
-      "crossDocumentConsequence": "These figures feed into the cross-document comparison — combined totals will be unreliable"
+      "description": "Row totals p.4 ≠ summary",
+      "crossDocumentConsequence": "Combined totals with Doc B unreliable"
     }
   ],
   "documentRegister": [
@@ -290,10 +310,10 @@ Return a single JSON object:
       "documentLabel": "Q3 Report",
       "detectedVersion": "v3.0",
       "detectedDate": "2024-10-15",
-      "requiredAction": "Use with caveat — reconcile revenue with Document B"
+      "requiredAction": "Reconcile revenue with Doc B before production"
     }
   ],
-  "verdictRationale": "Plain-language explanation of what drove the verdict",
+  "verdictRationale": "Two critical data conflicts between Doc A and Doc B prevent reliable output.",
   "mandatoryProductionNotice": {
     "summary": "...",
     "conflictsDescribed": "...",

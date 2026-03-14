@@ -373,10 +373,8 @@ async function uploadImageToStorage(db: ReturnType<typeof serviceClient>, userId
   return path;
 }
 
-async function getSignedUrl(db: ReturnType<typeof serviceClient>, path: string): Promise<string> {
-  const { data, error } = await db.storage.from("card-images").createSignedUrl(path, 3600);
-  if (error || !data?.signedUrl) throw new Error(`Signed URL failed: ${error?.message}`);
-  return data.signedUrl;
+function getPublicUrl(path: string): string {
+  return `${SUPABASE_URL}/storage/v1/object/public/card-images/${path}`;
 }
 
 // ── Main handler ──
@@ -547,7 +545,7 @@ Deno.serve(async (req: Request) => {
     // PHASE 4: Store Image + Update DB (Album System)
     // ══════════════════════════════════════════════════════════════
     const storagePath = await uploadImageToStorage(db, user.id, nuggetId, cardId, detailLevel, imageData, imageMimeType);
-    const signedUrl = await getSignedUrl(db, storagePath);
+    const publicUrl = getPublicUrl(storagePath);
 
     // Deactivate any existing active image for this album
     await db.from("card_images").update({ is_active: false })
@@ -597,19 +595,15 @@ Deno.serve(async (req: Request) => {
       .eq("detail_level", detailLevel).eq("user_id", user.id)
       .order("sort_order", { ascending: true });
 
-    const album = [];
-    for (const row of (albumRows || [])) {
-      const url = row.storage_path ? await getSignedUrl(db, row.storage_path) : "";
-      album.push({
-        id: row.id,
-        imageUrl: url,
-        storagePath: row.storage_path || "",
-        label: row.label || "",
-        isActive: row.is_active,
-        createdAt: new Date(row.created_at).getTime(),
-        sortOrder: row.sort_order,
-      });
-    }
+    const album = (albumRows || []).map((row) => ({
+      id: row.id,
+      imageUrl: row.storage_path ? getPublicUrl(row.storage_path) : "",
+      storagePath: row.storage_path || "",
+      label: row.label || "",
+      isActive: row.is_active,
+      createdAt: new Date(row.created_at).getTime(),
+      sortOrder: row.sort_order,
+    }));
 
     // Update card in nugget's JSONB cards column
     const { data: nuggetData } = await db.from("nuggets").select("cards").eq("id", nuggetId).single();
@@ -624,7 +618,7 @@ Deno.serve(async (req: Request) => {
             const updated = {
               ...item,
               synthesisMap: { ...(item.synthesisMap || {}), [detailLevel]: synthesisContent },
-              activeImageMap: { ...(item.activeImageMap || {}), [detailLevel]: signedUrl },
+              activeImageMap: { ...(item.activeImageMap || {}), [detailLevel]: publicUrl },
               albumMap: { ...(item.albumMap || {}), [detailLevel]: album },
               lastGeneratedContentMap: { ...(item.lastGeneratedContentMap || {}), [detailLevel]: synthesisContent },
               lastPromptMap: { ...(item.lastPromptMap || {}), [detailLevel]: imagePrompt },
@@ -646,7 +640,7 @@ Deno.serve(async (req: Request) => {
     return jsonRes({
       success: true,
       imageId,
-      imageUrl: signedUrl,
+      imageUrl: publicUrl,
       storagePath,
       synthesisContent,
       imagePrompt,

@@ -24,7 +24,7 @@ export function resolveOrderedDocs(
   allDocs: UploadedFile[],
   orderedIds: string[],
 ): UploadedFile[] {
-  const available = allDocs.filter((d) => d.content || d.fileId || d.pdfBase64);
+  const available = allDocs.filter((d) => d.enabled !== false && (d.content || d.fileId || d.pdfBase64));
   return orderedIds
     .map((id) => available.find((d) => d.id === id))
     .filter((d): d is UploadedFile => !!d);

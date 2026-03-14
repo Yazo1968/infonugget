@@ -767,27 +767,14 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
               className="shrink-0 overflow-y-auto bg-[#fafafa] dark:bg-zinc-800/50 transition-all duration-200"
               style={{ width: tocWidth ?? '25%' }}
             >
-              <div
-                className="sticky top-0 z-10 border-b border-zinc-200 dark:border-zinc-600"
-                style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
-              >
+              <div className="sticky top-0 z-10 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
                 <button
                   onClick={() => setSidebarOpen(false)}
-                  className="flex flex-row items-center pt-2 pb-1 hover:opacity-80 transition-colors cursor-pointer"
+                  className="flex items-center gap-2 h-full hover:opacity-80 transition-colors cursor-pointer"
                   title="Collapse sidebar"
                 >
-                  <div className="w-8 shrink-0 flex items-center justify-center">
-                    <svg
-                      width="16"
-                      height="16"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      className="shrink-0 text-zinc-500 dark:text-zinc-400"
-                    >
+                  <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
                       <rect width="18" height="18" x="3" y="3" rx="2" />
                       <path d="M9 3v18" />
                     </svg>
@@ -1087,11 +1074,11 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
             /* TOC collapsed strip */
             <div
               className="shrink-0 w-10 flex flex-col"
-              style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+              style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}
             >
               <div
                 className="shrink-0 sticky top-0 z-10"
-                style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+                style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}
               >
                 <button
                   onClick={() => setSidebarOpen(true)}
@@ -1128,7 +1115,7 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
           <div
             className={`flex flex-col overflow-hidden transition-all duration-200 ${isInline && contentCollapsed ? 'shrink-0 w-10' : isInline && contentMinWidth ? 'shrink-0' : 'flex-1'}`}
             style={isInline && contentCollapsed
-              ? { backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }
+              ? { backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }
               : isInline && contentMinWidth ? { width: contentMinWidth } : undefined}
           >
           {/* Inline mode: header + collapse button + toolbar */}
@@ -1137,13 +1124,13 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
               {(sidebarContent || hideSidebar) ? (
                 /* Card Content header — collapsible (Cards panel) */
                 <div
-                  className={`shrink-0 sticky top-0 z-10 ${contentCollapsed ? '' : 'border-b border-zinc-200 dark:border-zinc-600'}`}
-                  style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
+                  className={`shrink-0 sticky top-0 z-10 ${contentCollapsed ? '' : 'h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900'}`}
                 >
                   <button
                     onClick={() => setContentCollapsed(!contentCollapsed)}
-                    className={`${contentCollapsed ? 'flex flex-col items-center gap-1.5 py-3 px-1 w-full' : 'shrink-0 flex flex-row items-center pt-2 pb-1'} hover:opacity-80 transition-colors cursor-pointer`}
+                    className={`${contentCollapsed ? 'flex flex-col items-center gap-1.5 py-3 px-1 w-full' : 'flex items-center gap-2 h-full'} hover:opacity-80 transition-colors cursor-pointer`}
                     title={contentCollapsed ? 'Expand editor' : 'Collapse editor'}
+                    style={contentCollapsed ? { backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' } : undefined}
                   >
                     {contentCollapsed ? (
                       <>
@@ -1157,11 +1144,11 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                       </>
                     ) : (
                       <>
-                        <div className="w-8 shrink-0 flex items-center justify-center">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
-                            <rect width="18" height="18" x="3" y="3" rx="2" />
-                            <path d="M9 3v18" />
-                          </svg>
+                        <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                          <rect width="18" height="18" x="3" y="3" rx="2" />
+                          <path d="M9 3v18" />
+                        </svg>
                         </div>
                         <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
                           Card Content
@@ -1172,11 +1159,8 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                 </div>
               ) : (
                 /* Document header — non-collapsible (Sources panel) */
-                <div
-                  className="shrink-0 sticky top-0 z-10 bg-white dark:bg-zinc-900 border-b border-zinc-200 dark:border-zinc-600"
-                >
-                  <div className="shrink-0 flex flex-row items-center pt-2 pb-1">
-                    <div className="w-8 shrink-0 flex items-center justify-center">
+                <div className="shrink-0 sticky top-0 z-10 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+                    <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(30,60,100)' : 'rgb(200,225,250)' }}>
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
                         <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
                         <polyline points="14 2 14 8 20 8" />
@@ -1187,7 +1171,6 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                     <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
                       Document
                     </span>
-                  </div>
                 </div>
               )}
               <div className={contentCollapsed ? 'hidden' : ''}>

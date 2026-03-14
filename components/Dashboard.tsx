@@ -2,6 +2,8 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Nugget, Project } from '../types';
 import { useAuth } from '../context/AuthContext';
 import LogoIcon from './LogoIcon';
+import UserAvatar from './UserAvatar';
+import EditProfileModal from './EditProfileModal';
 
 interface DashboardProps {
   projects: Project[];
@@ -38,9 +40,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const menuRef = useRef<HTMLDivElement>(null);
 
   // User menu state
-  const { user, signOut } = useAuth();
+  const { user, profile, signOut } = useAuth();
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const userMenuRef = useRef<HTMLDivElement>(null);
+  const [showEditProfile, setShowEditProfile] = useState(false);
 
   // Close kebab menu on outside click
   useEffect(() => {
@@ -166,10 +169,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
           <div className="relative" ref={userMenuRef}>
             <button
               onClick={() => setUserMenuOpen((prev) => !prev)}
-              className="w-7 h-7 rounded-full bg-accent-blue/20 flex items-center justify-center text-[11px] font-bold text-accent-blue transition-colors hover:bg-accent-blue/30"
               title={user?.email ?? 'Account'}
+              className="rounded-full transition-opacity hover:opacity-80"
             >
-              {user?.email?.[0]?.toUpperCase() ?? '?'}
+              <UserAvatar size={28} profile={profile} email={user?.email} />
             </button>
             {userMenuOpen && (
               <div className={`absolute right-0 top-full mt-1.5 w-52 rounded-lg shadow-lg border py-1 z-20 ${
@@ -184,6 +187,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 }`}>
                   {user?.email}
                 </div>
+                <button
+                  onClick={() => { setUserMenuOpen(false); setShowEditProfile(true); }}
+                  className={`w-full text-left px-3 py-2 text-[11px] flex items-center gap-2 transition-colors ${
+                    darkMode
+                      ? 'text-zinc-300 hover:bg-zinc-800'
+                      : 'text-zinc-700 hover:bg-zinc-50'
+                  }`}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                  Edit Profile
+                </button>
                 <button
                   onClick={() => { setUserMenuOpen(false); signOut(); }}
                   className={`w-full text-left px-3 py-2 text-[11px] flex items-center gap-2 transition-colors ${
@@ -521,6 +538,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
         );
       })()}
+
+      {/* Edit Profile modal */}
+      {showEditProfile && (
+        <EditProfileModal darkMode={darkMode} onClose={() => setShowEditProfile(false)} />
+      )}
     </div>
   );
 };

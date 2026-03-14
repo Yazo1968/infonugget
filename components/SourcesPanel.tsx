@@ -388,7 +388,7 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
             <>
             <div
               data-panel-overlay
-              className="fixed z-[107] flex flex-col bg-white dark:bg-zinc-900 border-4 shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
+              className="fixed z-[107] flex flex-col bg-white dark:bg-zinc-900 border shadow-[5px_0_6px_rgba(0,0,0,0.35)] overflow-hidden"
               style={{
                 borderColor: 'rgb(23,80,172)',
                 ...overlayStyle,
@@ -426,16 +426,13 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                     style={{ width: smWidth }}
                   >
                     {/* Header */}
-                    <div
-                      className="shrink-0 sticky top-0 z-10 border-b border-zinc-200 dark:border-zinc-600"
-                      style={{ backgroundColor: darkMode ? 'rgb(30,58,100)' : 'rgb(190,215,245)' }}
-                    >
+                    <div className="shrink-0 sticky top-0 z-10 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
                       <button
                         onClick={() => setSmCollapsed(true)}
-                        className="shrink-0 flex flex-row items-center pt-2 pb-1 hover:opacity-80 transition-colors cursor-pointer"
+                        className="flex items-center gap-2 h-full hover:opacity-80 transition-colors cursor-pointer"
                         title="Collapse sources manager"
                       >
-                        <div className="w-8 shrink-0 flex items-center justify-center">
+                        <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(30,58,100)' : 'rgb(190,215,245)' }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
                             <rect width="18" height="18" x="3" y="3" rx="2" />
                             <path d="M9 3v18" />
@@ -633,12 +630,8 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                 style={{ width: pdfTocResized ? tocWidth : '25%' }}
                               >
                                 {/* ── Sticky header ── */}
-                                <div
-                                  className="sticky top-0 z-10"
-                                  style={{ backgroundColor: darkMode ? 'rgb(40,52,62)' : 'rgb(217,232,241)' }}
-                                >
-                                  <div className="flex flex-row items-center pt-2 pb-1">
-                                    <div className="w-8 shrink-0 flex items-center justify-center">
+                                <div className="sticky top-0 z-10 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+                                    <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
                                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
                                         <line x1="8" y1="6" x2="21" y2="6" />
                                         <line x1="8" y1="12" x2="21" y2="12" />
@@ -651,7 +644,6 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                     <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">
                                       Table of Contents (Bookmarks)
                                     </span>
-                                  </div>
                                 </div>
 
                                 {/* ── Document root node — matches MD TOC root node ── */}

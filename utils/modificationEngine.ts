@@ -44,8 +44,13 @@ export async function executeModification(
   const { originalImageUrl, redlineDataUrl, instructions, cardText, aspectRatio, resolution } = request;
 
   // Resolve image data — handles both data URLs and HTTP(S) signed URLs
-  const { base64: originalBase64, mimeType: originalMime } = await resolveImageData(originalImageUrl);
+  const rawImage = await resolveImageData(originalImageUrl);
   const hasRedline = !!redlineDataUrl;
+
+  // Compress images to avoid WORKER_LIMIT 546 on the gemini-proxy EF
+  const { base64: originalBase64, mimeType: originalMime } = await compressForProxy(
+    rawImage.base64, rawImage.mimeType, PROXY_MAX_DIM,
+  );
 
   const systemPrompt = buildModificationPrompt(instructions, cardText, hasRedline);
 
@@ -66,8 +71,10 @@ export async function executeModification(
   ];
 
   if (hasRedline) {
-    const redlineBase64 = extractBase64(redlineDataUrl);
-    const redlineMime = extractMime(redlineDataUrl);
+    const rawRedline = { base64: extractBase64(redlineDataUrl), mimeType: extractMime(redlineDataUrl) };
+    const { base64: redlineBase64, mimeType: redlineMime } = await compressForProxy(
+      rawRedline.base64, rawRedline.mimeType, PROXY_MAX_DIM, true,
+    );
     parts.push({
       inlineData: {
         mimeType: redlineMime,
@@ -135,7 +142,12 @@ export async function executeContentModification(
   const { originalImageUrl, content, cardText, style, palette, aspectRatio, resolution } = request;
 
   // Resolve image data — handles both data URLs and HTTP(S) signed URLs
-  const { base64: originalBase64, mimeType: originalMime } = await resolveImageData(originalImageUrl);
+  const rawImage = await resolveImageData(originalImageUrl);
+
+  // Compress to avoid WORKER_LIMIT 546 on the gemini-proxy EF
+  const { base64: originalBase64, mimeType: originalMime } = await compressForProxy(
+    rawImage.base64, rawImage.mimeType, PROXY_MAX_DIM,
+  );
 
   const systemPrompt = buildContentModificationPrompt(content, cardText, style, palette);
 
@@ -190,6 +202,51 @@ export async function executeContentModification(
 }
 
 // --- Helpers ---
+
+/**
+ * Compress an image to reduce payload size for the Edge Function proxy.
+ * Prevents WORKER_LIMIT 546 errors caused by large base64 payloads
+ * exceeding the Edge Function memory limit.
+ *
+ * - Opaque images (original card) → downscale + JPEG at 0.85 quality
+ * - Transparent images (redline overlay) → downscale only, keep PNG
+ */
+async function compressForProxy(
+  base64: string,
+  mimeType: string,
+  maxDim: number,
+  preserveAlpha = false,
+): Promise<{ base64: string; mimeType: string }> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      let { width, height } = img;
+      if (width > maxDim || height > maxDim) {
+        const scale = maxDim / Math.max(width, height);
+        width = Math.round(width * scale);
+        height = Math.round(height * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { reject(new Error('Canvas 2d context unavailable')); return; }
+      ctx.drawImage(img, 0, 0, width, height);
+      if (preserveAlpha) {
+        const dataUrl = canvas.toDataURL('image/png');
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/png' });
+      } else {
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+        resolve({ base64: dataUrl.split(',')[1], mimeType: 'image/jpeg' });
+      }
+    };
+    img.onerror = () => reject(new Error('Failed to load image for compression'));
+    img.src = `data:${mimeType};base64,${base64}`;
+  });
+}
+
+/** Max dimension for images sent through the gemini-proxy EF. */
+const PROXY_MAX_DIM = 1280;
 
 /**
  * Convert an image URL to { base64, mimeType }.

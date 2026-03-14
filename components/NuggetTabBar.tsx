@@ -91,16 +91,16 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
     [renameValue, onRenameNugget],
   );
 
-  const bg = darkMode ? 'bg-zinc-900' : 'bg-white';
-  const border = darkMode ? 'border-zinc-800' : 'border-zinc-200';
-
   return (
     <>
-      <div className={`shrink-0 flex items-center ${bg} border-b ${border} px-1`} style={{ height: 36 }}>
+      <div
+        className={`shrink-0 flex items-end px-1 ${darkMode ? 'bg-zinc-900' : 'bg-zinc-100'}`}
+        style={{ height: 40, borderBottom: '3px solid var(--accent-blue, #2a9fd4)' }}
+      >
         {/* Scrollable tab area */}
         <div
           ref={scrollRef}
-          className="flex items-center gap-0.5 flex-1 min-w-0 overflow-x-auto"
+          className="flex items-end gap-0.5 flex-1 min-w-0 overflow-x-auto"
           style={{ scrollbarWidth: 'none' }}
         >
           {projectNuggets.map((nugget, index) => {
@@ -110,10 +110,10 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
             return (
               <React.Fragment key={nugget.id}>
                 {index > 0 && (
-                  <div className={`shrink-0 w-px h-3.5 ${darkMode ? 'bg-zinc-700' : 'bg-zinc-300'}`} />
+                  <div className={`shrink-0 w-px h-3.5 mx-0.5 self-center ${darkMode ? 'bg-zinc-600' : 'bg-zinc-400'}`} />
                 )}
                 <div
-                  className="relative flex items-center shrink-0 group"
+                  className="relative flex items-center shrink-0 group mb-[-1px]"
                 >
                 {/* Tab button — click selects + opens dropdown menu */}
                 <button
@@ -133,20 +133,20 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                       setMenuId(nugget.id);
                     }
                   }}
-                  className={`flex items-center gap-1.5 px-3 h-[30px] rounded-t-md text-[11px] font-medium transition-colors relative ${
+                  className={`flex items-center gap-1.5 px-3.5 h-[32px] rounded-t-md text-[12px] font-medium transition-colors relative border border-b-0 ${
                     isActive
                       ? darkMode
-                        ? 'text-zinc-100 bg-zinc-800'
-                        : 'text-zinc-900 bg-zinc-100'
+                        ? 'text-zinc-100 bg-[#2a9fd4] border-[#2a9fd4]'
+                        : 'text-white bg-[#2a9fd4] border-[#2a9fd4]'
                       : darkMode
-                        ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800/50'
-                        : 'text-zinc-500 hover:text-zinc-700 hover:bg-zinc-50'
+                        ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 border-zinc-700'
+                        : 'text-zinc-500 hover:text-zinc-700 hover:bg-white/40 border-zinc-300'
                   }`}
-                  style={isActive ? { boxShadow: 'inset 0 -2px 0 var(--accent-blue, #2a9fd4)' } : undefined}
+                  style={undefined}
                   title={nugget.name}
                 >
                   {/* Nugget diamond icon */}
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 opacity-50">
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`shrink-0 ${isActive ? 'opacity-70' : 'opacity-40'}`}>
                     <rect x="6" y="6" width="12" height="12" rx="2" transform="rotate(45 12 12)" />
                   </svg>
 
@@ -164,7 +164,7 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                       }}
                       onBlur={() => handleRenameSubmit(nugget.id, nugget.name)}
                       className={`w-24 bg-transparent outline-none border-b text-[11px] font-medium ${
-                        darkMode ? 'text-zinc-100 border-zinc-600' : 'text-zinc-900 border-zinc-300'
+                        darkMode ? 'text-zinc-100 border-zinc-600' : 'text-zinc-900 border-zinc-400'
                       }`}
                     />
                   ) : (
@@ -189,10 +189,10 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                       e.stopPropagation();
                       onCloseTab(nugget.id);
                     }}
-                    className={`shrink-0 w-4 h-4 rounded-sm flex items-center justify-center transition-colors opacity-0 group-hover:opacity-100 ${
+                    className={`shrink-0 h-4 rounded-sm flex items-center justify-center transition-all w-0 overflow-hidden group-hover:w-4 ${
                       darkMode
                         ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700'
-                        : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200'
+                        : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-300'
                     }`}
                     title="Close tab"
                   >
@@ -206,7 +206,7 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                 {menuId === nugget.id && menuPos && createPortal(
                   <div
                     ref={menuRef}
-                    className={`fixed w-36 rounded-lg shadow-lg border py-1 z-[130] ${
+                    className={`fixed w-36 rounded-lg shadow-lg border py-1 z-[140] ${
                       darkMode ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'
                     }`}
                     style={{ top: menuPos.top, left: menuPos.left }}
@@ -288,7 +288,7 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
             className={`shrink-0 w-[26px] h-[26px] rounded-md flex items-center justify-center transition-colors ${
               darkMode
                 ? 'text-zinc-600 hover:text-zinc-300 hover:bg-zinc-800'
-                : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-100'
+                : 'text-zinc-400 hover:text-zinc-600 hover:bg-white/50'
             }`}
             title="Add nugget"
           >
@@ -303,7 +303,7 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
       {addMenuOpen && addMenuPos && createPortal(
         <div
           ref={addMenuRef}
-          className={`fixed w-48 rounded-lg shadow-lg border py-1 z-[130] ${
+          className={`fixed w-48 rounded-lg shadow-lg border py-1 z-[140] ${
             darkMode ? 'bg-zinc-900 border-zinc-700' : 'bg-white border-zinc-200'
           }`}
           style={{ top: addMenuPos.top, left: addMenuPos.left }}

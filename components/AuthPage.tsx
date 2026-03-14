@@ -16,7 +16,7 @@ function friendlyError(msg: string): string {
   if (msg.includes('Email not confirmed')) return 'Please check your email and confirm your account first.';
   if (msg.includes('User already registered')) return 'An account with this email already exists. Try signing in instead.';
   if (msg.includes('rate limit') || msg.includes('too many requests')) return 'Too many attempts. Please wait a moment and try again.';
-  if (msg.includes('Password should be at least')) return 'Password must be at least 6 characters.';
+  if (msg.includes('Password should be at least')) return 'Password must be at least 8 characters with lowercase, uppercase, digits, and symbols.';
   if (msg.includes('Unable to validate email')) return 'Please enter a valid email address.';
   return msg;
 }
@@ -64,10 +64,15 @@ export default function AuthPage({ initialMode = 'signin', onBackToLanding }: Au
     }
   }, [currentView]);
 
-  // Password strength checks (signup only)
+  // Password strength checks (signup only) — must match Supabase auth settings
   const passwordChecks = useMemo(() => ({
-    minLength: password.length >= 6,
+    minLength: password.length >= 8,
+    hasLower: /[a-z]/.test(password),
+    hasUpper: /[A-Z]/.test(password),
+    hasDigit: /\d/.test(password),
+    hasSymbol: /[^a-zA-Z0-9]/.test(password),
   }), [password]);
+  const passwordValid = Object.values(passwordChecks).every(Boolean);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -79,8 +84,8 @@ export default function AuthPage({ initialMode = 'signin', onBackToLanding }: Au
         const { error: err } = await signInWithEmail(email, password);
         if (err) setError(friendlyError(err));
       } else {
-        if (!passwordChecks.minLength) {
-          setError('Password must be at least 6 characters.');
+        if (!passwordValid) {
+          setError('Password must be at least 8 characters with lowercase, uppercase, digits, and symbols.');
           return;
         }
         const { error: err } = await signUpWithEmail(email, password);
@@ -353,13 +358,13 @@ export default function AuthPage({ initialMode = 'signin', onBackToLanding }: Au
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                minLength={6}
+                minLength={mode === 'signup' ? 8 : 6}
                 className={`w-full px-3 py-2 pr-10 border rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent-blue focus:border-transparent ${
                   darkMode
                     ? 'border-zinc-600 bg-zinc-800 text-zinc-100'
                     : 'border-zinc-300 bg-white text-zinc-900'
                 }`}
-                placeholder={mode === 'signup' ? 'Min. 6 characters' : 'Your password'}
+                placeholder={mode === 'signup' ? 'Min. 8 characters' : 'Your password'}
               />
               <button
                 type="button"
@@ -388,15 +393,23 @@ export default function AuthPage({ initialMode = 'signin', onBackToLanding }: Au
 
             {/* Password strength (signup only) */}
             {mode === 'signup' && password.length > 0 && (
-              <div className="mt-1.5">
-                <div className={`text-[11px] flex items-center gap-1 ${passwordChecks.minLength ? 'text-green-500' : darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                  {passwordChecks.minLength ? (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
-                  ) : (
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg>
-                  )}
-                  At least 6 characters
-                </div>
+              <div className="mt-1.5 space-y-0.5">
+                {([
+                  ['minLength', 'At least 8 characters'],
+                  ['hasLower', 'Lowercase letter'],
+                  ['hasUpper', 'Uppercase letter'],
+                  ['hasDigit', 'Digit'],
+                  ['hasSymbol', 'Symbol (!@#$…)'],
+                ] as const).map(([key, label]) => (
+                  <div key={key} className={`text-[11px] flex items-center gap-1 ${passwordChecks[key] ? 'text-green-500' : darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    {passwordChecks[key] ? (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+                    ) : (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /></svg>
+                    )}
+                    {label}
+                  </div>
+                ))}
               </div>
             )}
 

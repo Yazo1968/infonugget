@@ -100,8 +100,6 @@ export interface StoredNugget {
   name: string;
   type: NuggetType;
   messages?: ChatMessage[];
-  deckMessages?: ChatMessage[];
-  lastDeckDocHash?: string;
   docChangeLog?: DocChangeEvent[];
   lastDocChangeSyncSeq?: number;
   sourcesLogStats?: SourcesLogStats;

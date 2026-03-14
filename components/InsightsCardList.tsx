@@ -716,27 +716,20 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
     <>
       {/* New Folder header bar */}
       {onCreateEmptyFolder && (
-        <div className="shrink-0 border-b border-zinc-100 dark:border-zinc-600">
+        <div className="shrink-0 h-[40px] flex items-center justify-center gap-2 px-5 border-b border-zinc-200 dark:border-zinc-700">
           <button
             onClick={() => onCreateEmptyFolder()}
-            className="w-full flex items-center gap-1.5 px-3 py-1.5 cursor-pointer transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-800"
+            className="flex items-center gap-1.5 px-3 py-1 rounded-md text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400 cursor-pointer transition-colors hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200"
           >
-            <span
-              className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-400 flex-1 min-w-0 text-left"
-              style={{ textShadow: '0 1px 2px rgba(0,0,0,0.15)' }}
-            >
-              New Folder
-            </span>
-            <span className="text-[9px] text-zinc-500 dark:text-zinc-400 font-light">
-              {folderCount}
-            </span>
-            <span className="shrink-0 w-5 h-5 rounded flex items-center justify-center text-zinc-600 dark:text-zinc-400">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19" />
-                <line x1="5" y1="12" x2="19" y2="12" />
-              </svg>
-            </span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            New Folder
           </button>
+          <span className="text-[9px] text-zinc-400 dark:text-zinc-500 font-light">
+            {folderCount}
+          </span>
         </div>
       )}
     <div className="space-y-0 py-2 relative" ref={listRef}>
