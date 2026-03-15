@@ -18,11 +18,23 @@ function extractJson(raw: string): string {
     text = fenceMatch[1].trim();
   }
 
-  // Find the outermost JSON object
+  // Find the outermost JSON structure — array OR object
+  const firstBracket = text.indexOf('[');
   const firstBrace = text.indexOf('{');
-  const lastBrace = text.lastIndexOf('}');
-  if (firstBrace !== -1 && lastBrace > firstBrace) {
-    text = text.substring(firstBrace, lastBrace + 1);
+
+  // Prefer whichever delimiter comes first (array vs object)
+  if (firstBracket !== -1 && (firstBrace === -1 || firstBracket < firstBrace)) {
+    // Array — find matching ]
+    const lastBracket = text.lastIndexOf(']');
+    if (lastBracket > firstBracket) {
+      text = text.substring(firstBracket, lastBracket + 1);
+    }
+  } else if (firstBrace !== -1) {
+    // Object — find matching }
+    const lastBrace = text.lastIndexOf('}');
+    if (lastBrace > firstBrace) {
+      text = text.substring(firstBrace, lastBrace + 1);
+    }
   }
 
   return text;

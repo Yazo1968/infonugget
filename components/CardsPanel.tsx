@@ -60,13 +60,11 @@ interface CardsPanelProps {
   assetsSlot?: React.ReactNode;
 }
 
-/** For cover cards (TitleCard, TakeawayCard) and Snapshot (DirectContent), content
- *  lives at the card's own fixed detailLevel. For regular cards, use the toolbar tab. */
-function effectiveLevel(card: Card | null, toolbarLevel: DetailLevel): DetailLevel {
-  if (!card) return toolbarLevel;
-  const cardLevel = card.detailLevel || 'Standard';
-  if (isCoverLevel(cardLevel) || cardLevel === 'DirectContent') return cardLevel;
-  return toolbarLevel;
+/** Return the card's own detail level. The toolbar LOD selector was removed —
+ *  each card now carries its level from generation time. */
+function effectiveLevel(card: Card | null, _toolbarLevel: DetailLevel): DetailLevel {
+  if (!card) return _toolbarLevel;
+  return card.detailLevel || 'Standard';
 }
 
 /** Ensure markdown content starts with an H1 heading matching cardTitle.

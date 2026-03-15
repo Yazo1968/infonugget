@@ -517,7 +517,15 @@ export function assembleRendererPrompt(
   // Build THEME block from domain bullet points
   const themeBlock = domain ? `\n\nTHEME:\n${domain.trim()}` : '';
 
-  return `Transform the provided CONTENT into a highly visual, illustration. Use the exact CONTENT provided below. Use your thinking abilities to first plan the illustration layout, components, shapes, text and other elements required.${themeBlock}
+  return `Transform the provided CONTENT into a highly visual, illustration.
+INSTRUCTIONS:
+* Use the exact CONTENT provided below.
+* make sure you do not repeat the same content in the illustration.
+* make sure you do not add to the CONTENT
+* Use your thinking abilities to apply the THEME and the STYLE provided below
+STEPS:
+1- plan the illustration layout, components, shapes, text and other elements required.
+2- create the illustration according to the plan.${themeBlock}
 
 CONTENT:\n${contentBlock}
 

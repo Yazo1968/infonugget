@@ -169,7 +169,7 @@ export const STYLE_IDENTITIES: Record<string, string> = {
   'Corporate Memphis':
     'Friendly flat illustrations with disproportionate human figures — oversized limbs, tiny heads. Blobby organic shapes, no outlines, warm optimistic tech-company tone.',
   'PwC Corporate':
-    'Clean, authoritative corporate consulting aesthetic with disciplined restraint. White background with orange as the singular hero accent for callout borders, key statistics, and focal chart elements. Grey data visualizations with only the focal metric highlighted in orange. Modular card-based layout with generous whitespace, clear section dividers, and a strict visual hierarchy. No decorative flourishes — every element serves the argument. Flat charts with minimal gridlines, direct value labeling, and orange left-border callout boxes for key figures. Hero statistics appear as oversized burnt orange numerals serving as primary visual anchors. Three-zone vertical structure: headline conclusion at top, evidence and data in the middle, bumper takeaway at the bottom. Section dividers are thin horizontal rules. The contrast between serif headings and sans-serif body is a core visual signature. Avoid flowcharts, mind maps, Venn diagrams, fishbone diagrams, radial layouts, hub-spoke, concentric rings, network graphs, organic shapes, and decorative illustrations.',
+    'Clean authoritative corporate consulting aesthetic. White background, orange hero accent for key statistics and callout borders. Modular card layout with generous whitespace, strict visual hierarchy, and flat charts with direct value labeling. Serif headings, sans-serif body.',
 };
 
 // Snapshot of built-in style names — used to guard against overwriting and for UI dividers

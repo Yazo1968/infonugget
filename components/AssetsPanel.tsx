@@ -80,6 +80,8 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const { darkMode } = useThemeContext();
   const { activeCard } = useSelectionContext();
   const { selectedNugget } = useNuggetContext();
+  // Use the card's own detail level — the toolbar LOD selector was removed
+  const cardLevel: DetailLevel = activeCard?.detailLevel || activeLogicTab;
   const _colorRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [showPrompt, setShowPrompt] = useState(false);
   const [showReference, setShowReference] = useState(false);
@@ -136,7 +138,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
     }));
   };
 
-  const hasImage = !!activeCard?.activeImageMap?.[activeLogicTab];
+  const hasImage = !!activeCard?.activeImageMap?.[cardLevel];
 
   // Clear toolbar state and revert to generate mode when no image
   useEffect(() => {
@@ -145,24 +147,24 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
       setCardLabMode('generate');
     }
   }, [hasImage]);
-  const isGenerating = !!activeCard?.isGeneratingMap?.[activeLogicTab];
-  const album = activeCard?.albumMap?.[activeLogicTab] || [];
+  const isGenerating = !!activeCard?.isGeneratingMap?.[cardLevel];
+  const album = activeCard?.albumMap?.[cardLevel] || [];
   const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating;
 
   // Effective prompt: use stored lastPromptMap or reconstruct from synthesis + visual plan
   const effectivePrompt = useMemo(() => {
     if (!activeCard) return null;
-    const stored = activeCard.lastPromptMap?.[activeLogicTab];
+    const stored = activeCard.lastPromptMap?.[cardLevel];
     if (stored) return stored;
     // Reconstruct from card data (works for existing cards where lastPromptMap was lost)
-    const synthesis = activeCard.synthesisMap?.[activeLogicTab];
+    const synthesis = activeCard.synthesisMap?.[cardLevel];
     if (!synthesis) return null;
-    if (isCoverLevel(activeLogicTab)) {
+    if (isCoverLevel(cardLevel)) {
       // Cover prompt reconstruction not available client-side — return synthesis as fallback
       return null;
     }
     return assembleRendererPrompt(activeCard.text, synthesis, committedSettings, undefined, selectedNugget?.domain);
-  }, [activeCard, activeLogicTab, committedSettings, selectedNugget?.domain]);
+  }, [activeCard, cardLevel, committedSettings, selectedNugget?.domain]);
 
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];
 
@@ -576,7 +578,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                           setOpenMenu(null);
                         }}
                         disabled={!hasImage}
-                        className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeCard?.activeImageMap?.[activeLogicTab] === referenceImage.url ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
+                        className={`block w-full text-left px-3 py-1.5 text-[11px] font-medium uppercase rounded-lg whitespace-nowrap transition-colors ${referenceImage && hasImage && activeCard?.activeImageMap?.[cardLevel] === referenceImage.url ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
                       >
                         Set Current as Ref.
                       </button>
@@ -830,21 +832,21 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
           <div ref={imageContainerRef} className="w-full h-full animate-in fade-in duration-300 relative">
             <ErrorBoundary name="Annotation Workbench">
               <AnnotationWorkbench
-                imageUrl={activeCard!.activeImageMap![activeLogicTab]!}
+                imageUrl={activeCard!.activeImageMap![cardLevel]!}
                 cardId={activeCard!.id}
                 cardText={activeCard!.text}
                 palette={committedSettings.palette}
                 style={committedSettings.style}
                 aspectRatio={committedSettings.aspectRatio}
                 resolution={committedSettings.resolution}
-                imageHistory={activeCard!.albumMap?.[activeLogicTab]?.map((img) => ({
+                imageHistory={activeCard!.albumMap?.[cardLevel]?.map((img) => ({
                   imageUrl: img.imageUrl,
                   timestamp: img.createdAt,
                   label: img.label,
                 }))}
                 mode="inline"
                 onImageModified={onImageModified}
-                onRequestFullscreen={() => onZoomImage(activeCard!.activeImageMap![activeLogicTab] || '')}
+                onRequestFullscreen={() => onZoomImage(activeCard!.activeImageMap![cardLevel] || '')}
                 contentDirty={contentDirty}
                 currentContent={currentContent}
                 onToolbarStateChange={setToolbarState}

@@ -4,13 +4,36 @@
 // - PDF → Heading extraction (TOC/bookmark structure)
 // ─────────────────────────────────────────────────────────────────
 
-export const PDF_CONVERSION_PROMPT = `Convert the PDF to markdown.
+export const PDF_CONVERSION_PROMPT = `Convert the PDF to well-structured markdown with proper heading hierarchy.
 
-Any images that are charts or diagrams should be converted to tables or description with a footnote indicating that this was originally an image.
+## HEADING STRUCTURE (CRITICAL)
 
-Put all those footnotes at the end of the markdown.
+You MUST identify headings from the PDF's visual formatting and convert them to markdown heading syntax (# ## ### etc.).
 
-**CRITICAL: Reproduce the ENTIRE document content faithfully and completely. Do NOT summarize, paraphrase, condense, or omit ANY content.**
+STEP 1: Look for a Table of Contents, Contents, or Index page in the first 10 pages. If found, use it as a map to understand the document's heading hierarchy and section names.
+
+STEP 2: Scan every page and identify headings from visual formatting cues: font size, bold weight, numbering patterns (1, 1.1, 1.1.1), spacing, and all-caps. Assign markdown heading levels based on relative visual hierarchy:
+- Largest/boldest headings → # (H1)
+- Next size down → ## (H2)
+- Next → ### (H3)
+- And so on up to ###### (H6)
+
+A true heading MUST meet ALL of these criteria:
+- It occupies its own line — it is NOT inline bold/italic text within a paragraph
+- It is followed by body content or sub-headings, not by a continuation of the same sentence
+- It is visually distinct from body text — larger font size, different weight, or different color
+- It does NOT read as a complete sentence (headings are labels/titles like "Introduction", "2.1 Methods")
+- It serves a structural role: introduces a new topic or section
+
+STEP 3 (Consistency check): Group candidate headings by level. Within each level, headings MUST share a consistent visual pattern (similar font size, weight, numbering style). If a candidate doesn't match the dominant pattern, it is likely inline emphasis — render it as bold text, NOT a heading.
+
+## CONTENT RULES
+
+- **Reproduce the ENTIRE document content faithfully and completely. Do NOT summarize, paraphrase, condense, or omit ANY content.**
+- Convert images of charts or diagrams to markdown tables or descriptions, with a footnote indicating the original was an image. Place all such footnotes at the end.
+- Preserve lists, tables, blockquotes, and other structural elements as proper markdown.
+- Do NOT include page numbers, repeating headers/footers, or watermarks.
+- Front matter (title page, printed TOC) should be included but does NOT count toward the heading hierarchy — render it as regular text or a simple list.
 
 Return ONLY the markdown content, nothing else.`;
 

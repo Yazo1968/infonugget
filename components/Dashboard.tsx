@@ -5,6 +5,23 @@ import LogoIcon from './LogoIcon';
 import UserAvatar from './UserAvatar';
 import EditProfileModal from './EditProfileModal';
 
+/** Relative time formatter — no dependency needed */
+function formatTimeAgo(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo ago`;
+  return `${Math.floor(months / 12)}y ago`;
+}
+
 interface DashboardProps {
   projects: Project[];
   nuggets: Nugget[];
@@ -105,6 +122,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
   );
 
   const hasProjects = projects.length > 0;
+  const sortedProjects = [...projects].sort((a, b) => b.lastModifiedAt - a.lastModifiedAt);
 
   return (
     <div
@@ -227,13 +245,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
         <div className="max-w-3xl mx-auto">
 
           {/* Hero section */}
-          <div style={stagger(100)} className="text-center mt-8 mb-10">
+          <div style={stagger(100)} className={`text-center ${hasProjects ? 'mt-4 mb-6' : 'mt-8 mb-8'}`}>
             <h1 className={`text-3xl tracking-tight mb-2 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
               <span className="font-light italic">info</span>
               <span className="font-semibold not-italic">nugget</span>
             </h1>
             <p className={`text-[13px] font-light ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
-              Condense knowledge into digestible insights.
+              {profile?.displayName
+                ? `Welcome back, ${profile.displayName.split(' ')[0]}.`
+                : 'Condense knowledge into digestible insights.'}
             </p>
           </div>
 
@@ -243,6 +263,26 @@ export const Dashboard: React.FC<DashboardProps> = ({
               Your Projects {hasProjects && <span className="font-normal">({projects.length})</span>}
             </h2>
           </div>
+
+          {/* Empty state for new users */}
+          {!hasProjects && (
+            <div style={stagger(250)} className="text-center py-10 mb-4">
+              <div className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 ${
+                darkMode ? 'bg-accent-blue/10' : 'bg-accent-blue/8'
+              }`}>
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-accent-blue">
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                  <line x1="12" y1="10" x2="12" y2="16" /><line x1="9" y1="13" x2="15" y2="13" />
+                </svg>
+              </div>
+              <h3 className={`text-[15px] font-semibold mb-1.5 ${darkMode ? 'text-zinc-100' : 'text-zinc-900'}`}>
+                Create your first project
+              </h3>
+              <p className={`text-[12px] max-w-xs mx-auto ${darkMode ? 'text-zinc-500' : 'text-zinc-500'}`}>
+                Projects organize your sources, nuggets, and generated infographic cards.
+              </p>
+            </div>
+          )}
 
           {/* Project grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -300,14 +340,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 style={stagger(250)}
                 onClick={() => setCreating(true)}
                 className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 border-dashed cursor-pointer transition-all duration-200 ${
+                  !hasProjects ? 'sm:col-span-2 lg:col-span-3' : ''
+                } ${
                   darkMode
-                    ? 'border-zinc-700 hover:border-zinc-500 hover:bg-zinc-900/50'
-                    : 'border-zinc-200 hover:border-zinc-400 hover:bg-zinc-50'
+                    ? 'border-zinc-700 hover:border-accent-blue/50 hover:bg-zinc-900/50'
+                    : 'border-zinc-200 hover:border-accent-blue/50 hover:bg-accent-blue/3'
                 }`}
               >
-                <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-2 ${
-                  darkMode ? 'bg-zinc-800' : 'bg-zinc-100'
-                }`}>
+                <div className="w-10 h-10 rounded-full flex items-center justify-center mb-2 bg-accent-blue/10">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-accent-blue">
                     <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
                   </svg>
@@ -317,7 +357,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </span>
               </div>
             )}
-              {projects.map((project, idx) => {
+              {sortedProjects.map((project, idx) => {
                 const stats = getProjectStats(project);
                 const isRenaming = renamingId === project.id;
                 return (
@@ -455,6 +495,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </span>
                         </>
                       )}
+                      <span className={`text-[10px] ml-auto ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                        {formatTimeAgo(project.lastModifiedAt)}
+                      </span>
                     </div>
 
                   </div>
@@ -462,35 +505,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
               })}
           </div>
 
-          {/* Feature pills */}
-          <div style={stagger(hasProjects ? 300 + projects.length * 80 + 100 : 500)} className="flex items-center justify-center gap-8 mt-12">
-            <div className={`flex items-center gap-2 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
-                <polyline points="14 2 14 8 20 8" />
-              </svg>
-              <span className="text-[9px] font-bold uppercase tracking-widest">MD / PDF</span>
-            </div>
-            <div className={`flex items-center gap-2 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3l1.912 5.813a2 2 0 0 0 1.275 1.275L21 12l-5.813 1.912a2 2 0 0 0-1.275 1.275L12 21l-1.912-5.813a2 2 0 0 0-1.275-1.275L3 12l5.813-1.912a2 2 0 0 0 1.275-1.275L12 3Z" />
-              </svg>
-              <span className="text-[9px] font-bold uppercase tracking-widest">AI Synthesis</span>
-            </div>
-            <div className={`flex items-center gap-2 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="3" width="16" height="16" rx="2" ry="2" />
-                <circle cx="8.5" cy="8.5" r="1.5" />
-                <polyline points="21 15 16 10 5 21" />
-              </svg>
-              <span className="text-[9px] font-bold uppercase tracking-widest">Infographic Cards</span>
-            </div>
+          {/* How it works strip */}
+          <div style={stagger(hasProjects ? 300 + sortedProjects.length * 80 + 100 : 500)} className="flex items-center justify-center gap-3 mt-8">
+            {[
+              { step: '1', label: 'Add sources', sub: 'MD / PDF' },
+              { step: '2', label: 'AI synthesizes', sub: 'insights' },
+              { step: '3', label: 'Get infographic', sub: 'cards' },
+            ].map((item, i) => (
+              <React.Fragment key={item.step}>
+                {i > 0 && (
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className={darkMode ? 'text-zinc-700' : 'text-zinc-300'}>
+                    <polyline points="9 18 15 12 9 6" />
+                  </svg>
+                )}
+                <div className="flex items-center gap-2">
+                  <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[9px] font-bold border ${
+                    darkMode ? 'border-zinc-700 text-zinc-500' : 'border-zinc-300 text-zinc-400'
+                  }`}>
+                    {item.step}
+                  </span>
+                  <span className={`text-[9px] font-bold uppercase tracking-widest ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
+                    {item.label} <span className="font-normal normal-case tracking-normal">{item.sub}</span>
+                  </span>
+                </div>
+              </React.Fragment>
+            ))}
           </div>
         </div>
       </div>
 
       {/* Version */}
-      <div style={stagger(hasProjects ? 300 + projects.length * 80 + 200 : 600)} className="relative z-10 shrink-0 py-3 text-center">
+      <div style={stagger(hasProjects ? 300 + sortedProjects.length * 80 + 200 : 600)} className="relative z-10 shrink-0 py-3 text-center">
         <p className={`text-[10px] font-light tracking-wide ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>v6.1</p>
       </div>
 
