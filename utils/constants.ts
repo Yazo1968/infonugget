@@ -37,9 +37,9 @@ export const RETRY_DELAY_CAP_MS = 32_000;
 export const CARD_TOKEN_LIMITS: Record<string, number> = {
   TitleCard: 150,
   TakeawayCard: 350,
-  Executive: 143,
-  Standard: 338,
-  Detailed: 663,
+  Executive: 95,
+  Standard: 203,
+  Detailed: 405,
 };
 
 /** Max tokens for cover-card synthesis (non-TakeawayCard covers). */

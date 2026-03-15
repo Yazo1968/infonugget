@@ -1359,9 +1359,9 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                         </button>
 
                         {[
-                          { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                          { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                          { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                          { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
+                          { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                          { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                         ].map((opt) => {
                           const lodKey = opt.level as 'Executive' | 'Standard' | 'Detailed';
                           const passCount = sectionLodCounts?.counts[lodKey] ?? null;
@@ -1819,9 +1819,9 @@ const DocumentEditorModal = forwardRef<DocumentEditorHandle, DocumentEditorModal
                     </button>
 
                     {[
-                      { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                      { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                      { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                      { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
+                      { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                      { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                     ].map((opt) => {
                       const isDisabled = docEligible !== null && !docEligible.has(opt.level);
                       return (

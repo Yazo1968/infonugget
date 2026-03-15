@@ -31,7 +31,7 @@ const log = createLogger('DocOps');
 
 export interface UseDocumentOperationsParams {
   recordUsage: RecordUsageFn;
-  onSubjectGenPending: (nuggetId: string, docIds: string[]) => void;
+  onDomainGenPending: (nuggetId: string, docIds: string[]) => void;
   createPlaceholderCards: (titles: string[], detailLevel: DetailLevel, options?: { sourceDocuments?: string[]; targetFolderId?: string }) => { id: string; title: string }[];
   fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
   removePlaceholderCard: (cardId: string, detailLevel: DetailLevel) => void;
@@ -43,7 +43,7 @@ export interface UseDocumentOperationsParams {
  */
 export function useDocumentOperations({
   recordUsage,
-  onSubjectGenPending,
+  onDomainGenPending,
   createPlaceholderCards,
   fillPlaceholderCard,
   removePlaceholderCard,
@@ -241,7 +241,7 @@ export function useDocumentOperations({
       // Build unified section focus + content prompt
       const isSnapshot = detailLevel === 'DirectContent';
       const isCover = !isSnapshot && isCoverLevel(detailLevel);
-      const nuggetSubject = selectedNugget?.subject;
+      const nuggetDomain = selectedNugget?.domain;
       const sectionFocus = buildSectionFocus(cardTitle, enabledDocs);
 
       let finalPrompt: string;
@@ -257,8 +257,8 @@ export function useDocumentOperations({
         systemRole = 'You are a precise document extraction tool. You reproduce document content exactly as written, converting it into clean markdown format. You never summarize, interpret, or add information.';
       } else {
         const contentPrompt = isCover
-          ? buildCoverContentPrompt(cardTitle, detailLevel, nuggetSubject)
-          : buildContentPrompt(cardTitle, detailLevel, nuggetSubject);
+          ? buildCoverContentPrompt(cardTitle, detailLevel, nuggetDomain)
+          : buildContentPrompt(cardTitle, detailLevel, nuggetDomain);
         finalPrompt = sectionFocus ? `${sectionFocus}\n\n${contentPrompt}` : contentPrompt;
         systemRole = isCover
           ? 'You are an expert cover slide content designer. You create bold, concise titles, subtitles, and taglines for presentation cover slides. Follow the format and word count requirements precisely.'
@@ -612,7 +612,7 @@ export function useDocumentOperations({
 
   const handleUploadDocuments = useCallback(
     async (files: FileList) => {
-      const needsSubject = !selectedNugget?.subject;
+      const needsDomain = !selectedNugget?.domain;
       const batchDocIds: string[] = [];
       const currentDocNames = [...(selectedNugget?.documents || []).map((d) => d.name)];
       const allFiles = Array.from(files);
@@ -633,7 +633,7 @@ export function useDocumentOperations({
         const placeholder = createPlaceholderDocument(file);
         placeholder.name = uniqueName;
         addNuggetDocument(placeholder);
-        if (needsSubject) batchDocIds.push(placeholder.id);
+        if (needsDomain) batchDocIds.push(placeholder.id);
 
         if (choice === 'markdown') {
           // User chose "Convert to Markdown"
@@ -732,17 +732,17 @@ export function useDocumentOperations({
         const placeholder = createPlaceholderDocument(file);
         placeholder.name = uniqueName;
         addNuggetDocument(placeholder);
-        if (needsSubject) batchDocIds.push(placeholder.id);
+        if (needsDomain) batchDocIds.push(placeholder.id);
 
         commitMarkdownDoc(file, placeholder, uniqueName);
       }
 
       // Trigger subject auto-generation for first upload batch
-      if (needsSubject && batchDocIds.length > 0 && selectedNugget) {
-        onSubjectGenPending(selectedNugget.id, batchDocIds);
+      if (needsDomain && batchDocIds.length > 0 && selectedNugget) {
+        onDomainGenPending(selectedNugget.id, batchDocIds);
       }
     },
-    [selectedNugget, addNuggetDocument, updateNuggetDocument, removeNuggetDocument, askPdfChoice, askPdfProcessor, commitMarkdownDoc, addToast, onSubjectGenPending],
+    [selectedNugget, addNuggetDocument, updateNuggetDocument, removeNuggetDocument, askPdfChoice, askPdfProcessor, commitMarkdownDoc, addToast, onDomainGenPending],
   );
 
   return {

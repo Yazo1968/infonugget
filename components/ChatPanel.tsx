@@ -119,8 +119,18 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   useEffect(() => {
     if (!initializedRef.current) {
       // First run: seed with all existing message IDs so we don't auto-save restored messages
+      // Also auto-expand any existing card messages
+      const cardIds: string[] = [];
       for (const msg of messages) {
         autoSavedRef.current.add(msg.id);
+        if (msg.isCardContent && msg.role === 'assistant') cardIds.push(msg.id);
+      }
+      if (cardIds.length > 0) {
+        setExpandedCards((prev) => {
+          const next = new Set(prev);
+          for (const id of cardIds) next.add(id);
+          return next;
+        });
       }
       initializedRef.current = true;
       return;
@@ -128,6 +138,14 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
     for (const msg of messages) {
       if (msg.isCardContent && msg.role === 'assistant' && !msg.savedAsCardId && !autoSavedRef.current.has(msg.id)) {
         autoSavedRef.current.add(msg.id);
+
+        // Auto-expand new card content
+        setExpandedCards((prev) => {
+          if (prev.has(msg.id)) return prev;
+          const next = new Set(prev);
+          next.add(msg.id);
+          return next;
+        });
 
         // Check external (folder-picker flow) placeholder first, then internal
         const pending = externalPlaceholderRef?.current || pendingPlaceholderRef.current;
@@ -316,10 +334,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
    *  The server wraps suggestions in this block (like document-log). Strips the fence,
    *  parses individual lines, and removes list markers. */
   const parseSuggestions = useCallback(
-    (body: string, msgIndex: number): { cleanBody: string; suggestions: string[] } => {
-      // Only parse suggestions from the first assistant message (initiate chat)
-      if (msgIndex !== 0) return { cleanBody: body, suggestions: [] };
-
+    (body: string): { cleanBody: string; suggestions: string[] } => {
       const regex = /```card-suggestions(?:\s+multi)?\n([\s\S]*?)```/;
       const match = body.match(regex);
       if (!match) return { cleanBody: body, suggestions: [] };
@@ -360,11 +375,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
 
   const formatTime = (timestamp: number) => {
     const d = new Date(timestamp);
-    const now = new Date();
-    const isToday =
-      d.getDate() === now.getDate() && d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    if (isToday) return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' }) +
+      ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
   return (
@@ -525,7 +537,7 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
 
                   // Assistant messages — parse doc-log + suggestions
                   const { body: rawBody, docLog } = parseDocumentLog(msg.content);
-                  const { cleanBody: body, suggestions } = parseSuggestions(rawBody, msgIndex);
+                  const { cleanBody: body, suggestions } = parseSuggestions(rawBody);
                   const docLogKey = msg.id + '-doclog';
                   const docLogLineCount = docLog ? docLog.split('\n').filter((l) => l.trim()).length : 0;
                   return (
@@ -604,8 +616,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                                   {extractCardTitle(body)}
                                 </span>
                               </button>
-                              {/* Hover actions */}
-                              <div className="flex items-center gap-1.5 ml-auto shrink-0 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                              {/* Actions — always visible */}
+                              <div className="flex items-center gap-1.5 ml-auto shrink-0">
                                 <div className="flex items-center gap-1 px-0.5" title="Card content (auto-saved)">
                                   <svg
                                     width="16"
@@ -670,33 +682,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                             {/* Content */}
                             {renderMarkdown(body)}
 
-                            {/* Suggestion prompts — clickable buttons from initiate chat */}
-                            {suggestions.length > 0 && (
-                              <div className="flex flex-col gap-1.5 mt-3">
-                                {suggestions.map((suggestion, sIdx) => (
-                                  <button
-                                    key={sIdx}
-                                    onClick={() => {
-                                      setInputText(suggestion);
-                                      textareaRef.current?.focus();
-                                    }}
-                                    className="text-left text-[11px] px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors leading-snug"
-                                  >
-                                    {suggestion}
-                                  </button>
-                                ))}
-                              </div>
-                            )}
-
-                            {/* Quality warning — UI-only, not part of message content */}
-                            {qualityStatus === 'red' && (
-                              <p style={{ color: '#dc2626', fontStyle: 'italic', fontSize: '12px', marginTop: '8px' }}>
-                                There are issues identified in the documents used in this chat, revising the sources is recommended
-                              </p>
-                            )}
-
-                            {/* Hover actions — timestamp, copy, add as card */}
-                            <div className="flex items-center gap-2.5 mt-2 opacity-0 group-hover/msg:opacity-100 transition-opacity">
+                            {/* Actions — timestamp, copy, add as card */}
+                            <div className="flex items-center gap-2.5 mt-2">
                               <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
                                 {formatTime(msg.timestamp)}
                               </span>
@@ -775,9 +762,51 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                               )}
                             </div>
 
+                            {/* Quality warning — UI-only, not part of message content */}
+                            {qualityStatus === 'red' && (
+                              <p style={{ color: '#dc2626', fontStyle: 'italic', fontSize: '12px', marginTop: '8px' }}>
+                                There are issues identified in the documents used in this chat, revising the sources is recommended
+                              </p>
+                            )}
+
+                            {/* Suggestion prompts — clickable buttons */}
+                            {suggestions.length > 0 && (
+                              <div className="flex flex-col gap-1.5 mt-3">
+                                {suggestions.map((suggestion, sIdx) => (
+                                  <button
+                                    key={sIdx}
+                                    onClick={() => {
+                                      setInputText(suggestion);
+                                      textareaRef.current?.focus();
+                                    }}
+                                    className="text-left text-[11px] px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors leading-snug"
+                                  >
+                                    {suggestion}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+
                           </>
                         )}
                       </div>
+                      {/* Suggestion prompts after card generation — outside card body */}
+                      {msg.isCardContent && suggestions.length > 0 && (
+                        <div className="flex flex-col gap-1.5 mt-3 max-w-[95%]">
+                          {suggestions.map((suggestion, sIdx) => (
+                            <button
+                              key={sIdx}
+                              onClick={() => {
+                                setInputText(suggestion);
+                                textareaRef.current?.focus();
+                              }}
+                              className="text-left text-[11px] px-3 py-2 rounded-lg border border-zinc-200 dark:border-zinc-700 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors leading-snug"
+                            >
+                              {suggestion}
+                            </button>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1033,9 +1062,9 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                       {showCardSubmenu && (
                         <div className="absolute right-full bottom-0 mr-1 min-w-[160px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 py-1 z-[201]">
                           {[
-                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                            { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
+                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                            { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                           ].map((opt) => (
                             <button
                               key={opt.level}

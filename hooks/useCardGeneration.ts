@@ -166,16 +166,16 @@ export function useCardGeneration(
         const title = cleanCardTitle(card.text);
 
         // Build unified section focus (handles both MD and PDF)
-        const nuggetSubject = selectedNugget?.subject;
+        const nuggetDomain = selectedNugget?.domain;
         const sectionFocus = buildSectionFocus(title, enabledDocs);
 
         // Branch: cover prompts vs content prompts
         const contentPrompt = isCover
-          ? buildCoverContentPrompt(title, level, nuggetSubject)
-          : buildContentPrompt(title, level, nuggetSubject);
+          ? buildCoverContentPrompt(title, level, nuggetDomain)
+          : buildContentPrompt(title, level, nuggetDomain);
         const finalPrompt = sectionFocus ? `${sectionFocus}\n\n${contentPrompt}` : contentPrompt;
 
-        const expertPriming = buildExpertPriming(nuggetSubject);
+        const expertPriming = buildExpertPriming(nuggetDomain);
         const systemRole = isCover
           ? expertPriming
             ? `${expertPriming} You also serve as an expert cover slide content designer. You create bold, concise titles, subtitles, and taglines for presentation cover slides. Follow the format and word count requirements precisely.`
@@ -330,7 +330,7 @@ export function useCardGeneration(
           cardTitle: cleanCardTitle(card.text),
           detailLevel: currentLevel as DetailLevel,
           settings,
-          subject: selectedNugget?.subject,
+          domain: selectedNugget?.domain,
           existingSynthesis: contentToMap,
           documents,
           referenceImage: refImagePayload,

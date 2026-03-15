@@ -57,7 +57,7 @@ const TOGGLE_OPPOSITE: Record<string, string> = {
 export function appendDocChangeEvent(
   nugget: Nugget,
   eventBase: Omit<DocChangeEvent, 'seq'>,
-): Pick<Nugget, 'docChangeLog' | 'sourcesLogStats' | 'subjectReviewNeeded' | 'briefReviewNeeded'> {
+): Pick<Nugget, 'docChangeLog' | 'sourcesLogStats' | 'domainReviewNeeded' | 'briefReviewNeeded'> {
   const stats = getDefaultStats(nugget);
   const log = [...(nugget.docChangeLog || [])];
 
@@ -80,14 +80,14 @@ export function appendDocChangeEvent(
       log.splice(cancelIdx, 1);
       stats.rawEventSeq = Math.max(stats.lastCheckpointRawSeq, stats.rawEventSeq - 1);
       const stillHasPendingChanges = stats.rawEventSeq > stats.lastCheckpointRawSeq;
-      return { docChangeLog: log, sourcesLogStats: stats, subjectReviewNeeded: stillHasPendingChanges ? nugget.subjectReviewNeeded : false, briefReviewNeeded: stillHasPendingChanges ? nugget.briefReviewNeeded : false };
+      return { docChangeLog: log, sourcesLogStats: stats, domainReviewNeeded: stillHasPendingChanges ? nugget.domainReviewNeeded : false, briefReviewNeeded: stillHasPendingChanges ? nugget.briefReviewNeeded : false };
     }
   }
 
   stats.rawEventSeq += 1;
   const event: DocChangeEvent = { ...eventBase, seq: stats.rawEventSeq };
   log.push(event);
-  return { docChangeLog: log, sourcesLogStats: stats, subjectReviewNeeded: true, briefReviewNeeded: true };
+  return { docChangeLog: log, sourcesLogStats: stats, domainReviewNeeded: true, briefReviewNeeded: true };
 }
 
 /**

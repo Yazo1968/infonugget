@@ -21,20 +21,20 @@ export function describeCanvas(aspectRatio: string): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Expert Priming — Subject-Based Domain Expert Injection
+// Expert Priming — Domain-Based Expert Injection
 // ─────────────────────────────────────────────────────────────────
 // Builds a priming sentence that makes Claude adopt the role of a
-// top-tier domain expert based on the nugget's subject. Injected
+// top-tier domain expert based on the nugget's domain. Injected
 // into system prompts across all content-generating pipelines.
 // ─────────────────────────────────────────────────────────────────
 
 /**
- * Build expert priming text from a nugget's subject string.
- * Returns an empty string if subject is falsy.
+ * Build expert priming text from a nugget's domain string.
+ * Returns an empty string if domain is falsy.
  */
-export function buildExpertPriming(subject?: string): string {
-  if (!subject) return '';
-  return `You are a domain expert on the following subject: ${subject}. Use accurate terminology and professional judgment to organize and present the source material. Do NOT add facts, claims, data, or context from your own knowledge — work exclusively with what the source documents provide.`;
+export function buildExpertPriming(domain?: string): string {
+  if (!domain) return '';
+  return `You are a domain expert on the following subject: ${domain}. Use accurate terminology and professional judgment to organize and present the source material. Do NOT add facts, claims, data, or context from your own knowledge — work exclusively with what the source documents provide.`;
 }
 
 // ─────────────────────────────────────────────────────────────────
@@ -470,33 +470,56 @@ export function buildNarrativeStyleBlock(settings: StylingOptions): string {
 }
 
 // ─────────────────────────────────────────────────────────────────
-// Prompt Assembler — 4-Section Template
+// Prompt Assembler — Direct Injection Template
 // ─────────────────────────────────────────────────────────────────
-// Instructions (static) → Subject → Content (as-is) → Style (injected)
+// Single instruction sentence + THEME (domain) + CONTENT + STYLE
 // ─────────────────────────────────────────────────────────────────
+
+/**
+ * Parse the stored domain string into its component parts.
+ * Expected format:
+ *   - Domain: <value>
+ *   - Content nature: <value>
+ *   - Visualization paradigm: <value>
+ *   - Visual vocabulary: <value>
+ */
+export function parseDomain(domain?: string): {
+  sector: string;
+  contentNature: string;
+  vizParadigm: string;
+  visuals: string;
+} {
+  if (!domain) return { sector: '', contentNature: '', vizParadigm: '', visuals: '' };
+  const sectorMatch = domain.match(/-\s*Domain:\s*(.+)/i);
+  const natureMatch = domain.match(/-\s*Content nature:\s*(.+)/i);
+  const paradigmMatch = domain.match(/-\s*Visualization paradigm:\s*(.+)/i);
+  const visualsMatch = domain.match(/-\s*Visual vocabulary:\s*(.+)/i);
+  return {
+    sector: sectorMatch?.[1]?.trim() || '',
+    contentNature: natureMatch?.[1]?.trim() || '',
+    vizParadigm: paradigmMatch?.[1]?.trim() || '',
+    visuals: visualsMatch?.[1]?.trim() || '',
+  };
+}
 
 export function assembleRendererPrompt(
   cardTitle: string,
   synthesisContent: string,
   settings: StylingOptions,
   referenceNote?: string,
-  subject?: string,
+  domain?: string,
 ): string {
-  const subjectLine = subject || 'Not specified';
   const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
   let refLine = '';
   if (referenceNote) refLine = `\n\n${referenceNote}`;
 
-  return `INSTRUCTIONS: Role: Act as an expert Information Architect and Presentation Designer. Task: Transform the provided text into a highly visual, logically connected slide. Use a step-by-step cognitive process:
-* Step 1: Macro-Relational Synthesis. Before visualizing individual points, analyze the holistic relationship between all provided content sections. Identify if they form a cause-and-effect loop, a problem-solution bridge, a timeline, or a comparative matrix. The final layout must visually connect these sections (using arrows, overlapping shapes, or bridging elements), not just list them in disconnected silos.
-* Step 2: Visual Framework Selection. Based strictly on Step 1, select the most effective overall layout. Ensure the flow of information (e.g., left-to-right, center-out) matches the logical relationship you identified.
-* Step 3: Component Design. For quantitative data, use precise charts (bar, pie, line). For categories/lists, use modular grids with relevant iconography.
-* Step 4: Strict Content Constraint. Use only the data, facts, and text provided in the "CONTENT" section. Elevate key metrics or critical statements as bold callouts. Do not hallucinate, assume, extrapolate, or invent any external context, statistics, or filler text.
+  // Build THEME block from domain bullet points
+  const themeBlock = domain ? `\n\nTHEME:\n${domain.trim()}` : '';
 
-SUBJECT: ${subjectLine}
+  return `Transform the provided CONTENT into a highly visual, illustration. Use the exact CONTENT provided below. Use your thinking abilities to first plan the illustration layout, components, shapes, text and other elements required.${themeBlock}
 
-CONTENT: ${contentBlock}
+CONTENT:\n${contentBlock}
 
-STYLE: ${styleBlock}${refLine}`;
+STYLE:\n${styleBlock}${refLine}`;
 }

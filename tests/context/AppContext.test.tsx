@@ -175,11 +175,11 @@ describe('AppContext — Nugget CRUD', () => {
     });
 
     act(() => {
-      result.current.updateNugget('n1', (n) => ({ ...n, name: 'Modified', subject: 'New subject' }));
+      result.current.updateNugget('n1', (n) => ({ ...n, name: 'Modified', domain: 'New domain' }));
     });
 
     expect(result.current.nuggets[0].name).toBe('Modified');
-    expect(result.current.nuggets[0].subject).toBe('New subject');
+    expect(result.current.nuggets[0].domain).toBe('New domain');
   });
 
   it('addNuggetToProject links a nugget to a project', () => {

@@ -15,9 +15,9 @@ import { buildExpertPriming } from './promptUtils';
 export function buildCoverContentPrompt(
   cardTitle: string,
   coverType: DetailLevel,
-  subject?: string,
+  domain?: string,
 ): string {
-  const expertPriming = buildExpertPriming(subject);
+  const expertPriming = buildExpertPriming(domain);
   let instructions: string;
 
   if (coverType === 'TitleCard') {

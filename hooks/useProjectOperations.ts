@@ -9,7 +9,7 @@ import { processFileToDocument, fileToBase64, base64ToBlob } from '../utils/file
 import { flattenBookmarks } from '../utils/pdfBookmarks';
 import type { PdfProcessorResult } from '../components/PdfProcessorModal';
 import { useToast } from '../components/ToastNotification';
-import { generateSubject } from '../utils/subjectGeneration';
+import { generateDomain } from '../utils/domainGeneration';
 import { RecordUsageFn } from './useTokenUsage';
 import { createLogger } from '../utils/logger';
 
@@ -54,7 +54,7 @@ export interface UseProjectOperationsParams {
 }
 
 /**
- * Project & nugget operations — creation, duplication, copy/move, subject management.
+ * Project & nugget operations — creation, duplication, copy/move, domain management.
  * Extracted from App.tsx for domain separation (item 4.2).
  */
 export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UseProjectOperationsParams) {
@@ -72,17 +72,17 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
   const [showProjectCreation, setShowProjectCreation] = useState(false);
   const [projectCreationChainToNugget, setProjectCreationChainToNugget] = useState(false);
 
-  // ── Subject regeneration state ──
-  const [isRegeneratingSubject, setIsRegeneratingSubject] = useState(false);
+  // ── Domain regeneration state ──
+  const [isRegeneratingDomain, setIsRegeneratingDomain] = useState(false);
 
-  // ── Subject auto-generation on first upload ──
-  const pendingSubjectGenRef = useRef<string | null>(null); // nuggetId awaiting subject gen
-  const subjectGenDocIdsRef = useRef<Set<string>>(new Set()); // doc IDs to wait for
+  // ── Domain auto-generation on first upload ──
+  const pendingDomainGenRef = useRef<string | null>(null); // nuggetId awaiting domain gen
+  const domainGenDocIdsRef = useRef<Set<string>>(new Set()); // doc IDs to wait for
 
-  // ── Cross-hook communication: let useDocumentOperations trigger subject auto-gen ──
-  const setSubjectGenPending = useCallback((nuggetId: string, docIds: string[]) => {
-    pendingSubjectGenRef.current = nuggetId;
-    subjectGenDocIdsRef.current = new Set(docIds);
+  // ── Cross-hook communication: let useDocumentOperations trigger domain auto-gen ──
+  const setDomainGenPending = useCallback((nuggetId: string, docIds: string[]) => {
+    pendingDomainGenRef.current = nuggetId;
+    domainGenDocIdsRef.current = new Set(docIds);
   }, []);
 
   // ── Nugget creation ──
@@ -101,9 +101,9 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
       // If pending files are provided, process them in background and update nugget via updateNugget
       // (uses explicit nuggetId — safe for async, no selectedNuggetId dependency)
       if (pendingFiles && pendingFiles.length > 0) {
-        // Track for subject auto-generation once all docs are ready
-        pendingSubjectGenRef.current = nugget.id;
-        subjectGenDocIdsRef.current = new Set(pendingFiles.map((pf) => pf.placeholderId));
+        // Track for domain auto-generation once all docs are ready
+        pendingDomainGenRef.current = nugget.id;
+        domainGenDocIdsRef.current = new Set(pendingFiles.map((pf) => pf.placeholderId));
 
         // Separate markdown files (parallel) from native-PDFs (sequential with modal)
         const mdPending = pendingFiles.filter((pf) => pf.mode === 'markdown');
@@ -183,13 +183,13 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                 const result = await askPdfProcessor(pdfBase64, pf.file.name);
 
                 if (result === 'discard' || result === 'cancel') {
-                  // Remove document from the nugget + remove from subject tracking
+                  // Remove document from the nugget + remove from domain tracking
                   updateNugget(nugget.id, (n) => ({
                     ...n,
                     documents: n.documents.filter((d) => d.id !== pf.placeholderId),
                     lastModifiedAt: Date.now(),
                   }));
-                  subjectGenDocIdsRef.current.delete(pf.placeholderId);
+                  domainGenDocIdsRef.current.delete(pf.placeholderId);
                 } else if (result === 'convert-to-markdown') {
                   // Reset to markdown mode and re-process
                   updateNugget(nugget.id, (n) => ({
@@ -273,23 +273,23 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         const readyDocs = nugget.documents.filter(
           (d) => d.status === 'ready' && (d.content || d.fileId || d.pdfBase64),
         );
-        if (readyDocs.length > 0 && !nugget.subject) {
+        if (readyDocs.length > 0 && !nugget.domain) {
           (async () => {
             try {
-              const subject = await generateSubject(readyDocs, recordUsage);
-              updateNugget(nugget.id, (n) => ({ ...n, subject, lastModifiedAt: Date.now() }));
+              const domain = await generateDomain(readyDocs, recordUsage);
+              updateNugget(nugget.id, (n) => ({ ...n, domain, lastModifiedAt: Date.now() }));
               addToast({
                 type: 'info',
-                message: `Subject: ${subject}`,
-                detail: 'Edit via Sources Manager > Subject',
+                message: `Domain: ${domain}`,
+                detail: 'Edit via Sources Manager > Domain',
                 duration: 8000,
               });
             } catch (err) {
-              log.warn('Subject auto-generation failed for new nugget:', err);
+              log.warn('Domain auto-generation failed for new nugget:', err);
               addToast({
                 type: 'warning',
-                message: 'Could not auto-generate subject',
-                detail: 'You can set it manually via Sources Manager > Subject.',
+                message: 'Could not auto-generate domain',
+                detail: 'You can set it manually via Sources Manager > Domain.',
                 duration: 8000,
               });
             }
@@ -495,16 +495,16 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
     [nuggets, projects, addNugget, setProjects],
   );
 
-  // ── Subject modal handlers ──
+  // ── Domain modal handlers ──
 
-  const handleSaveSubject = useCallback(
-    (nuggetId: string, subject: string) => {
-      updateNugget(nuggetId, (n) => ({ ...n, subject, subjectReviewNeeded: false, lastModifiedAt: Date.now() }));
+  const handleSaveDomain = useCallback(
+    (nuggetId: string, domain: string) => {
+      updateNugget(nuggetId, (n) => ({ ...n, domain, domainReviewNeeded: false, lastModifiedAt: Date.now() }));
     },
     [updateNugget],
   );
 
-  const handleRegenerateSubject = useCallback(
+  const handleRegenerateDomain = useCallback(
     async (nuggetId: string) => {
       const nugget = nuggets.find((n) => n.id === nuggetId);
       if (!nugget) return;
@@ -512,42 +512,42 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
       if (readyDocs.length === 0) {
         addToast({
           type: 'warning',
-          message: 'No processed documents available to generate subject from.',
+          message: 'No processed documents available to generate domain from.',
           duration: 6000,
         });
         return;
       }
-      setIsRegeneratingSubject(true);
+      setIsRegeneratingDomain(true);
       try {
-        const subject = await generateSubject(readyDocs, recordUsage);
-        updateNugget(nuggetId, (n) => ({ ...n, subject, subjectReviewNeeded: false, lastModifiedAt: Date.now() }));
-        addToast({ type: 'success', message: 'Subject regenerated successfully.', duration: 4000 });
+        const domain = await generateDomain(readyDocs, recordUsage);
+        updateNugget(nuggetId, (n) => ({ ...n, domain, domainReviewNeeded: false, lastModifiedAt: Date.now() }));
+        addToast({ type: 'success', message: 'Domain regenerated successfully.', duration: 4000 });
       } catch (err) {
-        log.warn('Subject regeneration failed:', err);
+        log.warn('Domain regeneration failed:', err);
         addToast({
           type: 'error',
-          message: 'Failed to regenerate subject.',
+          message: 'Failed to regenerate domain.',
           detail: err instanceof Error ? err.message : 'Unknown error',
           duration: 8000,
         });
       } finally {
-        setIsRegeneratingSubject(false);
+        setIsRegeneratingDomain(false);
       }
     },
     [nuggets, updateNugget, recordUsage, addToast],
   );
 
-  // ── Subject auto-generation watcher ──
+  // ── Domain auto-generation watcher ──
   // Watches nuggets state; when all tracked docs reach 'ready', triggers generation
   useEffect(() => {
-    const nuggetId = pendingSubjectGenRef.current;
+    const nuggetId = pendingDomainGenRef.current;
     if (!nuggetId) return;
-    const trackedIds = subjectGenDocIdsRef.current;
+    const trackedIds = domainGenDocIdsRef.current;
     if (trackedIds.size === 0) return;
 
     const nugget = nuggets.find((n) => n.id === nuggetId);
     if (!nugget) {
-      pendingSubjectGenRef.current = null;
+      pendingDomainGenRef.current = null;
       return;
     }
 
@@ -559,15 +559,15 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
     if (!allDone) return;
 
     // All done — clear refs and trigger generation
-    pendingSubjectGenRef.current = null;
-    subjectGenDocIdsRef.current = new Set();
+    pendingDomainGenRef.current = null;
+    domainGenDocIdsRef.current = new Set();
 
-    // Use ALL ready docs in the nugget (not just the batch) so subject covers the full document set
+    // Use ALL ready docs in the nugget (not just the batch) so domain covers the full document set
     const allReadyDocs = nugget.documents.filter((d) => d.status === 'ready' && (d.content || d.fileId || d.pdfBase64));
     if (allReadyDocs.length === 0) {
       addToast({
         type: 'warning',
-        message: 'Could not generate subject — no documents processed successfully.',
+        message: 'Could not generate domain — no documents processed successfully.',
         duration: 6000,
       });
       return;
@@ -575,20 +575,20 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
 
     (async () => {
       try {
-        const subject = await generateSubject(allReadyDocs, recordUsage);
-        updateNugget(nuggetId, (n) => ({ ...n, subject, lastModifiedAt: Date.now() }));
+        const domain = await generateDomain(allReadyDocs, recordUsage);
+        updateNugget(nuggetId, (n) => ({ ...n, domain, lastModifiedAt: Date.now() }));
         addToast({
           type: 'info',
-          message: `Subject: ${subject}`,
-          detail: 'Edit via Sources Manager > Subject',
+          message: `Domain: ${domain}`,
+          detail: 'Edit via Sources Manager > Domain',
           duration: 8000,
         });
       } catch (err) {
-        log.warn('Subject auto-generation failed:', err);
+        log.warn('Domain auto-generation failed:', err);
         addToast({
           type: 'warning',
-          message: 'Could not auto-generate subject',
-          detail: 'You can set it manually via Sources Manager > Subject.',
+          message: 'Could not auto-generate domain',
+          detail: 'You can set it manually via Sources Manager > Domain.',
           duration: 8000,
         });
       }
@@ -606,8 +606,8 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
     setShowProjectCreation,
     projectCreationChainToNugget,
     setProjectCreationChainToNugget,
-    // Subject regeneration state
-    isRegeneratingSubject,
+    // Domain regeneration state
+    isRegeneratingDomain,
     // Callbacks
     handleCreateNugget,
     handleCreateProject,
@@ -615,9 +615,9 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
     handleDuplicateProject,
     handleMoveNuggetToProject,
     handleCreateProjectForNugget,
-    handleSaveSubject,
-    handleRegenerateSubject,
+    handleSaveDomain,
+    handleRegenerateDomain,
     // Cross-hook communication
-    setSubjectGenPending,
+    setDomainGenPending,
   };
 }

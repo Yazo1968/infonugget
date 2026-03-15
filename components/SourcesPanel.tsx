@@ -1147,9 +1147,9 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
 
                                                 {/* Executive / Standard / Detailed — gated by word count */}
                                                 {[
-                                                  { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                                                  { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                                                  { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                                                  { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
+                                                  { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                                                  { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                                                 ].map((opt) => {
                                                   const lodKey = opt.level as 'Executive' | 'Standard' | 'Detailed';
                                                   const passCount = pdfLodCounts?.counts[lodKey] ?? null;
@@ -1547,9 +1547,9 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                             <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Content as-is</span>
                                           </button>
                                           {[
-                                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '70-100 words' },
-                                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '200-250 words' },
-                                            { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '450-500 words' },
+                                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
+                                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                                            { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                                           ].map((opt) => {
                                             const isDisabled = pdfDocEligible !== null && !pdfDocEligible.has(opt.level);
                                             return (

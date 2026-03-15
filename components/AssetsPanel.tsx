@@ -9,6 +9,7 @@ import ErrorBoundary from './ErrorBoundary';
 import { ReferenceMismatchDialog, ManifestModal } from './Dialogs';
 import { useThemeContext } from '../context/ThemeContext';
 import { useSelectionContext } from '../context/SelectionContext';
+import { useNuggetContext } from '../context/NuggetContext';
 import PanelRequirements from './PanelRequirements';
 import ChiselLoader from './ChiselLoader';
 import { assembleRendererPrompt } from '../utils/prompts/promptUtils';
@@ -78,6 +79,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 }) => {
   const { darkMode } = useThemeContext();
   const { activeCard } = useSelectionContext();
+  const { selectedNugget } = useNuggetContext();
   const _colorRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [showPrompt, setShowPrompt] = useState(false);
   const [showReference, setShowReference] = useState(false);
@@ -159,8 +161,8 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
       // Cover prompt reconstruction not available client-side — return synthesis as fallback
       return null;
     }
-    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings);
-  }, [activeCard, activeLogicTab, committedSettings]);
+    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings, undefined, selectedNugget?.domain);
+  }, [activeCard, activeLogicTab, committedSettings, selectedNugget?.domain]);
 
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];
 

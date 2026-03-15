@@ -58,7 +58,7 @@ export interface GenerateCardRequest {
   cardTitle: string;
   detailLevel: DetailLevel;
   settings: StylingOptions;
-  subject?: string;
+  domain?: string;
   existingSynthesis?: string;
   documents?: Array<{
     fileId?: string;
@@ -177,12 +177,12 @@ export interface ChatMessageHistoryEntry {
 }
 
 export interface ChatMessageRequest {
-  action: 'send_message' | 'initiate_chat';
+  action: 'send_message' | 'initiate_chat' | 'compact';
   userText?: string;
   isCardRequest?: boolean;
   detailLevel?: DetailLevel;
   conversationHistory?: ChatMessageHistoryEntry[];
-  subject?: string;
+  domain?: string;
   qualityReport?: QualityReport | DQAFReport;
   documents: ChatMessageDocument[];
 }
@@ -233,7 +233,7 @@ export interface AutoDeckRequest {
   action: 'plan' | 'revise' | 'finalize' | 'produce';
   briefing?: import('../types').AutoDeckBriefing;
   lod?: import('../types').AutoDeckLod;
-  subject?: string;
+  domain?: string;
   qualityReport?: QualityReport | DQAFReport;
   documents?: Array<{
     id: string;

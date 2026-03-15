@@ -12,25 +12,25 @@ import { buildExpertPriming } from './promptUtils';
 export function buildContentPrompt(
   cardTitle: string,
   level: DetailLevel,
-  subject?: string,
+  domain?: string,
 ): string {
   if (isCoverLevel(level)) {
     throw new Error(`Use buildCoverContentPrompt for card cover levels (got '${level}')`);
   }
 
-  let wordCountRange = '200-250';
+  let wordCountRange = '120-150';
   let scopeGuidance = '';
   let formattingGuidance = '';
 
   if (level === 'Executive') {
-    wordCountRange = '70-100';
+    wordCountRange = '50-70';
     scopeGuidance = `Scope: This is an EXECUTIVE SUMMARY. Prioritize ruthlessly - include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
     formattingGuidance = `Formatting (Executive):
 - Maximum one subheading below the title
 - Keep content extremely brief given the word limit
 - Use whichever allowed format best presents each piece of information`;
   } else if (level === 'Detailed') {
-    wordCountRange = '450-500';
+    wordCountRange = '250-300';
     scopeGuidance = `Scope: This is a DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships. Cover all relevant dimensions of the topic.`;
     formattingGuidance = `Formatting:
 - Use whichever allowed format best presents each piece of information
@@ -44,7 +44,7 @@ export function buildContentPrompt(
 - Use tables when comparing items across multiple dimensions or presenting structured data`;
   }
 
-  const expertPriming = buildExpertPriming(subject);
+  const expertPriming = buildExpertPriming(domain);
   return `${expertPriming ? expertPriming + '\n\n' : ''}Content Generation - [${cardTitle}]
 Using the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content. Understand the context of this section and how it relates to the document as a whole. Use this understanding to inform your synthesis, but only include content from the target section.
 

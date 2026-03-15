@@ -155,7 +155,7 @@ export function useAutoDeck(
         nuggetId: selectedNugget.id,
         briefing,
         lod,
-        subject: selectedNugget.subject,
+        domain: selectedNugget.domain,
         orderedDocIds,
         status: 'planning',
         parsedPlan: null,
@@ -190,7 +190,7 @@ export function useAutoDeck(
           action: 'plan',
           briefing,
           lod,
-          subject: newSession.subject,
+          domain: newSession.domain,
           qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           totalWordCount,
@@ -316,7 +316,7 @@ export function useAutoDeck(
         action: 'revise',
         briefing: session.briefing,
         lod: session.lod,
-        subject: session.subject,
+        domain: session.domain,
         qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
         documents: apiDocs,
         totalWordCount,
@@ -456,7 +456,7 @@ export function useAutoDeck(
           action: 'finalize',
           briefing: session.briefing,
           lod: session.lod,
-          subject: session.subject,
+          domain: session.domain,
           plan: filteredPlan,
           questions: session.parsedPlan.questions || [],
           questionAnswers: session.reviewState.questionAnswers,
@@ -568,7 +568,7 @@ export function useAutoDeck(
           action: 'produce',
           briefing: session.briefing,
           lod: session.lod,
-          subject: session.subject,
+          domain: session.domain,
           qualityReport: selectedNugget?.dqafReport ?? selectedNugget?.qualityReport,
           documents: apiDocs,
           planCards: batch,
@@ -776,7 +776,7 @@ export function useAutoDeck(
 
   const generateBriefingSuggestions = useCallback(
     async (
-      subject: string | undefined,
+      domain: string | undefined,
       documents: UploadedFile[],
       totalWordCount: number,
     ): Promise<BriefingSuggestions> => {
@@ -792,12 +792,12 @@ export function useAutoDeck(
 
         // Build a natural-language prompt that produces structured markdown tables
         const docList = documents.map((d) => `- ${d.name}`).join('\n');
-        const subjectLine = subject ? `The subject/topic is: "${subject}".` : '';
+        const domainLine = domain ? `The domain/topic is: "${domain}".` : '';
         const prompt = [
           `I have ${documents.length} document(s) totaling ~${totalWordCount.toLocaleString()} words:`,
           docList,
           '',
-          subjectLine,
+          domainLine,
           '',
           `Based on the actual content of these documents, suggest ${BRIEFING_SUGGESTION_COUNT} options for EACH of the following 5 briefing fields for a presentation deck. Each option must have a short label (2–5 words) and a brief description sentence.`,
           '',
@@ -827,7 +827,7 @@ export function useAutoDeck(
             action: 'send_message',
             userText: prompt,
             documents: chatDocs,
-            subject,
+            domain,
             conversationHistory: [],
           },
           controller.signal,

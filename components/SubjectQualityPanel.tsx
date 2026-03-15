@@ -39,15 +39,15 @@ export interface SubjectQualityPanelProps {
   onTabChange: (tab: SubjectQualityTab) => void;
   tabBarRef?: React.RefObject<HTMLElement | null>;
   onToggle: () => void;
-  // Subject
+  // Domain
   nuggetId: string;
   nuggetName: string;
-  currentSubject: string;
-  isRegeneratingSubject: boolean;
-  subjectReviewNeeded: boolean;
-  onSaveSubject: (nuggetId: string, subject: string) => void;
-  onRegenerateSubject: (nuggetId: string) => void;
-  onDismissSubjectReview: (nuggetId: string) => void;
+  currentDomain: string;
+  isRegeneratingDomain: boolean;
+  domainReviewNeeded: boolean;
+  onSaveDomain: (nuggetId: string, domain: string) => void;
+  onRegenerateDomain: (nuggetId: string) => void;
+  onDismissDomainReview: (nuggetId: string) => void;
   // Sources log
   sourcesLog: SourcesLogEntry[];
   sourcesLogStats: SourcesLogStats;
@@ -193,14 +193,14 @@ function getVerdictColor(verdict?: DQAFVerdict) {
 }
 
 /** Derive engagement purpose string from briefing + subject */
-export function deriveEngagementPurpose(briefing?: AutoDeckBriefing, subject?: string): string {
+export function deriveEngagementPurpose(briefing?: AutoDeckBriefing, domain?: string): string {
   const parts: string[] = [];
   if (briefing?.objective) parts.push(`Objective: ${briefing.objective}`);
   if (briefing?.audience) parts.push(`Audience: ${briefing.audience}`);
   if (briefing?.type) parts.push(`Type: ${briefing.type}`);
   if (briefing?.tone) parts.push(`Tone: ${briefing.tone}`);
   if (briefing?.focus) parts.push(`Focus: ${briefing.focus}`);
-  if (subject) parts.push(`Subject: ${subject}`);
+  if (domain) parts.push(`Domain: ${domain}`);
   return parts.join('. ');
 }
 
@@ -210,7 +210,7 @@ export function deriveEngagementPurpose(briefing?: AutoDeckBriefing, subject?: s
 
 const TAB_ITEMS: { id: SubjectQualityTab; label: string }[] = [
   { id: 'logs', label: 'Logs' },
-  { id: 'brief', label: 'Subject & Brief' },
+  { id: 'brief', label: 'Domain & Brief' },
   { id: 'assessment', label: 'Assessment' },
 ];
 
@@ -221,9 +221,9 @@ const TAB_ITEMS: { id: SubjectQualityTab; label: string }[] = [
 const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
   const {
     isOpen, activeTab, onTabChange, tabBarRef,
-    // Subject
-    nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
-    subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
+    // Domain
+    nuggetId, nuggetName, currentDomain, isRegeneratingDomain,
+    domainReviewNeeded, onSaveDomain, onRegenerateDomain, onDismissDomainReview,
     // Sources log
     sourcesLog, sourcesLogStats, hasPendingChanges,
     onDeleteLogEntry, onDeleteAllLogEntries, onRenameLogEntry, onCreateLogEntry,
@@ -347,7 +347,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
           <div className="w-[5px] h-6 rounded-full bg-zinc-300 dark:bg-zinc-500 group-hover:bg-zinc-400 dark:group-hover:bg-zinc-400 transition-colors" />
         </div>
 
-        {/* ── Section 2: Subject & Brief ── */}
+        {/* ── Section 2: Domain & Brief ── */}
         <div className="flex-1 flex flex-col overflow-hidden border-r border-zinc-200 dark:border-zinc-600 min-w-0">
           <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
             <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(25,50,90)' : 'rgb(140,185,230)' }}>
@@ -356,7 +356,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
                 <path d="M9 3v18" />
               </svg>
             </div>
-            <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Subject & Brief</span>
+            <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Domain & Brief</span>
           </div>
           <div className="flex-1 overflow-y-auto min-h-0">
             <BriefTab
@@ -364,12 +364,12 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
               darkMode={darkMode}
               nuggetId={nuggetId}
               nuggetName={nuggetName}
-              currentSubject={currentSubject}
-              isRegeneratingSubject={isRegeneratingSubject}
-              subjectReviewNeeded={subjectReviewNeeded}
-              onSaveSubject={onSaveSubject}
-              onRegenerateSubject={onRegenerateSubject}
-              onDismissSubjectReview={onDismissSubjectReview}
+              currentDomain={currentDomain}
+              isRegeneratingDomain={isRegeneratingDomain}
+              domainReviewNeeded={domainReviewNeeded}
+              onSaveDomain={onSaveDomain}
+              onRegenerateDomain={onRegenerateDomain}
+              onDismissDomainReview={onDismissDomainReview}
               briefing={briefing}
               briefingSuggestions={briefingSuggestions}
               briefReviewNeeded={briefReviewNeeded}
@@ -447,7 +447,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
           onDiscard={handleDialogDiscard}
           onCancel={handleDialogCancel}
           title="Unsaved changes"
-          description="You have unsaved edits to the subject or briefing. Save or discard them to continue."
+          description="You have unsaved edits to the domain or briefing. Save or discard them to continue."
           saveLabel="Update"
           discardLabel="Discard Changes"
         />
@@ -491,63 +491,63 @@ function LogsTab({
   );
 }
 
-// ── Subject Section (inline edit, forwardRef for draft-mode gating) ──
+// ── Domain Section (inline edit, forwardRef for draft-mode gating) ──
 
-interface SubjectSectionHandle {
+interface DomainSectionHandle {
   save: () => void;
   discard: () => void;
   readonly isDirty: boolean;
 }
 
-const SubjectSection = forwardRef<SubjectSectionHandle, {
+const DomainSection = forwardRef<DomainSectionHandle, {
   darkMode: boolean;
   nuggetId: string;
   nuggetName: string;
-  currentSubject: string;
-  isRegeneratingSubject: boolean;
-  subjectReviewNeeded: boolean;
-  onSaveSubject: (nuggetId: string, subject: string) => void;
-  onRegenerateSubject: (nuggetId: string) => void;
-  onDismissSubjectReview: (nuggetId: string) => void;
+  currentDomain: string;
+  isRegeneratingDomain: boolean;
+  domainReviewNeeded: boolean;
+  onSaveDomain: (nuggetId: string, domain: string) => void;
+  onRegenerateDomain: (nuggetId: string) => void;
+  onDismissDomainReview: (nuggetId: string) => void;
   onDirtyChange?: (dirty: boolean) => void;
-}>(function SubjectSection({
-  darkMode, nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
-  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
+}>(function DomainSection({
+  darkMode, nuggetId, nuggetName, currentDomain, isRegeneratingDomain,
+  domainReviewNeeded, onSaveDomain, onRegenerateDomain, onDismissDomainReview,
   onDirtyChange,
 }, ref) {
-  const [localSubject, setLocalSubject] = useState(currentSubject);
+  const [localDomain, setLocalDomain] = useState(currentDomain);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Sync when external value changes (e.g. regeneration completes, nugget switch)
   useEffect(() => {
-    if (currentSubject !== localSubject && !isRegeneratingSubject) {
-      setLocalSubject(currentSubject);
+    if (currentDomain !== localDomain && !isRegeneratingDomain) {
+      setLocalDomain(currentDomain);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentSubject, isRegeneratingSubject]);
+  }, [currentDomain, isRegeneratingDomain]);
 
   // Auto-resize textarea on value change
   useEffect(() => {
     const el = textareaRef.current;
     if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
-  }, [localSubject]);
+  }, [localDomain]);
 
   const handleSave = useCallback(() => {
-    const trimmed = localSubject.trim();
-    if (trimmed && trimmed !== currentSubject) {
-      onSaveSubject(nuggetId, trimmed);
+    const trimmed = localDomain.trim();
+    if (trimmed && trimmed !== currentDomain) {
+      onSaveDomain(nuggetId, trimmed);
     }
-  }, [localSubject, currentSubject, nuggetId, onSaveSubject]);
+  }, [localDomain, currentDomain, nuggetId, onSaveDomain]);
 
-  const subjectIsDirty = localSubject.trim() !== currentSubject;
+  const domainIsDirty = localDomain.trim() !== currentDomain;
 
-  useEffect(() => { onDirtyChange?.(subjectIsDirty); }, [subjectIsDirty, onDirtyChange]);
+  useEffect(() => { onDirtyChange?.(domainIsDirty); }, [domainIsDirty, onDirtyChange]);
 
   useImperativeHandle(ref, () => ({
     save() { handleSave(); },
-    discard() { setLocalSubject(currentSubject); },
-    get isDirty() { return subjectIsDirty; },
-  }), [handleSave, currentSubject, subjectIsDirty]);
+    discard() { setLocalDomain(currentDomain); },
+    get isDirty() { return domainIsDirty; },
+  }), [handleSave, currentDomain, domainIsDirty]);
 
   return (
     <div className="shrink-0 px-5 pt-4 pb-3">
@@ -555,9 +555,9 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2">
           <h3 className={`text-[11px] font-semibold uppercase tracking-wider ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>
-            Subject
+            Domain
           </h3>
-          {subjectReviewNeeded && (
+          {domainReviewNeeded && (
             <span className="text-[9px] font-medium text-amber-500 dark:text-amber-400 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
               Review needed
@@ -567,11 +567,11 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => onRegenerateSubject(nuggetId)}
-            disabled={isRegeneratingSubject}
+            onClick={() => onRegenerateDomain(nuggetId)}
+            disabled={isRegeneratingDomain}
             className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400 hover:text-zinc-700 dark:hover:text-zinc-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
           >
-            {isRegeneratingSubject ? (
+            {isRegeneratingDomain ? (
               <><svg className="animate-spin h-3 w-3" viewBox="0 0 24 24" fill="none"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>Regenerating...</>
             ) : (
               <><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -579,7 +579,7 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
               </svg>Regenerate</>
             )}
           </button>
-          {subjectIsDirty && (
+          {domainIsDirty && (
             <button
               type="button"
               onClick={handleSave}
@@ -592,16 +592,16 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
       </div>
       <textarea
         ref={textareaRef}
-        value={localSubject}
+        value={localDomain}
         onChange={(e) => {
-          setLocalSubject(e.target.value);
+          setLocalDomain(e.target.value);
           // Auto-resize
           const el = e.target;
           el.style.height = 'auto';
           el.style.height = el.scrollHeight + 'px';
         }}
         rows={1}
-        disabled={isRegeneratingSubject}
+        disabled={isRegeneratingDomain}
         className={`w-full px-3 py-2 text-xs border rounded-lg focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 resize-none disabled:opacity-50 disabled:cursor-not-allowed overflow-hidden ${
           darkMode ? 'border-zinc-700 bg-zinc-800 text-zinc-100' : 'border-zinc-200 bg-white text-zinc-800'
         }`}
@@ -609,13 +609,13 @@ const SubjectSection = forwardRef<SubjectSectionHandle, {
         style={{ minHeight: 32 }}
       />
       <p className={`text-[10px] mt-1 ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>
-        Topic sentence to prime AI as a domain expert. Keep it specific (15-40 words).
+        Domain context sentence to prime AI as a domain expert. Keep it specific (15-40 words).
       </p>
 
-      {subjectReviewNeeded && !subjectIsDirty && !isRegeneratingSubject && (
+      {domainReviewNeeded && !domainIsDirty && !isRegeneratingDomain && (
         <div className="flex items-center gap-3 mt-2">
           <button
-            onClick={() => onDismissSubjectReview(nuggetId)}
+            onClick={() => onDismissDomainReview(nuggetId)}
             className="text-[11px] font-medium text-amber-600 dark:text-amber-400 hover:text-amber-700 dark:hover:text-amber-300 transition-colors flex items-center gap-1.5"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -881,15 +881,15 @@ export interface BriefTabHandle {
 
 interface BriefTabProps {
   darkMode: boolean;
-  // Subject
+  // Domain
   nuggetId: string;
   nuggetName: string;
-  currentSubject: string;
-  isRegeneratingSubject: boolean;
-  subjectReviewNeeded: boolean;
-  onSaveSubject: (nuggetId: string, subject: string) => void;
-  onRegenerateSubject: (nuggetId: string) => void;
-  onDismissSubjectReview: (nuggetId: string) => void;
+  currentDomain: string;
+  isRegeneratingDomain: boolean;
+  domainReviewNeeded: boolean;
+  onSaveDomain: (nuggetId: string, domain: string) => void;
+  onRegenerateDomain: (nuggetId: string) => void;
+  onDismissDomainReview: (nuggetId: string) => void;
   // Brief
   briefing?: AutoDeckBriefing;
   briefingSuggestions?: BriefingSuggestions;
@@ -909,15 +909,15 @@ const EMPTY_BRIEFING: AutoDeckBriefing = { audience: '', type: '', objective: ''
 
 const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
   darkMode,
-  // Subject
-  nuggetId, nuggetName, currentSubject, isRegeneratingSubject,
-  subjectReviewNeeded, onSaveSubject, onRegenerateSubject, onDismissSubjectReview,
+  // Domain
+  nuggetId, nuggetName, currentDomain, isRegeneratingDomain,
+  domainReviewNeeded, onSaveDomain, onRegenerateDomain, onDismissDomainReview,
   // Brief
   briefing, briefingSuggestions, briefReviewNeeded, onBriefingChange, onSuggestionsChange, onDismissBriefReview, onDirtyChange, documents, subject,
   onGenerateSuggestions, onAbortSuggestions, isOpen,
 }, ref) {
-  // Subject ref for combined dirty gating
-  const subjectRef = useRef<SubjectSectionHandle>(null);
+  // Domain ref for combined dirty gating
+  const domainRef = useRef<DomainSectionHandle>(null);
   // Draft state — only committed on explicit save
   const [localBriefing, setLocalBriefing] = useState<AutoDeckBriefing>(briefing ?? EMPTY_BRIEFING);
   const [localSuggestions, setLocalSuggestions] = useState<BriefingSuggestions | null>(briefingSuggestions ?? null);
@@ -949,29 +949,29 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
       || JSON.stringify(localSuggestions) !== JSON.stringify(committedSuggestions);
   }, [localBriefing, committedBriefing, localSuggestions, committedSuggestions]);
 
-  // Subject dirty state (updated via SubjectSection callback)
-  const [subjectDirty, setSubjectDirty] = useState(false);
+  // Domain dirty state (updated via DomainSection callback)
+  const [domainDirty, setDomainDirty] = useState(false);
 
-  // Combined dirty: subject OR brief
-  const isDirty = briefDirtyOnly || subjectDirty;
+  // Combined dirty: domain OR brief
+  const isDirty = briefDirtyOnly || domainDirty;
 
   useEffect(() => {
     onDirtyChange(isDirty);
     return () => { onDirtyChange(false); };
   }, [isDirty, onDirtyChange]);
 
-  // Imperative handle for parent — saves/discards BOTH subject + brief
+  // Imperative handle for parent — saves/discards BOTH domain + brief
   useImperativeHandle(ref, () => ({
     save() {
-      subjectRef.current?.save();
+      domainRef.current?.save();
       onBriefingChange(localBriefing);
       if (localSuggestions) onSuggestionsChange(localSuggestions);
       setCommittedBriefing(localBriefing);
       setCommittedSuggestions(localSuggestions);
-      setSubjectDirty(false); // Immediate clear — SubjectSection will confirm on next render
+      setDomainDirty(false); // Immediate clear — DomainSection will confirm on next render
     },
     discard() {
-      subjectRef.current?.discard();
+      domainRef.current?.discard();
       setLocalBriefing(committedBriefing);
       setLocalSuggestions(committedSuggestions);
     },
@@ -1029,19 +1029,19 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
   return (
     <div className="flex flex-col flex-1 overflow-hidden">
       <div className="flex-1 overflow-y-auto">
-        {/* ── Subject section ── */}
-        <SubjectSection
-          ref={subjectRef}
+        {/* ── Domain section ── */}
+        <DomainSection
+          ref={domainRef}
           darkMode={darkMode}
           nuggetId={nuggetId}
           nuggetName={nuggetName}
-          currentSubject={currentSubject}
-          isRegeneratingSubject={isRegeneratingSubject}
-          subjectReviewNeeded={subjectReviewNeeded}
-          onSaveSubject={onSaveSubject}
-          onRegenerateSubject={onRegenerateSubject}
-          onDismissSubjectReview={onDismissSubjectReview}
-          onDirtyChange={setSubjectDirty}
+          currentDomain={currentDomain}
+          isRegeneratingDomain={isRegeneratingDomain}
+          domainReviewNeeded={domainReviewNeeded}
+          onSaveDomain={onSaveDomain}
+          onRegenerateDomain={onRegenerateDomain}
+          onDismissDomainReview={onDismissDomainReview}
+          onDirtyChange={setDomainDirty}
         />
         {/* ── Divider ── */}
         <div className={`mx-5 border-t ${darkMode ? 'border-zinc-800' : 'border-zinc-200'}`} />
@@ -1203,13 +1203,13 @@ function AssessmentTab({
           <h3 className="text-[13px] font-semibold mb-2">Document Quality Assessment</h3>
           <p className={`text-[11px] leading-relaxed max-w-md ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>
             DQAF evaluates your documents across relevance profiling, structural integrity, and cross-document consistency.
-            To begin, set a subject or fill in the briefing to provide context for the assessment.
+            To begin, set a domain or fill in the briefing to provide context for the assessment.
           </p>
         </div>
         <div className="flex gap-3">
           <button onClick={() => onTabChange('brief')}
             className={`text-[11px] font-medium px-4 py-2 rounded-lg transition-colors ${darkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-            Set Subject & Brief
+            Set Domain & Brief
           </button>
         </div>
       </div>
@@ -1225,7 +1225,7 @@ function AssessmentTab({
           </div>
         )}
         <div>
-          <p className={`text-[11px] mb-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Derived from brief + subject:</p>
+          <p className={`text-[11px] mb-1 ${darkMode ? 'text-zinc-500' : 'text-zinc-400'}`}>Derived from brief + domain:</p>
           <p className={`text-[11px] max-w-md leading-relaxed ${darkMode ? 'text-zinc-400' : 'text-zinc-500'}`}>{derivedPurpose}</p>
         </div>
         <button onClick={() => onRunCheck(derivedPurpose)}

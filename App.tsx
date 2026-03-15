@@ -203,13 +203,13 @@ const App: React.FC = () => {
   // ── Project & nugget operations (creation, duplication, copy/move, subject) ──
   const {
     setNuggetCreationProjectId,
-    isRegeneratingSubject,
+    isRegeneratingDomain,
     handleCreateNugget,
     handleCreateProject,
     handleCopyNuggetToProject,
-    handleSaveSubject,
-    handleRegenerateSubject,
-    setSubjectGenPending,
+    handleSaveDomain,
+    handleRegenerateDomain,
+    setDomainGenPending,
   } = useProjectOperations({ recordUsage, askPdfProcessorRef });
 
   // ── Document operations (save, TOC, copy/move, upload, content generation) ──
@@ -230,7 +230,7 @@ const App: React.FC = () => {
     askPdfProcessor,
   } = useDocumentOperations({
     recordUsage,
-    onSubjectGenPending: setSubjectGenPending,
+    onDomainGenPending: setDomainGenPending,
     createPlaceholderCards,
     fillPlaceholderCard,
     removePlaceholderCard,
@@ -647,7 +647,7 @@ const App: React.FC = () => {
           {/* App-level unsaved changes dialog (for nugget/panel switching) */}
           {appPendingAction && appPendingDirtyPanel && (
             <UnsavedChangesDialog
-              title={`Unsaved changes in ${appPendingDirtyPanel === 'cards' ? 'Cards' : appPendingDirtyPanel === 'brief' ? 'Subject & Brief' : 'Sources'} editor`}
+              title={`Unsaved changes in ${appPendingDirtyPanel === 'cards' ? 'Cards' : appPendingDirtyPanel === 'brief' ? 'Domain & Brief' : 'Sources'} editor`}
               description="You have unsaved edits. Save or discard them to continue."
               saveLabel={appPendingDirtyPanel === 'brief' ? 'Update' : undefined}
               onSave={handleAppDialogSave}
@@ -742,12 +742,12 @@ const App: React.FC = () => {
                       }
                       nuggetId={selectedNugget.id}
                       nuggetName={selectedNugget.name}
-                      currentSubject={selectedNugget.subject || ''}
-                      isRegeneratingSubject={isRegeneratingSubject}
-                      subjectReviewNeeded={!!selectedNugget.subjectReviewNeeded}
-                      onSaveSubject={handleSaveSubject}
-                      onRegenerateSubject={handleRegenerateSubject}
-                      onDismissSubjectReview={(id) => updateNugget(id, (n) => ({ ...n, subjectReviewNeeded: false }))}
+                      currentDomain={selectedNugget.domain || ''}
+                      isRegeneratingDomain={isRegeneratingDomain}
+                      domainReviewNeeded={!!selectedNugget.domainReviewNeeded}
+                      onSaveDomain={handleSaveDomain}
+                      onRegenerateDomain={handleRegenerateDomain}
+                      onDismissDomainReview={(id) => updateNugget(id, (n) => ({ ...n, domainReviewNeeded: false }))}
                       briefReviewNeeded={!!selectedNugget.briefReviewNeeded}
                       onDismissBriefReview={(id) => updateNugget(id, (n) => ({ ...n, briefReviewNeeded: false }))}
                       sourcesLog={selectedNugget.sourcesLog || []}
@@ -765,7 +765,7 @@ const App: React.FC = () => {
                       briefSaveRef={briefSaveRef}
                       briefDiscardRef={briefDiscardRef}
                       documents={nuggetDocs}
-                      subject={selectedNugget.subject}
+                      subject={selectedNugget.domain}
                       onGenerateSuggestions={autoDeckGenerateSuggestions}
                       onAbortSuggestions={autoDeckAbortSuggestions}
                       dqafReport={dqafReport}
@@ -854,8 +854,8 @@ const App: React.FC = () => {
                       briefing={selectedNugget?.briefing}
                       onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
                       onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
-                      subject={selectedNugget?.subject}
-                      subjectReviewNeeded={selectedNugget?.subjectReviewNeeded}
+                      domain={selectedNugget?.domain}
+                      domainReviewNeeded={selectedNugget?.domainReviewNeeded}
                       briefReviewNeeded={selectedNugget?.briefReviewNeeded}
                     />
                   </ErrorBoundary>
@@ -998,11 +998,11 @@ const App: React.FC = () => {
             {/* Footnote bar — surfaces actionable notices */}
             <FootnoteBar
               sourcesLogStats={selectedNugget?.sourcesLogStats}
-              subjectReviewNeeded={selectedNugget?.subjectReviewNeeded}
+              domainReviewNeeded={selectedNugget?.domainReviewNeeded}
               briefReviewNeeded={selectedNugget?.briefReviewNeeded}
               qualityStatus={qualityStatus}
               onOpenSourcesLog={() => appGatedAction(() => { setQualityActiveTab('logs'); setExpandedPanel('quality'); })}
-              onOpenSubjectEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
+              onOpenDomainEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
               onOpenBriefEdit={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
               onOpenQualityPanel={() => appGatedAction(() => { setQualityActiveTab('assessment'); setExpandedPanel('quality'); })}
             />

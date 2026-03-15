@@ -480,7 +480,7 @@ export class SupabaseBackend implements StorageBackend {
         last_doc_change_sync_index: nugget.lastDocChangeSyncSeq ?? null,
         sources_log_stats: nugget.sourcesLogStats ?? null,
         sources_log: nugget.sourcesLog ?? null,
-        subject: nugget.subject ?? null,
+        subject: nugget.domain ?? null,
         styling_options: nugget.stylingOptions ?? null,
         quality_report: nugget.dqafReport ?? nugget.qualityReport ?? null,
         engagement_purpose: nugget.engagementPurpose ?? null,
@@ -516,7 +516,7 @@ export class SupabaseBackend implements StorageBackend {
       lastDocChangeSyncSeq: row.last_doc_change_sync_index ?? undefined,
       sourcesLogStats: row.sources_log_stats ?? undefined,
       sourcesLog: row.sources_log ?? undefined,
-      subject: row.subject ?? undefined,
+      domain: row.subject ?? undefined,
       stylingOptions: row.styling_options ?? undefined,
       // Discriminate DQAF v2 report (has assessmentId) from legacy QualityReport
       qualityReport: row.quality_report && !row.quality_report.assessmentId ? row.quality_report : undefined,

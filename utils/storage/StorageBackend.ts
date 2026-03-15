@@ -104,7 +104,11 @@ export interface StoredNugget {
   lastDocChangeSyncSeq?: number;
   sourcesLogStats?: SourcesLogStats;
   sourcesLog?: SourcesLogEntry[];
+  domain?: string;
+  domainReviewNeeded?: boolean;
+  /** @deprecated Use domain instead — kept for backward compat reads */
   subject?: string;
+  /** @deprecated Use domainReviewNeeded instead — kept for backward compat reads */
   subjectReviewNeeded?: boolean;
   briefReviewNeeded?: boolean;
   stylingOptions?: StylingOptions;

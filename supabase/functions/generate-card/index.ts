@@ -14,7 +14,7 @@ const GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
 const IMAGE_EMPTY_RETRIES = 2;
 
 const CARD_TOKEN_LIMITS: Record<string, number> = {
-  TitleCard: 150, TakeawayCard: 350, Executive: 143, Standard: 338, Detailed: 663,
+  TitleCard: 150, TakeawayCard: 350, Executive: 95, Standard: 203, Detailed: 405,
 };
 const COVER_TOKEN_LIMIT = 256;
 
@@ -129,9 +129,9 @@ function describeCanvas(ar: string): string {
   return "landscape — wider than tall";
 }
 
-function buildExpertPriming(subject?: string): string {
-  if (!subject) return "";
-  return `You are a domain expert on the following subject: ${subject}. Use accurate terminology and professional judgment to organize and present the source material. Do NOT add facts, claims, data, or context from your own knowledge — work exclusively with what the source documents provide.`;
+function buildExpertPriming(domain?: string): string {
+  if (!domain) return "";
+  return `You are a domain expert in the following area:\n${domain}\nUse accurate terminology and professional judgment to organize and present the source material. Do NOT add facts, claims, data, or context from your own knowledge — work exclusively with what the source documents provide.`;
 }
 
 // Hex to color name (subset)
@@ -282,60 +282,70 @@ function prepareCoverContentBlock(coverContent: string): string {
   return content;
 }
 
-function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, subject?: string): string {
-  const subjectLine = subject || "Not specified";
+function parseDomain(domain?: string): { sector: string; contentNature: string; vizParadigm: string; visuals: string } {
+  if (!domain) return { sector: "", contentNature: "", vizParadigm: "", visuals: "" };
+  const sectorMatch = domain.match(/-\s*Domain:\s*(.+)/i);
+  const natureMatch = domain.match(/-\s*Content nature:\s*(.+)/i);
+  const paradigmMatch = domain.match(/-\s*Visualization paradigm:\s*(.+)/i);
+  const visualsMatch = domain.match(/-\s*Visual vocabulary:\s*(.+)/i);
+  return {
+    sector: sectorMatch?.[1]?.trim() || "",
+    contentNature: natureMatch?.[1]?.trim() || "",
+    vizParadigm: paradigmMatch?.[1]?.trim() || "",
+    visuals: visualsMatch?.[1]?.trim() || "",
+  };
+}
+
+function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, domain?: string): string {
   const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
   let refLine = "";
   if (referenceNote) refLine = `\n\n${referenceNote}`;
 
-  return `INSTRUCTIONS: Role: Act as an expert Information Architect and Presentation Designer. Task: Transform the provided text into a highly visual, logically connected slide. Use a step-by-step cognitive process:
-* Step 1: Macro-Relational Synthesis. Before visualizing individual points, analyze the holistic relationship between all provided content sections. Identify if they form a cause-and-effect loop, a problem-solution bridge, a timeline, or a comparative matrix. The final layout must visually connect these sections (using arrows, overlapping shapes, or bridging elements), not just list them in disconnected silos.
-* Step 2: Visual Framework Selection. Based strictly on Step 1, select the most effective overall layout. Ensure the flow of information (e.g., left-to-right, center-out) matches the logical relationship you identified.
-* Step 3: Component Design. For quantitative data, use precise charts (bar, pie, line). For categories/lists, use modular grids with relevant iconography.
-* Step 4: Strict Content Constraint. Use only the data, facts, and text provided in the "CONTENT" section. Elevate key metrics or critical statements as bold callouts. Do not hallucinate, assume, extrapolate, or invent any external context, statistics, or filler text.
+  // Build THEME block from domain bullet points
+  const themeBlock = domain ? `\n\nTHEME:\n${domain.trim()}` : "";
 
-SUBJECT: ${subjectLine}
+  return `Transform the provided CONTENT into a highly visual, illustration. Use the exact CONTENT provided below. Use your thinking abilities to first plan the illustration layout, components, shapes, text and other elements required.${themeBlock}
 
-CONTENT: ${contentBlock}
+CONTENT:\n${contentBlock}
 
-STYLE: ${styleBlock}${refLine}`;
+STYLE:\n${styleBlock}${refLine}`;
 }
 
-function buildContentPrompt(cardTitle: string, level: string, subject?: string): string {
-  let wordCountRange = "200-250";
-  let wordCountHard = "250";
+function buildContentPrompt(cardTitle: string, level: string, domain?: string): string {
+  let wordCountRange = "120-150";
+  let wordCountHard = "150";
   let scopeGuidance = "";
   let formattingGuidance = "";
   if (level === "Executive") {
-    wordCountRange = "70-100";
-    wordCountHard = "100";
+    wordCountRange = "50-70";
+    wordCountHard = "70";
     scopeGuidance = "**Scope:** EXECUTIVE SUMMARY — ruthlessly concise. Include ONLY the single most important insight or finding. Cut everything else.";
     formattingGuidance = "**Formatting (strict):**\n- Maximum one ## heading\n- 1 tight paragraph OR 2-3 bullets — nothing more\n- No tables, no numbered lists, no ###";
   } else if (level === "Detailed") {
-    wordCountRange = "450-500";
-    wordCountHard = "500";
+    wordCountRange = "250-300";
+    wordCountHard = "300";
     scopeGuidance = "**Scope:** DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships.";
     formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables when comparing items\n- Use bold for key terms";
   } else {
-    wordCountHard = "250";
+    wordCountHard = "150";
     scopeGuidance = "**Scope:** STANDARD summary. Cover key points, important data, and primary relationships.";
     formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables only when comparing 3+ items\n- Use bold for key terms";
   }
-  const expertPriming = buildExpertPriming(subject);
+  const expertPriming = buildExpertPriming(domain);
   return `${expertPriming ? expertPriming + "\n\n" : ""}Content Generation — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section including all its sub-sections and nested content.\n\nWORD LIMIT: ${wordCountRange} words. ABSOLUTE MAXIMUM: ${wordCountHard} words. Count your words before responding. If over ${wordCountHard}, cut content until under.\n\n${scopeGuidance}\n\n**Task:** Extract and restructure the section's content into infographic-ready text.\n\n**Requirements:**\n- Make explicit any relationships that are implied\n- Use concise, direct phrasing\n- Preserve key data points exactly as written\n- Do not invent information not present in the documents\n\n${formattingGuidance}\n\n**Heading Hierarchy (strict):**\n- Do NOT include the section title as a heading\n- Use ## for main sections\n- Use ### for subsections (if word count permits)\n- Never use # (H1) — reserved for section title\n\n**Output:** Return ONLY the card content. No preamble. No commentary. HARD LIMIT: ${wordCountHard} words.`.trim();
 }
 
-function buildCoverContentPrompt(cardTitle: string, coverType: string, subject?: string): string {
-  const expertPriming = buildExpertPriming(subject);
+function buildCoverContentPrompt(cardTitle: string, coverType: string, domain?: string): string {
+  const expertPriming = buildExpertPriming(domain);
   if (coverType === "TitleCard") {
     return `${expertPriming ? expertPriming + "\n\n" : ""}Cover Slide Content — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section.\n\n**Task:** Generate content for a TITLE CARD SLIDE. Use "${cardTitle}" as the title (or a refined version).\n\n**Output format (strict):**\n# [Title — 2-8 words]\n## [Subtitle — 5-12 words]\n[Tagline — optional, 3-8 words]\n\n**WORD COUNT:** 15-25 words total. Hard limit.\n\n**Output:** Return ONLY the cover content starting with #. No preamble.`.trim();
   }
   return `${expertPriming ? expertPriming + "\n\n" : ""}Cover Slide Content — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section.\n\n**Task:** Generate content for a TAKEAWAY CARD SLIDE. Use "${cardTitle}" as the title.\n\n**Output format (strict):**\n# [Title — 2-8 words]\n- [Takeaway bullet 1]\n- [Takeaway bullet 2]\n- [Takeaway bullet 3 (optional)]\n\n**WORD COUNT:** 40-60 words total. Hard limit.\n\n**Output:** Return ONLY the cover content starting with #. No preamble.`.trim();
 }
 
-function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, subject?: string): string {
-  return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, subject);
+function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, domain?: string): string {
+  return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, domain);
 }
 
 function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, coverType?: string): string {
@@ -345,10 +355,7 @@ function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, set
     ? "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text. Title prominent in upper portion. Takeaway bullets as clean vertical list below. Fill remaining canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts."
     : "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text, centered as dominant hero element. Subtitle below. Tagline at bottom edge if present. Fill canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts.";
 
-  return `• Subject:
-Cover slide
-
-• Instructions:
+  return `• Instructions:
 ${coverInstruction}
 
 • Style:
@@ -390,7 +397,7 @@ Deno.serve(async (req: Request) => {
     const body = await req.json();
     const {
       nuggetId, cardId, cardTitle, detailLevel,
-      settings, subject,
+      settings, domain,
       existingSynthesis,
       documents, // Array of { fileId, name, sourceType, structure?, content? }
       referenceImage, // { base64, mimeType } or null
@@ -447,10 +454,10 @@ Deno.serve(async (req: Request) => {
 
       // Build prompt
       const contentPrompt = isCover
-        ? buildCoverContentPrompt(cardTitle, detailLevel, subject)
-        : buildContentPrompt(cardTitle, detailLevel, subject);
+        ? buildCoverContentPrompt(cardTitle, detailLevel, domain)
+        : buildContentPrompt(cardTitle, detailLevel, domain);
 
-      const systemRole = buildExpertPriming(subject) || "You are a content synthesis expert.";
+      const systemRole = buildExpertPriming(domain) || "You are a content synthesis expert.";
 
       // Build messages with file references
       const userContentParts: any[] = [];
@@ -492,9 +499,12 @@ Deno.serve(async (req: Request) => {
     // ══════════════════════════════════════════════════════════════
     // PHASE 2: Image Generation (Gemini)
     // ══════════════════════════════════════════════════════════════
-    const imagePrompt = isCover
+    // DirectContent (snapshot) cards use the standard visualizer — they contain
+    // full extracted content, not cover-slide titles/taglines.
+    const isCoverImage = (detailLevel === "TitleCard" || detailLevel === "TakeawayCard");
+    const imagePrompt = isCoverImage
       ? buildCoverVisualizerPrompt(cardTitle, synthesisContent, settings, detailLevel)
-      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, subject);
+      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, domain);
 
     const parts: any[] = [];
     // Add reference image if provided

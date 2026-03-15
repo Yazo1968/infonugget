@@ -35,9 +35,9 @@ interface AutoDeckPanelProps {
   briefing?: AutoDeckBriefing;
   onOpenBriefTab?: () => void;
   onOpenSourcesTab?: () => void;
-  // Pre-flight gates — subject & brief must be resolved before planning
-  subject?: string;
-  subjectReviewNeeded?: boolean;
+  // Pre-flight gates — domain & brief must be resolved before planning
+  domain?: string;
+  domainReviewNeeded?: boolean;
   briefReviewNeeded?: boolean;
 }
 
@@ -62,8 +62,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
   briefing: propBriefing,
   onOpenBriefTab,
   onOpenSourcesTab,
-  subject,
-  subjectReviewNeeded,
+  domain,
+  domainReviewNeeded,
   briefReviewNeeded,
 }) => {
   const { darkMode } = useThemeContext();
@@ -102,8 +102,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
 
   const status = session?.status ?? 'configuring';
   const hasBriefing = propBriefing?.objective?.trim() || propBriefing?.audience?.trim() || propBriefing?.type?.trim();
-  const hasSubject = !!subject?.trim();
-  const preFlightOk = hasSubject && !subjectReviewNeeded && !briefReviewNeeded;
+  const hasDomain = !!domain?.trim();
+  const preFlightOk = hasDomain && !domainReviewNeeded && !briefReviewNeeded;
   const canGenerate =
     propBriefing?.objective?.trim() &&
     propBriefing?.audience?.trim() &&
@@ -672,17 +672,17 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
       </button>
       {!canGenerate && selectedDocs.length > 0 && (
         <div style={{ fontSize: '11px', textAlign: 'center', marginTop: '6px' }}>
-          {!hasSubject && (
+          {!hasDomain && (
             <div style={{ color: darkMode ? '#f59e0b' : '#d97706', marginBottom: '2px' }}>
-              Generate a subject before planning
+              Generate a domain before planning
               {onOpenBriefTab && (
                 <> — <button onClick={onOpenBriefTab} style={{ color: darkMode ? '#4db8e0' : '#2289b5', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '11px' }}>Open Brief</button></>
               )}
             </div>
           )}
-          {hasSubject && subjectReviewNeeded && (
+          {hasDomain && domainReviewNeeded && (
             <div style={{ color: darkMode ? '#f59e0b' : '#d97706', marginBottom: '2px' }}>
-              Review subject changes before planning
+              Review domain changes before planning
               {onOpenBriefTab && (
                 <> — <button onClick={onOpenBriefTab} style={{ color: darkMode ? '#4db8e0' : '#2289b5', background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline', padding: 0, fontSize: '11px' }}>Open Brief</button></>
               )}

@@ -15,22 +15,22 @@ interface Notice {
 
 interface FootnoteBarProps {
   sourcesLogStats?: SourcesLogStats;
-  subjectReviewNeeded?: boolean;
+  domainReviewNeeded?: boolean;
   briefReviewNeeded?: boolean;
   qualityStatus: QualityStatus;
   onOpenSourcesLog: () => void;
-  onOpenSubjectEdit: () => void;
+  onOpenDomainEdit: () => void;
   onOpenBriefEdit: () => void;
   onOpenQualityPanel: () => void;
 }
 
 const FootnoteBar: React.FC<FootnoteBarProps> = ({
   sourcesLogStats,
-  subjectReviewNeeded,
+  domainReviewNeeded,
   briefReviewNeeded,
   qualityStatus,
   onOpenSourcesLog,
-  onOpenSubjectEdit,
+  onOpenDomainEdit,
   onOpenBriefEdit,
   onOpenQualityPanel,
 }) => {
@@ -50,13 +50,13 @@ const FootnoteBar: React.FC<FootnoteBarProps> = ({
       });
     }
 
-    // 2. Subject may need review after document changes
-    if (subjectReviewNeeded) {
+    // 2. Domain may need review after document changes
+    if (domainReviewNeeded) {
       result.push({
-        key: 'subject-review',
-        message: 'Subject may need review',
+        key: 'domain-review',
+        message: 'Domain may need review',
         color: 'amber',
-        onClick: onOpenSubjectEdit,
+        onClick: onOpenDomainEdit,
       });
     }
 
@@ -101,7 +101,7 @@ const FootnoteBar: React.FC<FootnoteBarProps> = ({
     }
 
     return result;
-  }, [sourcesLogStats, subjectReviewNeeded, briefReviewNeeded, qualityStatus, onOpenSourcesLog, onOpenSubjectEdit, onOpenBriefEdit, onOpenQualityPanel]);
+  }, [sourcesLogStats, domainReviewNeeded, briefReviewNeeded, qualityStatus, onOpenSourcesLog, onOpenDomainEdit, onOpenBriefEdit, onOpenQualityPanel]);
 
   if (notices.length === 0) return null;
 

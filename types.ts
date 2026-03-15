@@ -677,10 +677,10 @@ export interface Nugget {
   sourcesLogStats?: SourcesLogStats;
   /** Checkpoint entries shown in the Sources Log modal (capped at 20) */
   sourcesLog?: SourcesLogEntry[];
-  /** AI-generated topic sentence used for expert priming in prompts. User-editable. */
-  subject?: string;
-  /** True when document changes have occurred since the subject was last reviewed */
-  subjectReviewNeeded?: boolean;
+  /** AI-generated domain context for expert priming and image generation. User-editable. */
+  domain?: string;
+  /** True when document changes have occurred since the domain was last reviewed */
+  domainReviewNeeded?: boolean;
   /** True when document changes have occurred since the briefing was last reviewed */
   briefReviewNeeded?: boolean;
   /** Per-nugget styling preferences for the generation toolbar. Persisted to IndexedDB. */
@@ -832,8 +832,8 @@ export interface AutoDeckSession {
   nuggetId: string;
   briefing: AutoDeckBriefing;
   lod: AutoDeckLod;
-  /** Subject snapshot — captured at plan start, used consistently through all phases */
-  subject?: string;
+  /** Domain snapshot — captured at plan start, used consistently through all phases */
+  domain?: string;
   /** Ordered document IDs selected by user (preserved across revisions) */
   orderedDocIds: string[];
   status: AutoDeckStatus;

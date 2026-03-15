@@ -11,6 +11,11 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('InsightsLab');
 
+/** Threshold in estimated chars before triggering compaction. ~30k chars ≈ 7500 tokens. */
+const COMPACTION_CHAR_THRESHOLD = 30_000;
+/** Keep the most recent N messages after compaction (not compacted). */
+const COMPACTION_KEEP_RECENT = 6;
+
 /**
  * Chat state management + Claude API integration for the Insights Lab workflow.
  * Handles regular chat messages and structured card content generation.
@@ -47,8 +52,73 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
   }, [selectedNugget]);
 
   /**
+   * Compact conversation history when it exceeds the threshold.
+   * Sends history to the server for summarization, replaces old messages
+   * with a single system message containing the structured summary.
+   * Returns the updated messages array for use in the next send call.
+   */
+  const compactHistory = useCallback(
+    async (messages: ChatMessage[], signal?: AbortSignal): Promise<ChatMessage[]> => {
+      const totalChars = messages.reduce((sum, m) => sum + m.content.length, 0);
+      if (totalChars < COMPACTION_CHAR_THRESHOLD || messages.length <= COMPACTION_KEEP_RECENT + 2) {
+        return messages;
+      }
+
+      log.debug(`Compacting chat: ${messages.length} messages, ~${totalChars} chars`);
+
+      const messagesToCompact = messages.slice(0, -COMPACTION_KEEP_RECENT);
+      const recentMessages = messages.slice(-COMPACTION_KEEP_RECENT);
+
+      try {
+        const response = await chatMessageApi({
+          action: 'compact',
+          conversationHistory: messagesToCompact.map((m) => ({
+            role: m.role,
+            content: m.content,
+            isCardContent: m.isCardContent,
+          })),
+          documents: [],
+        }, signal);
+
+        recordUsage?.({
+          provider: 'claude',
+          model: CLAUDE_MODEL,
+          inputTokens: response.usage.inputTokens,
+          outputTokens: response.usage.outputTokens,
+          cacheReadTokens: response.usage.cacheReadTokens,
+          cacheWriteTokens: response.usage.cacheWriteTokens,
+        });
+
+        const summaryMessage: ChatMessage = {
+          id: Math.random().toString(36).substr(2, 9),
+          role: 'system',
+          content: `[Conversation Summary]\n\n${response.responseText}`,
+          timestamp: Date.now(),
+        };
+
+        const compactedMessages = [summaryMessage, ...recentMessages];
+
+        // Persist the compacted messages to the nugget
+        setNuggets((prev) =>
+          prev.map((n) =>
+            n.id === selectedNuggetId ? { ...n, messages: compactedMessages, lastModifiedAt: Date.now() } : n,
+          ),
+        );
+
+        log.debug(`Compacted: ${messagesToCompact.length} messages → summary + ${recentMessages.length} recent`);
+        return compactedMessages;
+      } catch (err: any) {
+        log.warn('Compaction failed, continuing with full history:', err.message);
+        return messages;
+      }
+    },
+    [selectedNuggetId, setNuggets, recordUsage],
+  );
+
+  /**
    * Send a message via the chat-message Edge Function.
    * All prompt building, token budgeting, and message pruning happen server-side.
+   * Automatically compacts history when it exceeds the threshold.
    */
   const sendMessage = useCallback(
     async (
@@ -60,7 +130,10 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
       if (!selectedNugget || selectedNugget.type !== 'insights' || !text.trim()) return;
 
       const resolvedDocs = resolveDocumentContext();
-      const history = messagesOverride ?? selectedNugget.messages ?? [];
+      let history = messagesOverride ?? selectedNugget.messages ?? [];
+
+      // Compact if history is large
+      history = await compactHistory(history);
 
       // Create user message
       const userMessage: ChatMessage = {
@@ -87,7 +160,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
             content: m.content,
             isCardContent: m.isCardContent,
           })),
-          subject: selectedNugget.subject,
+          domain: selectedNugget.domain,
           qualityReport: selectedNugget.dqafReport ?? selectedNugget.qualityReport,
           documents: resolvedDocs,
         }, controller.signal);
@@ -173,7 +246,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         setIsLoading(false);
       }
     },
-    [selectedNugget, resolveDocumentContext, appendNuggetMessage, recordUsage, setNuggets],
+    [selectedNugget, resolveDocumentContext, appendNuggetMessage, recordUsage, setNuggets, compactHistory],
   );
 
   /**
@@ -349,7 +422,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
     try {
       const response = await chatMessageApi({
         action: 'initiate_chat',
-        subject: selectedNugget.subject,
+        domain: selectedNugget.domain,
         documents: resolvedDocs,
       }, controller.signal);
 

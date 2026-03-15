@@ -47,7 +47,7 @@ function makeNugget(overrides: Partial<Nugget> = {}): Nugget {
     messages: [{ id: 'm1', role: 'user', content: 'Hello', timestamp: 1000 }],
     docChangeLog: [{ type: 'added', docId: 'd1', docName: 'doc.md', timestamp: 1000, seq: 1 }],
     lastDocChangeSyncSeq: 1,
-    subject: 'Climate science overview',
+    domain: 'Climate science overview',
     createdAt: 1700000000000,
     lastModifiedAt: 1700001000000,
     ...overrides,
@@ -164,7 +164,7 @@ describe('Nugget serialization', () => {
     expect(restored.id).toBe(nugget.id);
     expect(restored.name).toBe(nugget.name);
     expect(restored.type).toBe('insights');
-    expect(restored.subject).toBe('Climate science overview');
+    expect(restored.domain).toBe('Climate science overview');
     expect(restored.documents).toEqual([]);
     expect(restored.cards).toEqual([]);
   });
