@@ -153,7 +153,24 @@ type PlannerResult =
 
 export function parsePlannerResponse(raw: string): PlannerResult {
   try {
-    const json = JSON.parse(extractJson(raw));
+    const extracted = extractJson(raw);
+    // Try strict first, then repair control chars, then aggressive repair
+    let json: any;
+    let parseLabel = 'strict';
+    try {
+      json = JSON.parse(extracted);
+    } catch {
+      try {
+        json = JSON.parse(repairJsonControlChars(extracted));
+        parseLabel = 'repaired';
+      } catch {
+        json = JSON.parse(repairJsonAggressive(extracted));
+        parseLabel = 'aggressive';
+      }
+    }
+    if (parseLabel !== 'strict') {
+      log.warn(`Planner JSON recovered via ${parseLabel} parse`);
+    }
 
     if (json.status === 'conflict') {
       if (!Array.isArray(json.conflicts) || json.conflicts.length === 0) {
