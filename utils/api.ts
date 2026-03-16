@@ -303,11 +303,12 @@ export async function autoDeckApi(
     return res.json();
   }
 
-  // Parse the SSE stream
+  // Parse the SSE stream — accumulate text from delta events, usage from done event
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let currentEvent = '';
+  let responseText = '';
 
   return new Promise<AutoDeckResponse>((resolve, reject) => {
     if (signal) {
@@ -317,28 +318,52 @@ export async function autoDeckApi(
       }, { once: true });
     }
 
+    function processLine(line: string): boolean {
+      if (line.startsWith('event: ')) {
+        currentEvent = line.slice(7).trim();
+        return false;
+      }
+
+      if (line.startsWith('data: ') && currentEvent) {
+        const dataStr = line.slice(6);
+        let parsed: any;
+        try { parsed = JSON.parse(dataStr); } catch { currentEvent = ''; return false; }
+
+        switch (currentEvent) {
+          case 'delta':
+            responseText += parsed.text || '';
+            break;
+          case 'progress':
+            onProgress?.(parsed.tokens);
+            break;
+          case 'done':
+            resolve({
+              success: true,
+              responseText,
+              usage: parsed.usage || { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+            });
+            return true;
+          case 'error':
+            reject(new Error(parsed.error || 'Streaming error'));
+            return true;
+        }
+        currentEvent = '';
+      }
+
+      if (line === '') currentEvent = '';
+      return false;
+    }
+
     (async () => {
       try {
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
-            // Flush any remaining data in the decoder and buffer
+            // Flush remaining buffer
             buffer += decoder.decode();
             if (buffer.trim()) {
-              // Process remaining buffer lines
-              const remaining = buffer.split('\n');
-              for (const line of remaining) {
-                if (line.startsWith('event: ')) {
-                  currentEvent = line.slice(7).trim();
-                } else if (line.startsWith('data: ') && currentEvent) {
-                  const dataStr = line.slice(6);
-                  let parsed: any;
-                  try { parsed = JSON.parse(dataStr); } catch { continue; }
-                  if (currentEvent === 'done') { resolve(parsed); return; }
-                  if (currentEvent === 'error') { reject(new Error(parsed.error || 'Streaming error')); return; }
-                  if (currentEvent === 'progress') onProgress?.(parsed.tokens);
-                  currentEvent = '';
-                }
+              for (const line of buffer.split('\n')) {
+                if (processLine(line)) return;
               }
             }
             reject(new Error('Stream ended without done event'));
@@ -350,31 +375,7 @@ export async function autoDeckApi(
           buffer = lines.pop() || '';
 
           for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEvent = line.slice(7).trim();
-              continue;
-            }
-
-            if (line.startsWith('data: ') && currentEvent) {
-              const dataStr = line.slice(6);
-              let parsed: any;
-              try { parsed = JSON.parse(dataStr); } catch { continue; }
-
-              switch (currentEvent) {
-                case 'progress':
-                  onProgress?.(parsed.tokens);
-                  break;
-                case 'done':
-                  resolve(parsed);
-                  return;
-                case 'error':
-                  reject(new Error(parsed.error || 'Streaming error'));
-                  return;
-              }
-              currentEvent = '';
-            }
-
-            if (line === '') currentEvent = '';
+            if (processLine(line)) return;
           }
         }
       } catch (err) {

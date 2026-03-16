@@ -520,6 +520,8 @@ function callClaudeStreaming(
                   if (delta?.type === 'text_delta' && delta.text) {
                     fullText += delta.text;
                     outputTokensSoFar = Math.ceil(fullText.length / 4);
+                    // Stream the actual text delta to the client
+                    sendSSE('delta', { text: delta.text });
                     if (outputTokensSoFar - lastReportedTokens >= PROGRESS_INTERVAL) {
                       lastReportedTokens = outputTokensSoFar;
                       sendSSE('progress', { tokens: outputTokensSoFar });
@@ -548,10 +550,9 @@ function callClaudeStreaming(
           }
         }
 
-        // Stream complete — send the final done event
+        // Stream complete — send done with usage only (client accumulated text from delta events)
         sendSSE('done', {
           success: true,
-          responseText: fullText,
           usage: {
             inputTokens: usage.input_tokens,
             outputTokens: usage.output_tokens,
