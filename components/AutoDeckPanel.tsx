@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { UploadedFile, AutoDeckBriefing, AutoDeckLod, AutoDeckSession } from '../types';
 import { useThemeContext } from '../context/ThemeContext';
@@ -115,6 +115,23 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     ? Object.values(session.reviewState.cardStates).filter((s) => s.included).length
     : 0;
 
+  // ── Drift detection: warn when briefing or domain changed since session started ──
+  const driftInfo = useMemo(() => {
+    if (!session || status === 'configuring') return null;
+    const briefingChanged =
+      session.briefing.objective !== (propBriefing?.objective ?? '') ||
+      session.briefing.audience !== (propBriefing?.audience ?? '') ||
+      session.briefing.type !== (propBriefing?.type ?? '') ||
+      (session.briefing.tone ?? '') !== (propBriefing?.tone ?? '') ||
+      (session.briefing.focus ?? '') !== (propBriefing?.focus ?? '');
+    const domainChanged = (session.domain ?? '') !== (domain ?? '');
+    if (!briefingChanged && !domainChanged) return null;
+    const parts: string[] = [];
+    if (briefingChanged) parts.push('briefing');
+    if (domainChanged) parts.push('domain');
+    return parts;
+  }, [session, status, propBriefing, domain]);
+
   // ── Handlers ──
 
   const handleGenerate = useCallback(async () => {
@@ -166,6 +183,50 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
     { key: 'tone' as const, label: 'Tone' },
     { key: 'focus' as const, label: 'Focus' },
   ];
+
+  // ── Drift warning banner ──
+  const renderDriftBanner = () => {
+    if (!driftInfo) return null;
+    const label = driftInfo.join(' and ');
+    return (
+      <div
+        style={{
+          padding: '10px 16px',
+          backgroundColor: darkMode ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.08)',
+          borderBottom: `1px solid ${darkMode ? 'rgba(245,158,11,0.25)' : 'rgba(245,158,11,0.3)'}`,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          fontSize: '12px',
+          color: darkMode ? '#fbbf24' : '#b45309',
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+          <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+        </svg>
+        <span style={{ flex: 1 }}>
+          The {label} {driftInfo.length > 1 ? 'have' : 'has'} changed since this plan was generated.
+        </span>
+        <button
+          onClick={onReset}
+          style={{
+            background: 'none',
+            border: `1px solid ${darkMode ? 'rgba(251,191,36,0.4)' : 'rgba(180,83,9,0.3)'}`,
+            borderRadius: '6px',
+            padding: '4px 12px',
+            fontSize: '11px',
+            fontWeight: 600,
+            color: darkMode ? '#fbbf24' : '#b45309',
+            cursor: 'pointer',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          Start Over
+        </button>
+      </div>
+    );
+  };
 
   // ── Render views ──
 
@@ -1439,6 +1500,8 @@ const AutoDeckPanel: React.FC<AutoDeckPanelProps> = ({
               ...overlayStyle,
             }}
           >
+            {/* Drift warning — briefing or domain changed since session started */}
+            {renderDriftBanner()}
             {/* View content */}
             {renderContent()}
           </div>

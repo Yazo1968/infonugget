@@ -38,7 +38,7 @@ function errRes(msg: string, status = 500) {
 async function verifyUser(req: Request) {
   const authHeader = req.headers.get("Authorization");
   if (!authHeader) return null;
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
+  const anonKey = req.headers.get("apikey") || Deno.env.get("SUPABASE_ANON_KEY");
   if (!anonKey) return null;
   const supabase = createClient(SUPABASE_URL, anonKey, {
     global: { headers: { Authorization: authHeader } },

@@ -807,9 +807,11 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get('Authorization');
     if (!authHeader) throw new Error('Missing Authorization header');
 
+    const anonKey = req.headers.get('apikey') || Deno.env.get('SUPABASE_ANON_KEY');
+    if (!anonKey) throw new Error('Missing API key');
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL')!,
-      Deno.env.get('SUPABASE_ANON_KEY')!,
+      anonKey,
       { global: { headers: { Authorization: authHeader } } },
     );
     const { data: { user }, error: authError } = await supabaseClient.auth.getUser();
