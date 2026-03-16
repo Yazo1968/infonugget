@@ -322,6 +322,25 @@ export async function autoDeckApi(
         while (true) {
           const { done, value } = await reader.read();
           if (done) {
+            // Flush any remaining data in the decoder and buffer
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              // Process remaining buffer lines
+              const remaining = buffer.split('\n');
+              for (const line of remaining) {
+                if (line.startsWith('event: ')) {
+                  currentEvent = line.slice(7).trim();
+                } else if (line.startsWith('data: ') && currentEvent) {
+                  const dataStr = line.slice(6);
+                  let parsed: any;
+                  try { parsed = JSON.parse(dataStr); } catch { continue; }
+                  if (currentEvent === 'done') { resolve(parsed); return; }
+                  if (currentEvent === 'error') { reject(new Error(parsed.error || 'Streaming error')); return; }
+                  if (currentEvent === 'progress') onProgress?.(parsed.tokens);
+                  currentEvent = '';
+                }
+              }
+            }
             reject(new Error('Stream ended without done event'));
             return;
           }
