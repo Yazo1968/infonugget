@@ -1,6 +1,6 @@
 import { AutoDeckLod, DetailLevel } from '../../types';
 
-// ── Level of Detail configuration ──
+// ── Level of Detail configuration (shared by deck generation features) ──
 
 export interface LodConfig {
   name: AutoDeckLod;
@@ -11,7 +11,7 @@ export interface LodConfig {
   detailLevel: DetailLevel;
 }
 
-export const AUTO_DECK_LOD_LEVELS: Record<AutoDeckLod, LodConfig> = {
+export const LOD_LEVELS: Record<AutoDeckLod, LodConfig> = {
   executive: {
     name: 'executive',
     label: 'Executive',
@@ -38,13 +38,21 @@ export const AUTO_DECK_LOD_LEVELS: Record<AutoDeckLod, LodConfig> = {
   },
 };
 
-// ── Limits ──
-
-export const AUTO_DECK_LIMITS = {
-  maxRevisions: 5,
-  maxCardsWarning: 40,
-  minCards: 3,
-} as const;
+/** Rough card count estimate from total word count and LOD. */
+export function estimateCardCount(
+  totalWordCount: number,
+  lod: AutoDeckLod,
+): { estimate: number; min: number; max: number } {
+  const lodConfig = LOD_LEVELS[lod];
+  const rawEstimate = Math.round(totalWordCount / lodConfig.midpoint);
+  const MIN_CARDS = 3;
+  const clamped = Math.max(MIN_CARDS, rawEstimate);
+  return {
+    estimate: clamped,
+    min: Math.max(MIN_CARDS, Math.floor(clamped * 0.7)),
+    max: Math.ceil(clamped * 1.3),
+  };
+}
 
 // ── Briefing field word limits ──
 
@@ -57,30 +65,7 @@ export const BRIEFING_LIMITS: Record<string, { min: number; max: number }> = {
   tone: { min: 3, max: 5 },
 };
 
-/** Number of AI suggestions to generate per briefing field. */
 export const BRIEFING_SUGGESTION_COUNT = 7;
-
-// ── Helpers ──
-
-/** Rough card count estimate from total word count and LOD. */
-export function estimateCardCount(
-  totalWordCount: number,
-  lod: AutoDeckLod,
-): { estimate: number; min: number; max: number } {
-  const lodConfig = AUTO_DECK_LOD_LEVELS[lod];
-
-  // Simple division: total words / LOD midpoint
-  const rawEstimate = Math.round(totalWordCount / lodConfig.midpoint);
-
-  // Clamp to minimum
-  const clamped = Math.max(AUTO_DECK_LIMITS.minCards, rawEstimate);
-
-  return {
-    estimate: clamped,
-    min: Math.max(AUTO_DECK_LIMITS.minCards, Math.floor(clamped * 0.7)),
-    max: Math.ceil(clamped * 1.3),
-  };
-}
 
 // Re-export shared countWords so existing imports keep working
 export { countWords } from '../prompts/promptUtils';

@@ -387,8 +387,8 @@ export function useCardOperations() {
   const createPlaceholderCards = useCallback(
     (
       titles: string[],
-      detailLevel: DetailLevel,
-      options?: { sourceDocuments?: string[]; autoDeckSessionId?: string; targetFolderId?: string },
+      detailLevel: DetailLevel | DetailLevel[],
+      options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; targetFolderId?: string },
     ): { id: string; title: string }[] => {
       if (!selectedNugget || titles.length === 0) return [];
 
@@ -397,7 +397,9 @@ export function useCardOperations() {
       const newCards: Card[] = [];
       const result: { id: string; title: string }[] = [];
 
-      for (const rawTitle of titles) {
+      for (let i = 0; i < titles.length; i++) {
+        const rawTitle = titles[i];
+        const level = Array.isArray(detailLevel) ? detailLevel[i] : detailLevel;
         const uniqueName = getUniqueName(rawTitle, [
           ...existingNames,
           ...newCards.map((c) => c.text),
@@ -409,12 +411,11 @@ export function useCardOperations() {
           text: uniqueName,
           level: 1,
           selected: false,
-          detailLevel,
+          detailLevel: level,
           synthesisMap: {},
-          isSynthesizingMap: { [detailLevel]: true },
+          isSynthesizingMap: { [level]: true },
           createdAt: Date.now(),
           sourceDocuments: options?.sourceDocuments,
-          autoDeckSessionId: options?.autoDeckSessionId,
         });
         result.push({ id: cardId, title: rawTitle });
       }
@@ -459,7 +460,7 @@ export function useCardOperations() {
     (
       titles: string[],
       detailLevel: DetailLevel | DetailLevel[],
-      options?: { sourceDocuments?: string[]; autoDeckSessionId?: string; folderName?: string },
+      options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; folderName?: string },
     ): { folderId: string; cards: { id: string; title: string }[] } | null => {
       if (!selectedNugget || titles.length < 2) return null;
 
@@ -491,7 +492,6 @@ export function useCardOperations() {
           isSynthesizingMap: { [level]: true },
           createdAt: now,
           sourceDocuments: options?.sourceDocuments,
-          autoDeckSessionId: options?.autoDeckSessionId,
         });
         result.push({ id: cardId, title: rawTitle });
       }
@@ -504,7 +504,6 @@ export function useCardOperations() {
         collapsed: false,
         createdAt: now,
         lastModifiedAt: now,
-        autoDeckSessionId: options?.autoDeckSessionId,
       };
 
       updateNugget(selectedNugget.id, (n) => ({
@@ -668,7 +667,6 @@ export function useCardOperations() {
         collapsed: false,
         createdAt: now,
         lastModifiedAt: now,
-        autoDeckSessionId: folder.autoDeckSessionId,
       };
 
       updateNugget(selectedNugget.id, (n) => {
@@ -823,7 +821,6 @@ export function useCardOperations() {
         collapsed: false,
         createdAt: now,
         lastModifiedAt: now,
-        autoDeckSessionId: folder.autoDeckSessionId,
       };
 
       // Add folder to target nugget

@@ -15,12 +15,22 @@ export interface FontPair {
   secondary: string; // Body font
 }
 
+/** Structured style identity — 3 labeled fields that replace the legacy prose blob. */
+export interface StyleIdentity {
+  technique: string;    // Rendering method: shapes, fills, strokes, textures
+  composition: string;  // Layout rules: grid, spacing, hierarchy, arrangement
+  mood: string;         // Atmosphere: era, feeling, personality, register
+}
+
 export interface CustomStyle {
   id: string;
   name: string;
   palette: Palette;
   fonts: FontPair;
-  identity: string; // visual identity description for generation prompts
+  identity: string; // legacy single field — kept for backward compat
+  technique?: string;   // structured field (new)
+  composition?: string; // structured field (new)
+  mood?: string;        // structured field (new)
   createdAt: number;
   lastModifiedAt: number;
 }
@@ -32,6 +42,10 @@ export interface StylingOptions {
   fonts: FontPair;
   aspectRatio: '1:1' | '2:3' | '3:2' | '3:4' | '4:3' | '4:5' | '5:4' | '9:16' | '16:9' | '21:9';
   resolution: '1K' | '2K' | '4K';
+  // Structured style identity — travels with settings to the EF
+  technique?: string;
+  composition?: string;
+  mood?: string;
 }
 
 export interface ReferenceImage {
@@ -121,8 +135,6 @@ export interface Card {
   lastEditedAt?: number;
   /** Names of documents that were active when this card was created */
   sourceDocuments?: string[];
-  /** Links this card to the Auto-Deck session that created it */
-  autoDeckSessionId?: string;
 
   // ── Legacy fields (kept for backward compat deserialization, DO NOT use in new code) ──
   /** @deprecated Use activeImageMap instead */
@@ -140,8 +152,6 @@ export interface CardFolder {
   collapsed?: boolean;
   createdAt: number;
   lastModifiedAt: number;
-  /** Links this folder to the Auto-Deck session that created it */
-  autoDeckSessionId?: string;
 }
 
 /** A single item in the nugget's card list — either a loose card or a folder. */
@@ -365,7 +375,7 @@ export interface SourcesLogStats {
 // ── Sources Log checkpoint model ──
 
 /** What triggered creating a Sources Log checkpoint entry */
-export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'auto_deck' | 'manual';
+export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'auto_deck' | 'auto_presentor' | 'manual';
 
 /** A single change within a checkpoint — simplified view of a raw DocChangeEvent */
 export interface SourcesLogChange {
@@ -743,105 +753,19 @@ export interface BriefingSuggestionOption {
 /** AI-generated suggestions for all 5 briefing fields. */
 export type BriefingSuggestions = Record<BriefingFieldName, BriefingSuggestionOption[]>;
 
-export type AutoDeckStatus =
-  | 'configuring'
-  | 'planning'
-  | 'conflict'
-  | 'reviewing'
-  | 'revising'
-  | 'finalizing'
-  | 'producing'
-  | 'complete'
-  | 'error';
+// ── Auto-Presentor types ──
 
-export interface PlannedCard {
-  number: number;
-  title: string;
-  description: string;
-  sources: {
-    document: string;
-    section?: string; // legacy — kept for backward compat
-    heading?: string; // EXACT heading text from document
-    fallbackDescription?: string; // when no clear heading, describe location
-  }[];
-  /** Target word count for this card (within the LOD range, assigned by planner). */
-  wordTarget?: number;
-  /** Verbatim quotes/figures from sources that MUST appear in card content. */
-  keyDataPoints?: string[];
-  /** Content writer instructions — either a legacy string or structured object. */
-  guidance:
-    | string
-    | {
-        emphasis: string;
-        tone: string;
-        exclude: string;
-      };
-  /** References to other cards this one relates to (e.g., "Builds on Card 2"). */
-  crossReferences?: string | null;
-}
+export type AutoPresentorStatus = 'configuring' | 'generating' | 'reviewing' | 'accepting' | 'complete' | 'error';
 
-export interface PlanQuestionOption {
-  key: string; // e.g. "a", "b", "c"
-  label: string; // Display text for the option
-  producerInstruction: string; // Verbatim instruction injected into producer prompt
-}
-
-export interface PlanQuestion {
-  id: string; // e.g. "q1", "q2"
-  question: string; // The question text
-  options: PlanQuestionOption[];
-  recommendedKey: string; // Which option key the planner recommends
-  context?: string; // Optional brief context for why this question matters
-}
-
-export interface ConflictItem {
-  description: string;
-  sourceA: { document: string; section: string };
-  sourceB: { document: string; section: string };
-  severity: 'high' | 'medium' | 'low';
-}
-
-export interface ParsedPlan {
-  metadata: {
-    category: string;
-    lod: AutoDeckLod;
-    sourceWordCount: number;
-    cardCount: number;
-    documentStrategy: 'dissolve' | 'preserve' | 'hybrid';
-    documentRelationships: string;
-  };
-  cards: PlannedCard[];
-  /** Planner-generated decision-point questions for user review. */
-  questions?: PlanQuestion[];
-}
-
-export interface ReviewCardState {
-  included: boolean;
-}
-
-export interface ReviewState {
-  generalComment: string;
-  cardStates: Record<number, ReviewCardState>;
-  /** User's MCQ answers — maps questionId to selected option key. */
-  questionAnswers: Record<string, string>;
-  decision: 'pending' | 'approved' | 'revise';
-}
-
-export interface AutoDeckSession {
+export interface AutoPresentorSession {
   id: string;
   nuggetId: string;
-  briefing: AutoDeckBriefing;
   lod: AutoDeckLod;
-  /** Domain snapshot — captured at plan start, used consistently through all phases */
   domain?: string;
-  /** Ordered document IDs selected by user (preserved across revisions) */
-  orderedDocIds: string[];
-  status: AutoDeckStatus;
-  parsedPlan: ParsedPlan | null;
-  conflicts: ConflictItem[] | null;
-  reviewState: ReviewState | null;
-  producedCards: { number: number; title: string; content: string; wordCount: number }[];
-  revisionCount: number;
+  status: AutoPresentorStatus;
+  generatedCards: { number: number; title: string; content: string; wordCount: number }[];
+  includeCover: boolean;
+  includeClosing: boolean;
   error: string | null;
   createdAt: number;
 }

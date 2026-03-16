@@ -1,5 +1,5 @@
 import { StylingOptions } from '../../types';
-import { STYLE_IDENTITIES } from '../ai';
+import { STYLE_IDENTITY_FIELDS, STYLE_IDENTITIES } from '../ai';
 
 // ─────────────────────────────────────────────────────────────────
 // Shared Prompt Helpers
@@ -448,17 +448,27 @@ export function buildDesignSystemBlock(settings: StylingOptions): string {
 }
 
 export function buildStyleBlock(settings: StylingOptions): string {
-  const identity = STYLE_IDENTITIES[settings.style] || '';
-  const styleDesc = identity
-    ? `${settings.style} — ${identity}`
-    : `${settings.style}`;
+  // Priority: fields on settings (travel with the request) → structured map → legacy map
+  const hasSettingsFields = settings.technique || settings.composition || settings.mood;
+  const structured = hasSettingsFields
+    ? { technique: settings.technique || '', composition: settings.composition || '', mood: settings.mood || '' }
+    : STYLE_IDENTITY_FIELDS[settings.style];
+
+  let identityBlock: string;
+  if (structured) {
+    identityBlock = `${settings.style}\nTechnique: ${structured.technique}\nComposition: ${structured.composition}\nMood: ${structured.mood}`;
+  } else {
+    const legacy = STYLE_IDENTITIES[settings.style] || '';
+    identityBlock = legacy ? `${settings.style} — ${legacy}` : settings.style;
+  }
+
   const p = settings.palette;
   const pFontDesc = fontToDescriptor(settings.fonts.primary);
   const sFontDesc = fontToDescriptor(settings.fonts.secondary);
   const typeLine = pFontDesc === sFontDesc
     ? `Typography: ${pFontDesc} throughout, clear size hierarchy from title to body`
     : `Typography: ${pFontDesc} for titles/headers, ${sFontDesc} for body text`;
-  return `${styleDesc}
+  return `${identityBlock}
 Palette: background ${p.background} | primary ${p.primary} | secondary ${p.secondary} | accent ${p.accent} | text ${p.text}
 ${typeLine}
 Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}`;

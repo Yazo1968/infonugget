@@ -2,7 +2,7 @@ import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { marked } from 'marked';
 import { sanitizeHtml } from '../utils/sanitize';
 import { Card, StylingOptions, Palette, DetailLevel, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
-import { VISUAL_STYLES, STYLE_FONTS, BUILTIN_STYLE_NAMES } from '../utils/ai';
+import { VISUAL_STYLES, STYLE_FONTS, STYLE_IDENTITY_FIELDS, BUILTIN_STYLE_NAMES } from '../utils/ai';
 import AnnotationWorkbench, { type AnnotationToolbarState } from './workbench/AnnotationWorkbench';
 import AnnotationToolbar from './workbench/AnnotationToolbar';
 import ErrorBoundary from './ErrorBoundary';
@@ -123,11 +123,15 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 
   const handleStyleChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const newStyle = e.target.value;
+    const fields = STYLE_IDENTITY_FIELDS[newStyle];
     setMenuDraftOptions((prev) => ({
       ...prev,
       style: newStyle,
       palette: VISUAL_STYLES[newStyle] || prev.palette,
       fonts: STYLE_FONTS[newStyle] || prev.fonts,
+      technique: fields?.technique || '',
+      composition: fields?.composition || '',
+      mood: fields?.mood || '',
     }));
   };
 

@@ -134,7 +134,6 @@ export interface StoredNugget {
     orderIndex: number;
     createdAt: number;
     lastModifiedAt: number;
-    autoDeckSessionId?: string;
   }>;
 }
 

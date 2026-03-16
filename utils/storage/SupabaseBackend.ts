@@ -941,6 +941,9 @@ export class SupabaseBackend implements StorageBackend {
       palette: style.palette ?? null,
       fonts: style.fonts ?? null,
       identity: style.identity ?? null,
+      technique: style.technique ?? null,
+      composition: style.composition ?? null,
+      mood: style.mood ?? null,
       created_at: style.createdAt ?? Date.now(),
       last_modified_at: style.lastModifiedAt ?? Date.now(),
     }));
@@ -970,6 +973,9 @@ export class SupabaseBackend implements StorageBackend {
       palette: row.palette,
       fonts: row.fonts,
       identity: row.identity,
+      technique: row.technique ?? '',
+      composition: row.composition ?? '',
+      mood: row.mood ?? '',
       createdAt: row.created_at,
       lastModifiedAt: row.last_modified_at,
     }));

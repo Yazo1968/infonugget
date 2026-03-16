@@ -1,6 +1,6 @@
 import React, { forwardRef, useState, useCallback, useRef } from 'react';
 
-type PanelId = 'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality';
+type PanelId = 'sources' | 'chat' | 'auto-presentor' | 'cards' | 'quality';
 
 type QualityStatus = 'green' | 'amber' | 'red' | 'stale' | null;
 
@@ -55,17 +55,16 @@ const TABS: TabConfig[] = [
     ),
   },
   {
-    id: 'auto-deck',
-    label: 'Auto-Deck',
+    id: 'auto-presentor',
+    label: 'Auto-Presentor',
     requiresNugget: true,
-    color: { dark: 'rgb(84,148,218)', light: 'rgb(84,148,218)' },
-    dimColor: { dark: 'rgb(45,82,125)', light: 'rgb(45,82,125)' },
+    color: { dark: 'rgb(100,160,230)', light: 'rgb(100,160,230)' },
+    dimColor: { dark: 'rgb(52,86,130)', light: 'rgb(52,86,130)' },
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="3" width="20" height="18" rx="2" />
-        <line x1="8" y1="7" x2="16" y2="7" />
-        <line x1="8" y1="11" x2="16" y2="11" />
-        <line x1="8" y1="15" x2="12" y2="15" />
+        <rect x="2" y="3" width="20" height="14" rx="2" />
+        <path d="M8 21h8" />
+        <path d="M12 17v4" />
       </svg>
     ),
   },

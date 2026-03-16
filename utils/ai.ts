@@ -139,38 +139,96 @@ export const STYLE_FONTS: Record<string, FontPair> = {
   'PwC Corporate': { primary: 'Georgia', secondary: 'Arial' },
 };
 
-export const STYLE_IDENTITIES: Record<string, string> = {
-  'Flat Design':
-    'Solid color fills with no gradients, shadows, or textures. Crisp geometric shapes, simple flat icons, and strict grid layout with generous whitespace.',
-  'Data-Centric Minimalist':
-    'Precision-engineered, cold professional, hyper-legible. Strict 12-column grid with 15% edge breathing room. Line-art or monotone-fill icons only — no photography or 3D. Hard geometric edges, analytical SaaS-blue atmosphere prioritizing data logic over personality.',
-  Isometric:
-    '3D objects at a 30° isometric angle with three visible faces and no perspective distortion. Solid fills with subtle shading for volume, structured spatial arrangement.',
-  'Line Art':
-    'Built entirely from strokes and outlines — no filled shapes. Varying line weights for hierarchy, hatching for shading. Editorial and whitespace-heavy.',
-  'Retro / Mid-Century':
-    '1950s–60s graphic design with muted earthy tones and textured grain. Atomic-era shapes, starbursts, and bold vintage typography like a classic print poster.',
-  'Risograph / Duotone':
-    'Mimics risograph printing — two or three overlapping ink colors with visible halftone dots and slight mis-registration. Grainy, textured, analog zine feel.',
-  'Neon / Dark Mode':
-    'Dark background with vivid glowing neon elements and light bloom halos. Sleek futuristic geometry, thin glowing outlines, and circuit-like patterns. Cyberpunk dashboard feel.',
-  'Paper Cutout':
-    'Layered cut-paper look with visible paper texture and subtle shadows between layers. Soft rounded forms with slightly irregular hand-cut edges. Warm and tactile like a collage.',
-  'Pop Art':
-    'Bold Warhol/Lichtenstein-inspired with thick black outlines, flat saturated primary colors, and Ben-Day halftone dots. Big punchy typography like a comic panel.',
-  Watercolour:
-    'Soft fluid paint washes that bleed and blend with no hard edges. Translucent color layers on visible paper grain. Light, airy, and painterly.',
-  Blueprint:
-    "Technical drawing on deep blue background with white/light blue linework. Grid lines, dimension annotations, construction lines, and monospaced type like an engineer's drawing.",
-  'Doodle Art':
-    'Hand-drawn pen sketches with slightly wobbly freehand lines and quick hatching. Playful embellishments — arrows, stars, underlines. Informal whiteboard/notebook feel.',
-  'Geometric Gradient':
-    'Overlapping translucent geometric shapes with smooth multi-color gradient fills. Glassmorphism, soft blurs, and a polished tech-forward digital-native aesthetic.',
-  'Corporate Memphis':
-    'Friendly flat illustrations with disproportionate human figures — oversized limbs, tiny heads. Blobby organic shapes, no outlines, warm optimistic tech-company tone.',
-  'PwC Corporate':
-    'Clean authoritative corporate consulting aesthetic. White background, orange hero accent for key statistics and callout borders. Modular card layout with generous whitespace, strict visual hierarchy, and flat charts with direct value labeling. Serif headings, sans-serif body.',
+// ── Structured style identities — technique + composition + mood ──
+// Single source of truth: visible in UI, injected into prompts.
+
+import { StyleIdentity } from '../types';
+
+export const STYLE_IDENTITY_FIELDS: Record<string, StyleIdentity> = {
+  'Flat Design': {
+    technique: 'Solid color fills with no gradients, shadows, or textures. Crisp geometric shapes and simple flat icons.',
+    composition: 'Strict grid layout with generous whitespace and clear visual hierarchy.',
+    mood: 'Clean, modern, and approachable.',
+  },
+  'Data-Centric Minimalist': {
+    technique: 'Line-art or monotone-fill icons only — no photography or 3D. Hard geometric edges, hyper-legible typography.',
+    composition: 'Strict 12-column grid with 15% edge breathing room. Data logic prioritized over decoration.',
+    mood: 'Precision-engineered, cold professional, analytical.',
+  },
+  Isometric: {
+    technique: '3D objects at a 30° isometric angle with three visible faces. Solid fills with subtle shading for volume, no perspective distortion.',
+    composition: 'Structured spatial arrangement with consistent isometric grid alignment.',
+    mood: 'Technical, dimensional, explanatory.',
+  },
+  'Line Art': {
+    technique: 'Built entirely from strokes and outlines — no filled shapes. Varying line weights for hierarchy, hatching for shading.',
+    composition: 'Editorial layout, whitespace-heavy, minimal elements.',
+    mood: 'Refined, restrained, illustrative.',
+  },
+  'Retro / Mid-Century': {
+    technique: 'Muted earthy tones with textured grain. Atomic-era shapes, starbursts, and bold vintage display typography.',
+    composition: 'Print poster arrangement with layered overlapping elements and decorative framing.',
+    mood: '1950s–60s graphic design, nostalgic, confident.',
+  },
+  'Risograph / Duotone': {
+    technique: 'Two or three overlapping ink colors with visible halftone dots and slight mis-registration. Grainy, textured surface.',
+    composition: 'Overlapping color layers with offset alignment, zine-style page structure.',
+    mood: 'Analog, lo-fi, indie-press.',
+  },
+  'Neon / Dark Mode': {
+    technique: 'Vivid glowing neon elements with light bloom halos on dark background. Thin glowing outlines and circuit-like patterns.',
+    composition: 'Sleek futuristic geometry, dashboard-style modular sections.',
+    mood: 'Cyberpunk, electric, high-tech.',
+  },
+  'Paper Cutout': {
+    technique: 'Layered cut-paper shapes with visible paper texture and subtle inter-layer shadows. Slightly irregular hand-cut edges.',
+    composition: 'Overlapping depth layers, soft rounded forms, collage arrangement.',
+    mood: 'Warm, tactile, handcrafted.',
+  },
+  'Pop Art': {
+    technique: 'Thick black outlines, flat saturated primary colors, and Ben-Day halftone dots. Bold display typography.',
+    composition: 'Comic panel layout with bold partitioning and graphic impact.',
+    mood: 'Loud, punchy, Warhol/Lichtenstein-inspired.',
+  },
+  Watercolour: {
+    technique: 'Soft fluid paint washes that bleed and blend with no hard edges. Translucent color layers on visible paper grain.',
+    composition: 'Free-flowing organic arrangement with soft boundaries between sections.',
+    mood: 'Light, airy, painterly.',
+  },
+  Blueprint: {
+    technique: 'White and light-blue linework on deep blue ground. Construction lines, dimension annotations, monospaced labels.',
+    composition: 'Technical drawing grid with labeled compartments and structured alignment.',
+    mood: 'Precision engineering, analytical clarity, drafting-table formality.',
+  },
+  'Doodle Art': {
+    technique: 'Hand-drawn pen sketches with slightly wobbly freehand lines and quick hatching. Arrows, stars, underlines as embellishments.',
+    composition: 'Casual whiteboard/notebook arrangement, loosely organized clusters.',
+    mood: 'Playful, informal, spontaneous.',
+  },
+  'Geometric Gradient': {
+    technique: 'Overlapping translucent geometric shapes with smooth multi-color gradient fills. Glassmorphism and soft blurs.',
+    composition: 'Layered transparency with floating elements and polished digital composition.',
+    mood: 'Tech-forward, digital-native, polished.',
+  },
+  'Corporate Memphis': {
+    technique: 'Flat illustrations with disproportionate human figures — oversized limbs, tiny heads. Blobby organic shapes, no outlines.',
+    composition: 'Friendly open layout with breathing room around character-driven scenes.',
+    mood: 'Warm, optimistic, approachable tech-company.',
+  },
+  'PwC Corporate': {
+    technique: 'Clean flat renders, orange hero accent for key statistics and callout borders. Flat charts with direct value labeling.',
+    composition: 'Modular card layout with generous whitespace, strict visual hierarchy. Serif headings, sans-serif body.',
+    mood: 'Authoritative, corporate consulting, trustworthy.',
+  },
 };
+
+// Derived legacy map — kept for backward compat with any code that still reads STYLE_IDENTITIES.
+export const STYLE_IDENTITIES: Record<string, string> = Object.fromEntries(
+  Object.entries(STYLE_IDENTITY_FIELDS).map(([name, { technique, composition, mood }]) => [
+    name,
+    `${technique} ${composition} ${mood}`,
+  ]),
+);
 
 // Snapshot of built-in style names — used to guard against overwriting and for UI dividers
 export const BUILTIN_STYLE_NAMES: ReadonlySet<string> = new Set(Object.keys(VISUAL_STYLES));
@@ -187,6 +245,7 @@ export function registerCustomStyles(styles: CustomStyle[]): void {
       delete VISUAL_STYLES[name];
       delete STYLE_FONTS[name];
       delete STYLE_IDENTITIES[name];
+      delete STYLE_IDENTITY_FIELDS[name];
     }
   }
   // 2. Inject each custom style
@@ -194,7 +253,17 @@ export function registerCustomStyles(styles: CustomStyle[]): void {
     if (BUILTIN_STYLE_NAMES.has(s.name)) continue; // never overwrite built-in
     VISUAL_STYLES[s.name] = { ...s.palette };
     STYLE_FONTS[s.name] = { ...s.fonts };
-    STYLE_IDENTITIES[s.name] = s.identity;
+    // Register structured fields if available, otherwise use legacy identity
+    if (s.technique || s.composition || s.mood) {
+      STYLE_IDENTITY_FIELDS[s.name] = {
+        technique: s.technique || '',
+        composition: s.composition || '',
+        mood: s.mood || '',
+      };
+      STYLE_IDENTITIES[s.name] = [s.technique, s.composition, s.mood].filter(Boolean).join(' ');
+    } else {
+      STYLE_IDENTITIES[s.name] = s.identity;
+    }
   }
 }
 
@@ -205,6 +274,9 @@ export const DEFAULT_STYLING: StylingOptions = {
   fonts: STYLE_FONTS['Flat Design'],
   aspectRatio: '16:9',
   resolution: '2K',
+  technique: STYLE_IDENTITY_FIELDS['Flat Design'].technique,
+  composition: STYLE_IDENTITY_FIELDS['Flat Design'].composition,
+  mood: STYLE_IDENTITY_FIELDS['Flat Design'].mood,
 };
 
 // ─────────────────────────────────────────────────────────────────
@@ -632,7 +704,7 @@ export async function generateStyleWithAI(
   name: string,
   description: string,
   signal?: AbortSignal,
-): Promise<{ palette: Palette; fonts: FontPair; identity: string }> {
+): Promise<{ palette: Palette; fonts: FontPair; identity: string; technique: string; composition: string; mood: string }> {
   const system = `You are a visual design expert specializing in presentation and infographic styles. A user wants to create a custom visual style. They have provided a style name and a free-form description.
 
 The description may contain ANY combination of:
@@ -665,16 +737,21 @@ Return ONLY valid JSON with no markdown fencing, no explanation, in this exact s
     "primary": "<Google Font name for titles>",
     "secondary": "<Google Font name for body text>"
   },
-  "identity": "<40-80 word visual identity description that describes shapes, textures, layout style, mood, and specific design rules>"
+  "technique": "<15-20 words — rendering method: shapes, fills, strokes, textures, visual treatment. Two concise sentences.>",
+  "composition": "<10-15 words — layout rules: grid, spacing, visual hierarchy, arrangement. One concise sentence.>",
+  "mood": "<4-8 words — atmosphere: era, feeling, personality, register. One short phrase.>"
 }
 
 Rules:
 - All palette colors must be valid 6-digit hex codes with # prefix
 - Choose fonts available on Google Fonts
 - Ensure sufficient contrast between background and text colors
-- The identity must be specific and actionable — describe shapes, space usage, textures, mood, and layout rules
+- technique: EXACTLY 15-20 words. Describe rendering approach — what shapes, fills, strokes, textures are used. Two concise sentences.
+- composition: EXACTLY 10-15 words. Describe layout rules — grid system, spacing, hierarchy, element arrangement. One concise sentence.
+- mood: EXACTLY 4-8 words. Describe atmosphere — era, emotional tone, personality. One short phrase.
+- Each field must be specific and actionable for an image generation model — no vague adjectives
 - If the user mentioned specific colors or fonts, honor them; fill in the rest to complement
-- If the user provided an identity-like description, refine and expand it into a proper identity`;
+- If the user provided identity-like descriptions, decompose them into the three fields`;
 
   const prompt = `Style name: ${name}\n\nUser description:\n${description}`;
   const { text } = await callClaude(prompt, { system, maxTokens: 500, signal });
@@ -688,7 +765,7 @@ Rules:
   const parsed = JSON.parse(cleaned);
 
   // Validate structure
-  if (!parsed.palette || !parsed.fonts || !parsed.identity) {
+  if (!parsed.palette || !parsed.fonts || (!parsed.technique && !parsed.identity)) {
     throw new Error('AI response missing required fields');
   }
   for (const key of ['background', 'primary', 'secondary', 'accent', 'text']) {
@@ -712,7 +789,16 @@ Rules:
       primary: String(parsed.fonts.primary).trim(),
       secondary: String(parsed.fonts.secondary).trim(),
     },
-    identity: String(parsed.identity).trim(),
+    identity: [
+      parsed.technique || '',
+      parsed.composition || '',
+      parsed.mood || '',
+    ]
+      .filter((s) => s.trim())
+      .join(' ') || String(parsed.identity || '').trim(),
+    technique: String(parsed.technique || '').trim(),
+    composition: String(parsed.composition || '').trim(),
+    mood: String(parsed.mood || '').trim(),
   };
 }
 

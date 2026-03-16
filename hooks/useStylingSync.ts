@@ -1,9 +1,18 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { DEFAULT_STYLING } from '../utils/ai';
+import { DEFAULT_STYLING, STYLE_IDENTITY_FIELDS } from '../utils/ai';
 import { flattenCards } from '../utils/cardUtils';
 import type { StylingOptions, DetailLevel, CardItem } from '../types';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
+
+/** Ensure structured identity fields are populated on StylingOptions.
+ *  If missing (legacy data), fills them from the built-in map. */
+function ensureIdentityFields(opts: StylingOptions): StylingOptions {
+  if (opts.technique || opts.composition || opts.mood) return opts;
+  const fields = STYLE_IDENTITY_FIELDS[opts.style];
+  if (!fields) return opts;
+  return { ...opts, technique: fields.technique, composition: fields.composition, mood: fields.mood };
+}
 
 interface UseStylingParams {
   activeLogicTab: DetailLevel;
@@ -19,7 +28,7 @@ export function useStylingSync({
 
   // ── State ──
   const [menuDraftOptions, setMenuDraftOptions] = useState<StylingOptions>(
-    () => selectedNugget?.stylingOptions || DEFAULT_STYLING,
+    () => ensureIdentityFields(selectedNugget?.stylingOptions || DEFAULT_STYLING),
   );
   const skipStylingWritebackRef = useRef(false);
 
@@ -59,7 +68,7 @@ export function useStylingSync({
   useEffect(() => {
     const nugget = nuggets.find((n) => n.id === selectedNuggetId);
     skipStylingWritebackRef.current = true;
-    setMenuDraftOptions(nugget?.stylingOptions || DEFAULT_STYLING);
+    setMenuDraftOptions(ensureIdentityFields(nugget?.stylingOptions || DEFAULT_STYLING));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally sync only on selection change; including nuggets would re-trigger on every card generation
   }, [selectedNuggetId]);
 

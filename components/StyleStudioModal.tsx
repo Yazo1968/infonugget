@@ -53,6 +53,7 @@ function stylesEqual(a: CustomStyle[], b: CustomStyle[]): boolean {
     const sa = a[i],
       sb = b[i];
     if (sa.id !== sb.id || sa.name !== sb.name || sa.identity !== sb.identity) return false;
+    if (sa.technique !== sb.technique || sa.composition !== sb.composition || sa.mood !== sb.mood) return false;
     if (sa.fonts.primary !== sb.fonts.primary || sa.fonts.secondary !== sb.fonts.secondary) return false;
     for (const k of PALETTE_KEYS) {
       if (sa.palette[k] !== sb.palette[k]) return false;
@@ -75,7 +76,9 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
   const [editName, setEditName] = useState('');
   const [editPalette, setEditPalette] = useState<Palette>({ ...DEFAULT_PALETTE });
   const [editFonts, setEditFonts] = useState<FontPair>({ ...DEFAULT_FONTS });
-  const [editIdentity, setEditIdentity] = useState('');
+  const [editTechnique, setEditTechnique] = useState('');
+  const [editComposition, setEditComposition] = useState('');
+  const [editMood, setEditMood] = useState('');
   const [kebabMenuId, setKebabMenuId] = useState<string | null>(null);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -116,13 +119,16 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
               name: editName.trim() || s.name,
               palette: { ...editPalette },
               fonts: { ...editFonts },
-              identity: editIdentity.trim(),
+              identity: [editTechnique, editComposition, editMood].filter((s) => s.trim()).join(' '),
+              technique: editTechnique.trim(),
+              composition: editComposition.trim(),
+              mood: editMood.trim(),
               lastModifiedAt: Date.now(),
             }
           : s,
       ),
     );
-  }, [selectedId, editName, editPalette, editFonts, editIdentity]);
+  }, [selectedId, editName, editPalette, editFonts, editTechnique, editComposition, editMood]);
 
   // Load selected style into editor fields
   useEffect(() => {
@@ -130,7 +136,9 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
       setEditName(selectedStyle.name);
       setEditPalette({ ...selectedStyle.palette });
       setEditFonts({ ...selectedStyle.fonts });
-      setEditIdentity(selectedStyle.identity);
+      setEditTechnique(selectedStyle.technique || '');
+      setEditComposition(selectedStyle.composition || '');
+      setEditMood(selectedStyle.mood || '');
       setShowDeleteConfirm(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedStyle is derived from selectedId; including it would reset edits on every keystroke
@@ -146,11 +154,14 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
         name: editName.trim() || s.name,
         palette: { ...editPalette },
         fonts: { ...editFonts },
-        identity: editIdentity.trim(),
+        identity: [editTechnique, editComposition, editMood].filter((s) => s.trim()).join(' '),
+        technique: editTechnique.trim(),
+        composition: editComposition.trim(),
+        mood: editMood.trim(),
       };
     });
     return !stylesEqual(merged, customStyles);
-  }, [draft, customStyles, selectedId, editName, editPalette, editFonts, editIdentity]);
+  }, [draft, customStyles, selectedId, editName, editPalette, editFonts, editTechnique, editComposition, editMood]);
 
   // Focus inline name input when editing begins
   useEffect(() => {
@@ -220,6 +231,9 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
       palette: { ...DEFAULT_PALETTE },
       fonts: { ...DEFAULT_FONTS },
       identity: '',
+      technique: '',
+      composition: '',
+      mood: '',
       createdAt: now,
       lastModifiedAt: now,
     };
@@ -255,6 +269,9 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
         palette: result.palette,
         fonts: result.fonts,
         identity: result.identity,
+        technique: result.technique || '',
+        composition: result.composition || '',
+        mood: result.mood || '',
         createdAt: now,
         lastModifiedAt: now,
       };
@@ -357,7 +374,10 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
         name: editName.trim(),
         palette: { ...editPalette },
         fonts: { ...editFonts },
-        identity: editIdentity.trim(),
+        identity: [editTechnique, editComposition, editMood].filter((s) => s.trim()).join(' '),
+        technique: editTechnique.trim(),
+        composition: editComposition.trim(),
+        mood: editMood.trim(),
         lastModifiedAt: Date.now(),
       };
     });
@@ -755,25 +775,76 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
                   </div>
                 </div>
 
-                {/* Identity */}
-                <div className="space-y-1.5">
-                  <label
-                    htmlFor="visual-identity"
-                    className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400"
-                  >
-                    Visual Identity
-                  </label>
+                {/* Technique */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label
+                      htmlFor="style-technique"
+                      className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400"
+                    >
+                      Technique
+                    </label>
+                    <span className={`text-[9px] font-medium ${editTechnique.length > 135 ? 'text-amber-500' : 'text-zinc-300 dark:text-zinc-500'}`}>
+                      {editTechnique.length}/150
+                    </span>
+                  </div>
                   <textarea
-                    id="visual-identity"
-                    value={editIdentity}
-                    onChange={(e) => setEditIdentity(e.target.value)}
-                    placeholder="Describe the visual aesthetic — e.g. 'Clean corporate look with bold orange accents, modular card layout, flat charts with minimal gridlines...'"
-                    rows={4}
-                    className="w-full px-4 py-3 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                    id="style-technique"
+                    value={editTechnique}
+                    onChange={(e) => { if (e.target.value.length <= 150) setEditTechnique(e.target.value); }}
+                    placeholder="e.g. Solid color fills, no gradients or shadows. Crisp geometric shapes and simple flat icons."
+                    rows={2}
+                    maxLength={150}
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
                   />
-                  <p className="text-[9px] text-zinc-400 dark:text-zinc-400 font-light">
-                    This description drives the visual generation. Be specific about shapes, textures, layout, and mood.
-                  </p>
+                </div>
+
+                {/* Composition */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label
+                      htmlFor="style-composition"
+                      className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400"
+                    >
+                      Composition
+                    </label>
+                    <span className={`text-[9px] font-medium ${editComposition.length > 90 ? 'text-amber-500' : 'text-zinc-300 dark:text-zinc-500'}`}>
+                      {editComposition.length}/100
+                    </span>
+                  </div>
+                  <textarea
+                    id="style-composition"
+                    value={editComposition}
+                    onChange={(e) => { if (e.target.value.length <= 100) setEditComposition(e.target.value); }}
+                    placeholder="e.g. Strict grid layout with generous whitespace and clear visual hierarchy."
+                    rows={2}
+                    maxLength={100}
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                  />
+                </div>
+
+                {/* Mood */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label
+                      htmlFor="style-mood"
+                      className="text-[9px] font-black uppercase tracking-[0.15em] text-zinc-500 dark:text-zinc-400"
+                    >
+                      Mood
+                    </label>
+                    <span className={`text-[9px] font-medium ${editMood.length > 50 ? 'text-amber-500' : 'text-zinc-300 dark:text-zinc-500'}`}>
+                      {editMood.length}/60
+                    </span>
+                  </div>
+                  <textarea
+                    id="style-mood"
+                    value={editMood}
+                    onChange={(e) => { if (e.target.value.length <= 60) setEditMood(e.target.value); }}
+                    placeholder="e.g. Clean, modern, and approachable."
+                    rows={1}
+                    maxLength={60}
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                  />
                 </div>
 
                 {/* Preview strip */}

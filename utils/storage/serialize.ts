@@ -160,7 +160,6 @@ export function serializeCardItems(
         orderIndex: topIdx,
         createdAt: item.createdAt,
         lastModifiedAt: item.lastModifiedAt,
-        autoDeckSessionId: item.autoDeckSessionId,
       });
       item.cards.forEach((card, cardIdx) => {
         const sh = serializeCard(card, nuggetId);
@@ -227,7 +226,6 @@ export function deserializeCardItems(
       collapsed: sf.collapsed,
       createdAt: sf.createdAt,
       lastModifiedAt: sf.lastModifiedAt,
-      autoDeckSessionId: sf.autoDeckSessionId,
     };
     items.push({
       orderIndex: sf.orderIndex,

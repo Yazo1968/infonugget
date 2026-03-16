@@ -274,7 +274,10 @@ export function useCardGeneration(
       }
 
       const settings = { ...menuDraftOptions };
-      const currentLevel = settings.levelOfDetail;
+      // Use the card's own detailLevel as authoritative — ensures batch generation
+      // writes to the same key that AssetsPanel reads (card.detailLevel || activeLogicTab).
+      // Falls back to toolbar level for cards without an explicit detailLevel.
+      const currentLevel = card.detailLevel || settings.levelOfDetail;
 
       // Set generating status
       updateNuggetCard(card.id, (c) => ({
@@ -283,10 +286,10 @@ export function useCardGeneration(
       }));
 
       try {
-        // Look up content at the toolbar's level first, then fall back to the card's own level
+        // Look up content at the card's level first, then fall back to the toolbar level
         const contentToMap =
           card.synthesisMap?.[currentLevel] ||
-          card.synthesisMap?.[card.detailLevel || 'Standard'];
+          card.synthesisMap?.[settings.levelOfDetail];
 
         if (!contentToMap) {
           addToast({

@@ -18,7 +18,7 @@ import {
 import { Dashboard } from './components/Dashboard';
 import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
-import AutoDeckPanel from './components/AutoDeckPanel';
+import AutoPresentorPanel from './components/AutoPresentorPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PanelTabBar from './components/PanelTabBar';
@@ -41,7 +41,8 @@ import { useProjectOperations, AskPdfProcessorFn } from './hooks/useProjectOpera
 import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
 import { useDocumentQualityCheck } from './hooks/useDocumentQualityCheck';
-import { useAutoDeck } from './hooks/useAutoDeck';
+import { useAutoPresentor } from './hooks/useAutoPresentor';
+import { useBriefingSuggestions } from './hooks/useBriefingSuggestions';
 import { useTokenUsage, TokenUsageTotals } from './hooks/useTokenUsage';
 import { useTabManagement } from './hooks/useTabManagement';
 import { useStylingSync } from './hooks/useStylingSync';
@@ -180,22 +181,16 @@ const App: React.FC = () => {
     toggleFolderSelection,
   } = useCardOperations();
 
-  // ── Auto-Deck workflow hook ──
+  // ── Auto-Presentor workflow hook ──
   const {
-    session: autoDeckSession,
-    startPlanning: autoDeckStartPlanning,
-    revisePlan: autoDeckRevisePlan,
-    approvePlan: autoDeckApprovePlan,
-    abort: autoDeckAbort,
-    reset: autoDeckReset,
-    retryFromReview: autoDeckRetryFromReview,
-    toggleCardIncluded: autoDeckToggleCardIncluded,
-    setQuestionAnswer: autoDeckSetQuestionAnswer,
-    setAllRecommended: autoDeckSetAllRecommended,
-    setGeneralComment: autoDeckSetGeneralComment,
-    generateBriefingSuggestions: autoDeckGenerateSuggestions,
-    abortSuggestions: autoDeckAbortSuggestions,
-  } = useAutoDeck(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
+    session: presentorSession,
+    generate: presentorGenerate,
+    acceptCards: presentorAcceptCards,
+    abort: presentorAbort,
+    reset: presentorReset,
+  } = useAutoPresentor(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
+
+  const { generateBriefingSuggestions, abortSuggestions: abortBriefingSuggestions } = useBriefingSuggestions(recordUsage);
 
   // ── Ref bridge: askPdfProcessor (from useDocumentOperations) → useProjectOperations ──
   const askPdfProcessorRef = useRef<AskPdfProcessorFn | null>(null);
@@ -357,7 +352,7 @@ const App: React.FC = () => {
 
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-deck' | 'cards' | 'quality' | null>('sources');
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-presentor' | 'cards' | 'quality' | null>('sources');
   const [qualityActiveTab, setQualityActiveTab] = useState<'logs' | 'brief' | 'assessment'>('brief');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
@@ -766,8 +761,8 @@ const App: React.FC = () => {
                       briefDiscardRef={briefDiscardRef}
                       documents={nuggetDocs}
                       subject={selectedNugget.domain}
-                      onGenerateSuggestions={autoDeckGenerateSuggestions}
-                      onAbortSuggestions={autoDeckAbortSuggestions}
+                      onGenerateSuggestions={generateBriefingSuggestions}
+                      onAbortSuggestions={abortBriefingSuggestions}
                       dqafReport={dqafReport}
                       effectiveStatus={qualityStatus}
                       isChecking={qualityIsChecking}
@@ -831,36 +826,30 @@ const App: React.FC = () => {
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 4: Auto-Deck */}
-                  <ErrorBoundary name="Auto-Deck">
-                    <AutoDeckPanel
-                      isOpen={expandedPanel === 'auto-deck'}
+                  {/* Panel 4: Auto-Presentor */}
+                  <ErrorBoundary name="Auto-Presentor">
+                    <AutoPresentorPanel
+                      isOpen={expandedPanel === 'auto-presentor'}
                       tabBarRef={tabBarRef}
                       onToggle={() =>
-                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'auto-deck' ? null : 'auto-deck')))
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'auto-presentor' ? null : 'auto-presentor')))
                       }
                       documents={nuggetDocs}
-                      session={autoDeckSession}
-                      onStartPlanning={autoDeckStartPlanning}
-                      onRevisePlan={autoDeckRevisePlan}
-                      onApprovePlan={autoDeckApprovePlan}
-                      onAbort={autoDeckAbort}
-                      onReset={autoDeckReset}
-                      onToggleCardIncluded={autoDeckToggleCardIncluded}
-                      onSetQuestionAnswer={autoDeckSetQuestionAnswer}
-                      onSetAllRecommended={autoDeckSetAllRecommended}
-                      onSetGeneralComment={autoDeckSetGeneralComment}
-                      onRetryFromReview={autoDeckRetryFromReview}
                       briefing={selectedNugget?.briefing}
-                      onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
-                      onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
                       domain={selectedNugget?.domain}
                       domainReviewNeeded={selectedNugget?.domainReviewNeeded}
                       briefReviewNeeded={selectedNugget?.briefReviewNeeded}
+                      onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
+                      onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
+                      session={presentorSession}
+                      onGenerate={presentorGenerate}
+                      onAcceptCards={presentorAcceptCards}
+                      onAbort={presentorAbort}
+                      onReset={presentorReset}
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 5: Cards & Assets (portal overlay) */}
+                  {/* Panel 6: Cards & Assets (portal overlay) */}
                   <ErrorBoundary name="Cards">
                     <CardsPanel
                       ref={cardsPanelRef}

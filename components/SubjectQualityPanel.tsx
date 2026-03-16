@@ -20,7 +20,7 @@ import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 import { useResizeDrag } from '../hooks/useResizeDrag';
 import { QualityStatus } from '../hooks/useDocumentQualityCheck';
-import { BRIEFING_LIMITS, countWords } from '../utils/autoDeck/constants';
+import { BRIEFING_LIMITS, countWords } from '../utils/deckShared/constants';
 import { UnsavedChangesDialog } from './Dialogs';
 
 // ─────────────────────────────────────────────────────────────────
@@ -123,6 +123,7 @@ const TriggerConfig: Record<SourcesLogTrigger, { label: string; color: string; d
   chat_initiated: { label: 'Chat started', color: 'bg-blue-50 text-blue-600 border-blue-200', darkColor: 'dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800' },
   chat_continued: { label: 'Chat continued', color: 'bg-sky-50 text-sky-600 border-sky-200', darkColor: 'dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800' },
   auto_deck: { label: 'Auto-Deck', color: 'bg-purple-50 text-purple-600 border-purple-200', darkColor: 'dark:bg-purple-900/30 dark:text-purple-400 dark:border-purple-800' },
+  auto_presentor: { label: 'Auto-Presentor', color: 'bg-indigo-50 text-indigo-600 border-indigo-200', darkColor: 'dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800' },
   manual: { label: 'Manual', color: 'bg-zinc-50 text-zinc-600 border-zinc-200', darkColor: 'dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' },
 };
 
