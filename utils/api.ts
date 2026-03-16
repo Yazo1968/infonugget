@@ -275,13 +275,14 @@ export interface AutoDeckResponse {
 }
 
 /**
- * Call the auto-deck Edge Function.
- * Handles plan, revise, finalize, and produce actions.
- * All prompt building happens server-side; parsing stays client-side.
+ * Call the auto-deck Edge Function with SSE streaming.
+ * The EF streams Claude's response as SSE events (progress + done).
+ * Falls back to JSON parsing if the EF hasn't been updated to stream yet.
  */
 export async function autoDeckApi(
   request: AutoDeckRequest,
   signal?: AbortSignal,
+  onProgress?: (tokens: number) => void,
 ): Promise<AutoDeckResponse> {
   const token = await getAuthToken();
   const res = await fetch(AUTO_DECK_URL, {
@@ -296,7 +297,72 @@ export async function autoDeckApi(
     throw new Error(body.error || `auto-deck failed: ${res.status}`);
   }
 
-  return res.json();
+  // Check if response is SSE stream or plain JSON (backward compat)
+  const contentType = res.headers.get('Content-Type') || '';
+  if (!contentType.includes('text/event-stream')) {
+    return res.json();
+  }
+
+  // Parse the SSE stream
+  const reader = res.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentEvent = '';
+
+  return new Promise<AutoDeckResponse>((resolve, reject) => {
+    if (signal) {
+      signal.addEventListener('abort', () => {
+        reader.cancel();
+        reject(new DOMException('Aborted', 'AbortError'));
+      }, { once: true });
+    }
+
+    (async () => {
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            reject(new Error('Stream ended without done event'));
+            return;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('event: ')) {
+              currentEvent = line.slice(7).trim();
+              continue;
+            }
+
+            if (line.startsWith('data: ') && currentEvent) {
+              const dataStr = line.slice(6);
+              let parsed: any;
+              try { parsed = JSON.parse(dataStr); } catch { continue; }
+
+              switch (currentEvent) {
+                case 'progress':
+                  onProgress?.(parsed.tokens);
+                  break;
+                case 'done':
+                  resolve(parsed);
+                  return;
+                case 'error':
+                  reject(new Error(parsed.error || 'Streaming error'));
+                  return;
+              }
+              currentEvent = '';
+            }
+
+            if (line === '') currentEvent = '';
+          }
+        }
+      } catch (err) {
+        reject(err);
+      }
+    })();
+  });
 }
 
 // ─────────────────────────────────────────────────────────────────
