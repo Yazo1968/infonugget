@@ -105,6 +105,13 @@ function repairJsonAggressive(raw: string): string {
     }
 
     if (ch === '\\' && inString) {
+      // Check if next char is a valid JSON escape; if not, double the backslash
+      const nextCh = i + 1 < raw.length ? raw[i + 1] : '';
+      const validEscapes = '"\\\/bfnrtu';
+      if (nextCh && !validEscapes.includes(nextCh)) {
+        result += '\\\\';  // Escape the lone backslash
+        continue;
+      }
       result += ch;
       escaped = true;
       continue;
