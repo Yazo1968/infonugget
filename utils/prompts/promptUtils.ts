@@ -512,32 +512,6 @@ export function parseDomain(domain?: string): {
   };
 }
 
-export function assembleRendererPrompt(
-  cardTitle: string,
-  synthesisContent: string,
-  settings: StylingOptions,
-  referenceNote?: string,
-  domain?: string,
-): string {
-  const styleBlock = buildStyleBlock(settings);
-  const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
-  let refLine = '';
-  if (referenceNote) refLine = `\n\n${referenceNote}`;
-
-  // Build THEME block from domain bullet points
-  const themeBlock = domain ? `\n\nTHEME:\n${domain.trim()}` : '';
-
-  return `Transform the provided CONTENT into a highly visual, illustration.
-INSTRUCTIONS:
-* Use the exact CONTENT provided below.
-* make sure you do not repeat the same content in the illustration.
-* make sure you do not add to the CONTENT
-* Use your thinking abilities to apply the THEME and the STYLE provided below
-STEPS:
-1- plan the illustration layout, components, shapes, text and other elements required.
-2- create the illustration according to the plan.${themeBlock}
-
-CONTENT:\n${contentBlock}
-
-STYLE:\n${styleBlock}${refLine}`;
-}
+// assembleRendererPrompt — REMOVED (legacy client-side prompt builder).
+// Image generation prompts are now built exclusively server-side in the
+// generate-card Edge Function using XML-structured templates.

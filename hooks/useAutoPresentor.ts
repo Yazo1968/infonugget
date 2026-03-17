@@ -39,7 +39,7 @@ export function useAutoPresentor(
   placeholderFns?: {
     createPlaceholderCards: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string }) => { id: string; title: string }[];
     createPlaceholderCardsInFolder?: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; folderName?: string }) => { folderId: string; cards: { id: string; title: string }[] } | null;
-    fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
+    fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => void;
     removePlaceholderCard: (cardId: string, detailLevel: DetailLevel) => void;
   },
 ) {

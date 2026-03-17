@@ -526,12 +526,15 @@ export function useCardOperations() {
    * Turns off the synthesis spinner and populates synthesisMap.
    */
   const fillPlaceholderCard = useCallback(
-    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => {
+    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => {
       updateNuggetCard(cardId, (c) => ({
         ...c,
         ...(newTitle ? { text: newTitle } : {}),
         synthesisMap: { ...(c.synthesisMap || {}), [detailLevel]: content },
         isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [detailLevel]: false },
+        ...(layoutDirectives
+          ? { layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [detailLevel]: layoutDirectives } }
+          : {}),
         lastEditedAt: Date.now(),
       }));
     },

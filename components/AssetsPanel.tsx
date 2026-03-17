@@ -705,10 +705,9 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
               {/* Toggle image / prompt view */}
               <button
                 onClick={() => setShowPrompt((prev) => !prev)}
-                disabled={!effectivePrompt}
                 title={showPrompt ? 'Show generated image' : 'Show generation prompt'}
                 aria-label={showPrompt ? 'Show generated image' : 'Show generation prompt'}
-                className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt && effectivePrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
+                className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
               >
                 <svg
                   width="16"
@@ -801,16 +800,24 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
               />
             </ErrorBoundary>
           </div>
-        ) : showPrompt && effectivePrompt ? (
+        ) : showPrompt ? (
           <div className="absolute inset-0 overflow-y-auto text-left px-6 py-4 animate-in fade-in duration-300">
-            <article
-              className="document-prose chat-prose pb-20 max-w-none"
-              dangerouslySetInnerHTML={{
-                __html: sanitizeHtml(
-                  marked.parse(effectivePrompt, { async: false }) as string,
-                ),
-              }}
-            />
+            {effectivePrompt ? (
+              <article
+                className="document-prose chat-prose pb-20 max-w-none"
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeHtml(
+                    marked.parse(effectivePrompt, { async: false }) as string,
+                  ),
+                }}
+              />
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-[12px] text-zinc-400 dark:text-zinc-500 italic">
+                  No generation prompt yet — generate an image to see the actual prompt sent to the AI.
+                </p>
+              </div>
+            )}
           </div>
         ) : isGenerating ? (
           <div className="flex flex-col items-center space-y-4 animate-in fade-in duration-500">
