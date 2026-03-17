@@ -361,9 +361,65 @@ export function useCardGeneration(
         }));
 
         // Read layout directives stored during synthesis (multi-agent pipeline)
-        const layoutDirectives = LAYOUT_DIRECTIVES_ENABLED
+        // If none exist (Chat, Auto-Presentor, or older cards), generate them on-the-fly
+        let layoutDirectives: string | undefined = LAYOUT_DIRECTIVES_ENABLED
           ? (card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined)
           : undefined;
+
+        if (LAYOUT_DIRECTIVES_ENABLED && !layoutDirectives && !isCoverLevel(currentLevel as DetailLevel)) {
+          try {
+            log.info(`Generating layout directives on-the-fly for "${card.text}" [${currentLevel}]`);
+            const directivesPrompt = `Analyze the following card content and produce layout directives for an infographic illustration.
+
+<card_content>
+${contentToMap}
+</card_content>
+
+Return ONLY a <layout_directives> block containing maximum 4 directives, one per line, each under 15 words.
+Describe spatial arrangement and visual relationships between content elements.
+Use only these relationship types: hierarchy, flow/sequence, comparison/contrast, grouping, cause-effect.
+Format each as: [elements] -> [visual treatment]
+
+Example:
+<layout_directives>
+Revenue vs Cost -> opposing columns with contrasting colors
+Timeline phases -> horizontal flow with connecting arrows
+Key metrics -> prominent central placement with radiating details
+</layout_directives>`;
+
+            const { text: directivesRaw, usage: dirUsage } = await callClaude('', {
+              systemBlocks: [{ text: 'You are a visual layout analyst. Produce brief, actionable layout directives for infographic design.', cache: false }],
+              messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: directivesPrompt }] }],
+              maxTokens: 150,
+              temperature: 0.2,
+              signal,
+            });
+
+            recordUsage?.({
+              provider: 'claude',
+              model: CLAUDE_MODEL,
+              inputTokens: dirUsage?.input_tokens ?? 0,
+              outputTokens: dirUsage?.output_tokens ?? 0,
+              cacheReadTokens: dirUsage?.cache_read_input_tokens ?? 0,
+              cacheWriteTokens: dirUsage?.cache_creation_input_tokens ?? 0,
+            });
+
+            const parsed = parseDirectivesResponse(directivesRaw);
+            if (parsed.directives) {
+              layoutDirectives = parsed.directives;
+              // Store on card for future regenerations
+              updateNuggetCard(card.id, (c) => ({
+                ...c,
+                layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [currentLevel]: parsed.directives! },
+              }));
+              log.info(`Layout directives generated: ${parsed.directives}`);
+            }
+          } catch (err: any) {
+            // Non-fatal — fall back to generic instructions
+            if (isAbortError(err)) throw err;
+            log.warn('On-the-fly directive generation failed, using generic fallback:', err.message);
+          }
+        }
 
         // Call the server-side generate-card Edge Function
         // Pipeline: synthesis (if needed) → image gen → storage upload → DB persist
