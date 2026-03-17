@@ -326,7 +326,7 @@ function assembleRendererPrompt(cardTitle: string, synthesisContent: string, set
 INSTRUCTIONS:
 * Use the exact CONTENT provided below.
 * make sure you do not repeat the same content in the illustration.
-* make sure you do not add to the CONTENT
+* use the text in the content only, do not add, remove or change any of the content text.
 * Use your thinking abilities to apply the THEME and the STYLE provided below
 STEPS:
 1- plan the illustration layout, components, shapes, text and other elements required.
