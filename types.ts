@@ -129,6 +129,8 @@ export interface Card {
   lastGeneratedContentMap?: Partial<Record<DetailLevel, string>>;
   /** Per-level full visualizer prompt used for card generation */
   lastPromptMap?: Partial<Record<DetailLevel, string>>;
+  /** Per-level layout directives from Claude's content synthesis (multi-agent pipeline) */
+  layoutDirectivesMap?: Partial<Record<DetailLevel, string>>;
   /** Timestamp when this card was created */
   createdAt?: number;
   /** Timestamp when this card was last edited */

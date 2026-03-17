@@ -68,6 +68,7 @@ export interface GenerateCardRequest {
   }>;
   referenceImage?: { base64: string; mimeType: string } | null;
   skipSynthesis?: boolean;
+  layoutDirectives?: string;
 }
 
 export interface GenerateCardResponse {

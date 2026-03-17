@@ -19,6 +19,22 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('CardGen');
 
+/** Feature flag: when true, Claude generates content-specific layout directives for Gemini. */
+const LAYOUT_DIRECTIVES_ENABLED = true;
+
+/** Extra tokens to allow for the <layout_directives> block in Claude's response. */
+const LAYOUT_DIRECTIVES_TOKEN_BUFFER = 100;
+
+/** Parse Claude's XML-tagged response into content and optional layout directives. */
+function parseDirectivesResponse(raw: string): { content: string; directives: string | null } {
+  const contentMatch = raw.match(/<card_content>([\s\S]*?)<\/card_content>/);
+  const directivesMatch = raw.match(/<layout_directives>([\s\S]*?)<\/layout_directives>/);
+  return {
+    content: contentMatch ? contentMatch[1].trim() : raw.trim(),
+    directives: directivesMatch ? directivesMatch[1].trim() : null,
+  };
+}
+
 /**
  * Card generation pipeline — shared by the insights workflow.
  * Handles: content synthesis → layout planning → image generation → batch operations.
@@ -199,12 +215,18 @@ export function useCardGeneration(
           },
         ];
 
+        // Add token buffer for layout directives when enabled (non-cover cards only)
+        const baseTokens = isCover
+          ? (CARD_TOKEN_LIMITS[level] ?? COVER_TOKEN_LIMIT)
+          : (CARD_TOKEN_LIMITS[level] ?? CARD_TOKEN_LIMITS.Detailed);
+        const maxTokens = (!isCover && LAYOUT_DIRECTIVES_ENABLED)
+          ? baseTokens + LAYOUT_DIRECTIVES_TOKEN_BUFFER
+          : baseTokens;
+
         const { text: rawSynthesized, usage: claudeUsage } = await callClaude('', {
           systemBlocks,
           messages,
-          maxTokens: isCover
-            ? (CARD_TOKEN_LIMITS[level] ?? COVER_TOKEN_LIMIT)
-            : (CARD_TOKEN_LIMITS[level] ?? CARD_TOKEN_LIMITS.Detailed),
+          maxTokens,
           temperature: 0.3,
           signal,
         });
@@ -218,8 +240,19 @@ export function useCardGeneration(
           cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
         });
 
+        // Parse layout directives from Claude's XML-tagged response (non-cover only)
+        let layoutDirectives: string | null = null;
+        let contentText: string;
+        if (!isCover && LAYOUT_DIRECTIVES_ENABLED) {
+          const parsed = parseDirectivesResponse(rawSynthesized);
+          contentText = parsed.content;
+          layoutDirectives = parsed.directives;
+        } else {
+          contentText = rawSynthesized;
+        }
+
         // Sanitize prohibited characters the model may still produce
-        let synthesizedText = rawSynthesized
+        let synthesizedText = contentText
           .replace(/[\u2014\u2013]/g, '-')   // em dash, en dash -> hyphen
           .replace(/\u2192/g, '->')           // arrow -> text arrow
           .replace(/[\u2713\u2714\u2717\u2718]/g, '') // check/cross marks
@@ -236,9 +269,12 @@ export function useCardGeneration(
           ...c,
           synthesisMap: { ...(c.synthesisMap || {}), [level]: synthesizedText },
           isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
+          ...(layoutDirectives
+            ? { layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [level]: layoutDirectives } }
+            : {}),
         }));
 
-        return synthesizedText;
+        return { content: synthesizedText, layoutDirectives };
       } catch (err: any) {
         if (isAbortError(err)) return null;
         log.error('Synthesis failed:', err);
@@ -324,6 +360,11 @@ export function useCardGeneration(
           structure: d.structure,
         }));
 
+        // Read layout directives stored during synthesis (multi-agent pipeline)
+        const layoutDirectives = LAYOUT_DIRECTIVES_ENABLED
+          ? (card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined)
+          : undefined;
+
         // Call the server-side generate-card Edge Function
         // Pipeline: synthesis (if needed) → image gen → storage upload → DB persist
         // Planner is skipped for standard cards — Gemini handles visualization directly.
@@ -338,6 +379,7 @@ export function useCardGeneration(
           documents,
           referenceImage: refImagePayload,
           skipSynthesis: true, // Content already synthesized
+          layoutDirectives,
         }, signal);
 
         // Update local state with the server response (album model)

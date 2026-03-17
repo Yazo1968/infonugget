@@ -313,28 +313,35 @@ function parseDomain(domain?: string): { sector: string; contentNature: string; 
   };
 }
 
-function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, domain?: string): string {
+function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, domain?: string, layoutDirectives?: string): string {
   const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
-  let refLine = "";
-  if (referenceNote) refLine = `\n\n${referenceNote}`;
+  const themeBlock = domain ? `\n<theme_context>\n${domain.trim()}\n</theme_context>` : "";
+  const refLine = referenceNote ? `\n<reference_note>${referenceNote}</reference_note>` : "";
 
-  // Build THEME block from domain bullet points
-  const themeBlock = domain ? `\n\nTHEME:\n${domain.trim()}` : "";
+  // Instructions 5-6: use content-specific layout directives from Claude when available,
+  // otherwise fall back to generic relationship analysis instructions.
+  const layoutInstructions = layoutDirectives
+    ? `5. Apply these content-specific layout directives:\n${layoutDirectives.split('\n').map(line => `   - ${line.trim()}`).filter(l => l !== '   - ').join('\n')}`
+    : `5. Analyze the logical relationships between the provided content elements (e.g., hierarchy, cause-effect, comparisons, sequences, groupings).
+6. Structure the visual layout to explicitly reflect this logic. Use visual tools (connectors, spatial proximity, containment shapes, flow arrows, font sizing, or contrast) to make these relationships visible and meaningful, not just decorative.`;
 
-  return `Transform the provided CONTENT into a highly visual, illustration.
-INSTRUCTIONS:
-* Use the exact CONTENT provided below.
-* make sure you do not repeat the same content in the illustration.
-* use the text in the content only, do not add, remove or change any of the content text.
-* Use your thinking abilities to apply the THEME and the STYLE provided below
-STEPS:
-1- plan the illustration layout, components, shapes, text and other elements required.
-2- create the illustration according to the plan.${themeBlock}
+  return `<visual_style>
+You are an expert graphic designer and illustrator. Create an infographic illustration using the exact parameters below.
+${styleBlock}
+</visual_style>${themeBlock}${refLine}
 
-CONTENT:\n${contentBlock}
+<instructions>
+1. Design a visual layout to represent the text content provided in the <exact_text_content> block.
+2. Render ONLY the text provided below. Do not add, change, hallucinate, or omit any words.
+3. Do not repeat the same content in the illustration.
+4. Integrate the text cleanly into the design without overlapping complex background shapes.
+${layoutInstructions}
+</instructions>
 
-STYLE:\n${styleBlock}${refLine}`;
+<exact_text_content>
+${contentBlock}
+</exact_text_content>`;
 }
 
 function buildContentPrompt(cardTitle: string, level: string, domain?: string): string {
@@ -369,25 +376,30 @@ function buildCoverContentPrompt(cardTitle: string, coverType: string, domain?: 
   return `${expertPriming ? expertPriming + "\n\n" : ""}Cover Slide Content — [${cardTitle}]\nUsing the DOCUMENT STRUCTURE and READING INSTRUCTIONS above, read and analyze the target section.\n\n**Task:** Generate content for a TAKEAWAY CARD SLIDE. Use "${cardTitle}" as the title.\n\n**Output format (strict):**\n# [Title — 2-8 words]\n- [Takeaway bullet 1]\n- [Takeaway bullet 2]\n- [Takeaway bullet 3 (optional)]\n\n**WORD COUNT:** 40-60 words total. Hard limit.\n\n**Output:** Return ONLY the cover content starting with #. No preamble.`.trim();
 }
 
-function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, domain?: string): string {
-  return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, domain);
+function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings: StylingOptions, domain?: string, layoutDirectives?: string): string {
+  return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, domain, layoutDirectives);
 }
 
 function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, coverType?: string): string {
   const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareCoverContentBlock(coverContent);
   const coverInstruction = coverType === "TakeawayCard"
-    ? "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text. Title prominent in upper portion. Takeaway bullets as clean vertical list below. Fill remaining canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts."
-    : "Generate a bold, brand-forward cover slide. The title must be the largest, most dominant text, centered as dominant hero element. Subtitle below. Tagline at bottom edge if present. Fill canvas with style-driven decorative elements. No charts, data grids, or multi-section layouts.";
+    ? "Create a bold, brand-forward presentation cover slide. The title must be large and dominant. Render the takeaway bullets as a clean vertical list below. Fill the remaining canvas with decorative elements matching the visual style. No charts, data grids, or multi-section layouts."
+    : "Create a bold, brand-forward presentation cover slide. Render the title as a massive, dominant hero element in the center. Subtitle below. Tagline at bottom edge if present. Fill the canvas with decorative elements matching the visual style. No charts, data grids, or multi-section layouts.";
 
-  return `• Instructions:
-${coverInstruction}
-
-• Style:
+  return `<visual_style>
+You are an expert presentation designer.
 ${styleBlock}
+</visual_style>
 
-• Content:
-${contentBlock}`;
+<instructions>
+${coverInstruction}
+Render ONLY the text provided in the <exact_text_content> block. Do not hallucinate or change text.
+</instructions>
+
+<exact_text_content>
+${contentBlock}
+</exact_text_content>`;
 }
 
 // ── Storage helpers ──
@@ -427,6 +439,7 @@ Deno.serve(async (req: Request) => {
       documents, // Array of { fileId, name, sourceType, structure?, content? }
       referenceImage, // { base64, mimeType } or null
       skipSynthesis, // boolean — skip phase 1 if synthesis already exists
+      layoutDirectives, // string — content-specific layout directives from Claude (multi-agent pipeline)
     } = body;
 
     if (!nuggetId || !cardId || !cardTitle || !detailLevel || !settings) {
@@ -529,7 +542,7 @@ Deno.serve(async (req: Request) => {
     const isCoverImage = (detailLevel === "TitleCard" || detailLevel === "TakeawayCard");
     const imagePrompt = isCoverImage
       ? buildCoverVisualizerPrompt(cardTitle, synthesisContent, settings, detailLevel)
-      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, domain);
+      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, domain, layoutDirectives);
 
     const parts: any[] = [];
     // Add reference image if provided

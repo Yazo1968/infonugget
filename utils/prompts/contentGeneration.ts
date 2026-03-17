@@ -81,7 +81,19 @@ Allowed content types (use ONLY these — nothing else):
 
 PROHIBITED CHARACTERS: No em dashes (\u2014), en dashes (\u2013), arrows (\u2192), check/cross marks (\u2713\u2717), square bracket annotations, tilde (~), pipe characters (|), or asterisks (*). Use colons, periods, commas, semicolons, hyphens, parentheses, and plain subheadings instead. If the source document contains any of these characters, replace them with their allowed equivalents in your output.
 
-Output: Return ONLY the card content. No preamble, no explanation. REMINDER: ${wordCountRange} words maximum.
+Output: Return your response in two XML-tagged sections. First, wrap the card content in <card_content> tags. Then, append a <layout_directives> block with brief visual layout instructions specific to this content.
+
+<card_content> rules:
+- Contains ONLY the card content (headings, bullets, tables, etc.)
+- No preamble, no explanation
+- ${wordCountRange} words maximum
+
+<layout_directives> rules:
+- Maximum 4 directives, one per line, each under 15 words
+- Describe spatial arrangement and visual relationships between content elements
+- Use only these relationship types: hierarchy, flow/sequence, comparison/contrast, grouping, cause-effect
+- Format each as: [elements] -> [visual treatment]
+- Example: "Revenue vs Cost -> opposing columns with contrasting colors"
 `.trim();
 }
 
