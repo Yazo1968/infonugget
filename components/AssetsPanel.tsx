@@ -807,7 +807,20 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                 className="document-prose chat-prose pb-20 max-w-none"
                 dangerouslySetInnerHTML={{
                   __html: sanitizeHtml(
-                    marked.parse(effectivePrompt, { async: false }) as string,
+                    marked.parse(
+                      effectivePrompt
+                        .replace(/<visual_style>/g, '## Visual Style\n')
+                        .replace(/<\/visual_style>/g, '\n---\n')
+                        .replace(/<theme_context>/g, '## Theme Context\n')
+                        .replace(/<\/theme_context>/g, '\n---\n')
+                        .replace(/<reference_note>/g, '## Reference Note\n')
+                        .replace(/<\/reference_note>/g, '\n---\n')
+                        .replace(/<instructions>/g, '## Instructions\n')
+                        .replace(/<\/instructions>/g, '\n---\n')
+                        .replace(/<exact_text_content>/g, '## Exact Text Content\n')
+                        .replace(/<\/exact_text_content>/g, ''),
+                      { async: false },
+                    ) as string,
                   ),
                 }}
               />

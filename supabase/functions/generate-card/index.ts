@@ -285,10 +285,15 @@ function prepareContentBlock(synthesisContent: string, cardTitle: string): strin
   let content = synthesisContent;
   // Strip H1 (title is provided separately)
   content = content.replace(/^#\s+.+$/gm, "");
+  // Strip markdown heading syntax from ## and ### (keep text, remove # symbols)
+  // Gemini renders '#' literally — plain text headings work better as visual hierarchy
+  content = content.replace(/^#{2,}\s+(.+)$/gm, "$1");
+  // Strip bold markers — Gemini renders ** literally
+  content = content.replace(/\*\*(.+?)\*\*/g, "$1");
   // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  return `Title: ${cardTitle}\n\n${content}`;
+  return `${cardTitle}\n\n${content}`;
 }
 
 function prepareCoverContentBlock(coverContent: string): string {
