@@ -1,7 +1,7 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { marked } from 'marked';
 import { sanitizeHtml } from '../utils/sanitize';
-import { Card, StylingOptions, Palette, DetailLevel, ImageVersion, ReferenceImage, isCoverLevel } from '../types';
+import { Card, StylingOptions, Palette, DetailLevel, ImageVersion, ReferenceImage } from '../types';
 import { VISUAL_STYLES, STYLE_FONTS, STYLE_IDENTITY_FIELDS, BUILTIN_STYLE_NAMES } from '../utils/ai';
 import AnnotationWorkbench, { type AnnotationToolbarState } from './workbench/AnnotationWorkbench';
 import AnnotationToolbar from './workbench/AnnotationToolbar';
@@ -12,7 +12,6 @@ import { useSelectionContext } from '../context/SelectionContext';
 import { useNuggetContext } from '../context/NuggetContext';
 import PanelRequirements from './PanelRequirements';
 import ChiselLoader from './ChiselLoader';
-import { assembleRendererPrompt } from '../utils/prompts/promptUtils';
 
 interface AssetsPanelProps {
   committedSettings: StylingOptions;
@@ -155,20 +154,11 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const album = activeCard?.albumMap?.[cardLevel] || [];
   const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating;
 
-  // Effective prompt: use stored lastPromptMap or reconstruct from synthesis + visual plan
+  // Show the actual prompt sent to Gemini — only available after image generation
   const effectivePrompt = useMemo(() => {
     if (!activeCard) return null;
-    const stored = activeCard.lastPromptMap?.[cardLevel];
-    if (stored) return stored;
-    // Reconstruct from card data (works for existing cards where lastPromptMap was lost)
-    const synthesis = activeCard.synthesisMap?.[cardLevel];
-    if (!synthesis) return null;
-    if (isCoverLevel(cardLevel)) {
-      // Cover prompt reconstruction not available client-side — return synthesis as fallback
-      return null;
-    }
-    return assembleRendererPrompt(activeCard.text, synthesis, committedSettings, undefined, selectedNugget?.domain);
-  }, [activeCard, cardLevel, committedSettings, selectedNugget?.domain]);
+    return activeCard.lastPromptMap?.[cardLevel] || null;
+  }, [activeCard, cardLevel]);
 
   const paletteKeys: Array<keyof Palette> = ['background', 'primary', 'secondary', 'accent', 'text'];
 
