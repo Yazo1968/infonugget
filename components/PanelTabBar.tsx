@@ -1,6 +1,6 @@
 import React, { forwardRef, useState, useCallback, useRef } from 'react';
 
-type PanelId = 'sources' | 'chat' | 'auto-presentor' | 'cards' | 'quality';
+type PanelId = 'sources' | 'chat' | 'smart-deck' | 'cards' | 'quality';
 
 type QualityStatus = 'green' | 'amber' | 'red' | 'stale' | null;
 
@@ -55,8 +55,8 @@ const TABS: TabConfig[] = [
     ),
   },
   {
-    id: 'auto-presentor',
-    label: 'Auto-Presentor',
+    id: 'smart-deck',
+    label: 'SmartDeck',
     requiresNugget: true,
     color: { dark: 'rgb(100,160,230)', light: 'rgb(100,160,230)' },
     dimColor: { dark: 'rgb(52,86,130)', light: 'rgb(52,86,130)' },

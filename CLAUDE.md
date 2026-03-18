@@ -73,14 +73,14 @@ Three content generation paths exist, all feeding into the same image generation
 - Content generated server-side by `chat-message` Edge Function
 - No layout directives at synthesis time (generated on-the-fly at image gen)
 
-**Path 3 — Auto-Presentor** (`hooks/useAutoPresentor.ts` → `chatMessageApi`):
+**Path 3 — SmartDeck** (`hooks/useSmartDeck.ts` → `chatMessageApi`):
 - Full deck generated in one prompt via `chat-message` Edge Function
-- Prompt built by `utils/autoPresentor/prompt.ts` with LOD config from `utils/deckShared/constants.ts`
+- Prompt built by `utils/smartDeck/prompt.ts` with LOD config from `utils/deckShared/constants.ts`
 - No layout directives at synthesis time (generated on-the-fly at image gen)
 
 **Image generation** (all paths converge in `generateCard` within `useCardGeneration.ts`):
 1. Reads `layoutDirectivesMap` for pre-stored directives
-2. If none exist (Chat, Auto-Presentor, older cards), generates directives on-the-fly via a small Claude call
+2. If none exist (Chat, SmartDeck, older cards), generates directives on-the-fly via a small Claude call
 3. Passes `layoutDirectives` to `generateCardApi()` → `generate-card` Edge Function
 4. EF injects directives as instruction #5 in Gemini's XML-structured prompt
 5. Feature flag: `LAYOUT_DIRECTIVES_ENABLED` in `useCardGeneration.ts` — set to `false` to revert to generic instructions
@@ -106,7 +106,7 @@ Three content generation paths exist, all feeding into the same image generation
 | TitleCard | 15-25 | 150 | 150 | 150 + 120 = 270 |
 | TakeawayCard | 40-60 | 350 | 350 | 350 + 120 = 470 |
 
-Content token limits are now **aligned** across Sources and Chat (v12). Chat `maxTokens` = content limit + `SUGGESTIONS_HEADROOM` (120 tokens) so the model stays within word count while still having room for the `card-suggestions` fenced block. Word count ranges are identical across Sources (`contentGeneration.ts`), Chat (`chat-message` EF), and Auto-Presentor (`deckShared/constants.ts`).
+Content token limits are now **aligned** across Sources and Chat (v12). Chat `maxTokens` = content limit + `SUGGESTIONS_HEADROOM` (120 tokens) so the model stays within word count while still having room for the `card-suggestions` fenced block. Word count ranges are identical across Sources (`contentGeneration.ts`), Chat (`chat-message` EF), and SmartDeck (`deckShared/constants.ts`).
 
 **Chat card suggestions stripping**: Client-side `stripSuggestionsBlock()` in `ChatPanel.tsx` and defensive strips in `useCardOperations.ts` ensure the `card-suggestions` fenced block never contaminates `synthesisMap` storage.
 
@@ -129,7 +129,7 @@ Each card has an **album** per detail level — a collection of generated/modifi
 
 Dashboard (when no project open) or workspace with 5 mutually exclusive panels controlled by `PanelTabBar`. Only one panel open at a time. **Default panel is Sources** — there is never a state where all panels are collapsed; toggling the active panel or pressing Escape falls back to Sources.
 
-Panel order: Sources | Brief & Quality | Chat | Auto-Presentor | Cards & Assets. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'auto-presentor' | 'cards'`.
+Panel order: Sources | Brief & Quality | Chat | SmartDeck | Cards & Assets. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'smart-deck' | 'cards'`.
 
 **Click-outside handler** (`App.tsx`): Resets to Sources when clicking outside panels. Excludes: `[data-panel-overlay]`, `[data-panel-strip]`, `[data-breadcrumb-dropdown]`, `header`, and portal-rendered `.fixed` elements.
 
@@ -219,7 +219,7 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx`. When a project is o
 **Known gap**: `resolveOrderedDocs()` only checks content availability, does NOT check `enabled` flag.
 
 ### `hooks/useAbortController.ts` — Abort lifecycle
-Shared by `useCardGeneration`, `useInsightsLab`, and `useAutoPresentor`. Provides `create`, `createFresh`, `abort`, `clear`, `isAbortError`.
+Shared by `useCardGeneration`, `useInsightsLab`, and `useSmartDeck`. Provides `create`, `createFresh`, `abort`, `clear`, `isAbortError`.
 
 ### Gemini Image Config
 - `PRO_IMAGE_CONFIG` in `utils/ai.ts`: `thinkingLevel: 'Minimal'`, `responseModalities: ['TEXT', 'IMAGE']`
@@ -237,7 +237,7 @@ Main orchestrator. Renders `Dashboard` when no project open, full workspace othe
 - Main Header: `z-[110]`
 - Brief & Quality panel / Hard lock overlay: `z-[106]`
 - Chat panel: `z-[105]` (strip `z-[2]`)
-- Auto-Presentor panel: `z-[104]` (strip `z-[1]`)
+- SmartDeck panel: `z-[104]` (strip `z-[1]`)
 - Cards/Assets: `z-[103]`
 - FootnoteBar / Footer: `z-[102]`
 

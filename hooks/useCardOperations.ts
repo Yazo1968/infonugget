@@ -390,7 +390,7 @@ export function useCardOperations() {
     (
       titles: string[],
       detailLevel: DetailLevel | DetailLevel[],
-      options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; targetFolderId?: string },
+      options?: { sourceDocuments?: string[]; smartDeckSessionId?: string; targetFolderId?: string },
     ): { id: string; title: string }[] => {
       if (!selectedNugget || titles.length === 0) return [];
 
@@ -462,7 +462,7 @@ export function useCardOperations() {
     (
       titles: string[],
       detailLevel: DetailLevel | DetailLevel[],
-      options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; folderName?: string },
+      options?: { sourceDocuments?: string[]; smartDeckSessionId?: string; folderName?: string },
     ): { folderId: string; cards: { id: string; title: string }[] } | null => {
       if (!selectedNugget || titles.length < 2) return null;
 

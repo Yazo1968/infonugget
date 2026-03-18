@@ -361,7 +361,7 @@ export function useCardGeneration(
         }));
 
         // Read layout directives stored during synthesis (multi-agent pipeline)
-        // If none exist (Chat, Auto-Presentor, or older cards), generate them on-the-fly
+        // If none exist (Chat, SmartDeck, or older cards), generate them on-the-fly
         let layoutDirectives: string | undefined = LAYOUT_DIRECTIVES_ENABLED
           ? (card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined)
           : undefined;

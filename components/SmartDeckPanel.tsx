@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { marked } from 'marked';
-import { UploadedFile, AutoDeckBriefing, AutoDeckLod, AutoPresentorSession } from '../types';
+import { UploadedFile, AutoDeckBriefing, AutoDeckLod, SmartDeckSession } from '../types';
 import { useThemeContext } from '../context/ThemeContext';
 import PanelRequirements from './PanelRequirements';
 import {
@@ -11,12 +11,12 @@ import {
   LodConfig,
 } from '../utils/deckShared/constants';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
-import { PresentorGenerateConfig } from '../hooks/useAutoPresentor';
+import { SmartDeckGenerateConfig } from '../hooks/useSmartDeck';
 import { sanitizeHtml } from '../utils/sanitize';
 
 // ── Props ──
 
-interface AutoPresentorPanelProps {
+interface SmartDeckPanelProps {
   isOpen: boolean;
   onToggle: () => void;
   documents: UploadedFile[];
@@ -28,8 +28,8 @@ interface AutoPresentorPanelProps {
   domainReviewNeeded?: boolean;
   briefReviewNeeded?: boolean;
   // Generation props
-  session?: AutoPresentorSession | null;
-  onGenerate?: (config: PresentorGenerateConfig) => Promise<void>;
+  session?: SmartDeckSession | null;
+  onGenerate?: (config: SmartDeckGenerateConfig) => Promise<void>;
   onAcceptCards?: () => void;
   onAbort?: () => void;
   onReset?: () => void;
@@ -37,7 +37,7 @@ interface AutoPresentorPanelProps {
 
 // ── Component ──
 
-const AutoPresentorPanel: React.FC<AutoPresentorPanelProps> = ({
+const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
   isOpen,
   onToggle,
   documents,
@@ -1077,4 +1077,4 @@ const AutoPresentorPanel: React.FC<AutoPresentorPanelProps> = ({
   );
 };
 
-export default React.memo(AutoPresentorPanel);
+export default React.memo(SmartDeckPanel);

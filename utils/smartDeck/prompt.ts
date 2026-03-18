@@ -3,7 +3,7 @@ import { LOD_LEVELS } from '../deckShared/constants';
 
 // ── Prompt configuration ──
 
-export interface PresentorPromptConfig {
+export interface SmartDeckPromptConfig {
   briefing: AutoDeckBriefing;
   lod: AutoDeckLod;
   includeCover: boolean;
@@ -30,7 +30,7 @@ const PROHIBITED_CHARS = `PROHIBITED CHARACTERS — never use any of these:
  * Compose the user-message prompt for single-shot deck generation.
  * This goes into `userText` of the chatMessageApi call.
  */
-export function buildPresentorPrompt(config: PresentorPromptConfig): string {
+export function buildSmartDeckPrompt(config: SmartDeckPromptConfig): string {
   const { briefing, lod, includeCover, includeClosing, documentNames } = config;
   const lodConfig = LOD_LEVELS[lod];
 

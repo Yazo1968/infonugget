@@ -3,8 +3,8 @@ import { useNuggetContext } from '../context/NuggetContext';
 import {
   AutoDeckBriefing,
   AutoDeckLod,
-  AutoPresentorSession,
-  AutoPresentorStatus,
+  SmartDeckSession,
+  SmartDeckStatus,
   DetailLevel,
   UploadedFile,
 } from '../types';
@@ -19,13 +19,13 @@ import { resolveEnabledDocs } from '../utils/documentResolution';
 import { chatMessageApi, ChatMessageDocument } from '../utils/api';
 import { uploadToFilesAPI } from '../utils/ai';
 import { base64ToBlob } from '../utils/fileProcessing';
-import { buildPresentorPrompt } from '../utils/autoPresentor/prompt';
+import { buildSmartDeckPrompt } from '../utils/smartDeck/prompt';
 
-const log = createLogger('AutoPresentor');
+const log = createLogger('SmartDeck');
 
 // ── Config for the generate call ──
 
-export interface PresentorGenerateConfig {
+export interface SmartDeckGenerateConfig {
   briefing: AutoDeckBriefing;
   lod: AutoDeckLod;
   includeCover: boolean;
@@ -34,11 +34,11 @@ export interface PresentorGenerateConfig {
 
 // ── Hook ──
 
-export function useAutoPresentor(
+export function useSmartDeck(
   recordUsage?: RecordUsageFn,
   placeholderFns?: {
-    createPlaceholderCards: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string }) => { id: string; title: string }[];
-    createPlaceholderCardsInFolder?: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; autoPresentorSessionId?: string; folderName?: string }) => { folderId: string; cards: { id: string; title: string }[] } | null;
+    createPlaceholderCards: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; smartDeckSessionId?: string }) => { id: string; title: string }[];
+    createPlaceholderCardsInFolder?: (titles: string[], detailLevel: DetailLevel | DetailLevel[], options?: { sourceDocuments?: string[]; smartDeckSessionId?: string; folderName?: string }) => { folderId: string; cards: { id: string; title: string }[] } | null;
     fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => void;
     removePlaceholderCard: (cardId: string, detailLevel: DetailLevel) => void;
   },
@@ -46,17 +46,17 @@ export function useAutoPresentor(
   const { selectedNugget, updateNugget, updateNuggetDocument, createLogCheckpoint } = useNuggetContext();
   const { addToast } = useToast();
 
-  const [session, setSession] = useState<AutoPresentorSession | null>(null);
+  const [session, setSession] = useState<SmartDeckSession | null>(null);
   const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();
 
   // ── Helpers ──
 
-  const updateSession = useCallback((updater: (s: AutoPresentorSession) => AutoPresentorSession) => {
+  const updateSession = useCallback((updater: (s: SmartDeckSession) => SmartDeckSession) => {
     setSession((prev) => (prev ? updater(prev) : prev));
   }, []);
 
   const setStatus = useCallback(
-    (status: AutoPresentorStatus) => {
+    (status: SmartDeckStatus) => {
       updateSession((s) => ({ ...s, status }));
     },
     [updateSession],
@@ -116,7 +116,7 @@ export function useAutoPresentor(
    * Generate a complete card deck in a single shot.
    */
   const generate = useCallback(
-    async (config: PresentorGenerateConfig) => {
+    async (config: SmartDeckGenerateConfig) => {
       if (!selectedNugget) return;
 
       // Resolve enabled documents
@@ -138,11 +138,11 @@ export function useAutoPresentor(
       if (!docsWithFiles) return;
 
       // Create sources log checkpoint
-      createLogCheckpoint('auto_presentor');
+      createLogCheckpoint('smart_deck');
 
       // Create session
-      const sessionId = `presentor-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-      const newSession: AutoPresentorSession = {
+      const sessionId = `smartdeck-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+      const newSession: SmartDeckSession = {
         id: sessionId,
         nuggetId: selectedNugget.id,
         lod: config.lod,
@@ -168,7 +168,7 @@ export function useAutoPresentor(
         }));
 
         // Build the prompt
-        const userText = buildPresentorPrompt({
+        const userText = buildSmartDeckPrompt({
           briefing: config.briefing,
           lod: config.lod,
           includeCover: config.includeCover,
@@ -266,7 +266,8 @@ export function useAutoPresentor(
       if (placeholderFns.createPlaceholderCardsInFolder && titles.length >= 2) {
         const folderResult = placeholderFns.createPlaceholderCardsInFolder(titles, perCardDetailLevels, {
           sourceDocuments: enabledDocNames,
-          autoPresentorSessionId: session.id,
+          smartDeckSessionId: session.id,
+          folderName: `Deck- ${selectedNugget?.name || 'Untitled'}`,
         });
         if (folderResult) {
           for (let i = 0; i < folderResult.cards.length; i++) {
@@ -276,7 +277,7 @@ export function useAutoPresentor(
       } else {
         const placeholders = placeholderFns.createPlaceholderCards(titles, perCardDetailLevels, {
           sourceDocuments: enabledDocNames,
-          autoPresentorSessionId: session.id,
+          smartDeckSessionId: session.id,
         });
         for (let i = 0; i < placeholders.length; i++) {
           placeholderMap.set(placeholders[i].title, { id: placeholders[i].id, index: i });

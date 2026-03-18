@@ -377,7 +377,7 @@ export interface SourcesLogStats {
 // ── Sources Log checkpoint model ──
 
 /** What triggered creating a Sources Log checkpoint entry */
-export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'auto_presentor' | 'manual';
+export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'smart_deck' | 'manual';
 
 /** A single change within a checkpoint — simplified view of a raw DocChangeEvent */
 export interface SourcesLogChange {
@@ -755,16 +755,16 @@ export interface BriefingSuggestionOption {
 /** AI-generated suggestions for all 5 briefing fields. */
 export type BriefingSuggestions = Record<BriefingFieldName, BriefingSuggestionOption[]>;
 
-// ── Auto-Presentor types ──
+// ── SmartDeck types ──
 
-export type AutoPresentorStatus = 'configuring' | 'generating' | 'reviewing' | 'accepting' | 'complete' | 'error';
+export type SmartDeckStatus = 'configuring' | 'generating' | 'reviewing' | 'accepting' | 'complete' | 'error';
 
-export interface AutoPresentorSession {
+export interface SmartDeckSession {
   id: string;
   nuggetId: string;
   lod: AutoDeckLod;
   domain?: string;
-  status: AutoPresentorStatus;
+  status: SmartDeckStatus;
   generatedCards: { number: number; title: string; content: string; wordCount: number }[];
   includeCover: boolean;
   includeClosing: boolean;

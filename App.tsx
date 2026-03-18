@@ -18,7 +18,7 @@ import {
 import { Dashboard } from './components/Dashboard';
 import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
-import AutoPresentorPanel from './components/AutoPresentorPanel';
+import SmartDeckPanel from './components/SmartDeckPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PanelTabBar from './components/PanelTabBar';
@@ -41,7 +41,7 @@ import { useProjectOperations, AskPdfProcessorFn } from './hooks/useProjectOpera
 import { useDocumentOperations } from './hooks/useDocumentOperations';
 import { useInsightsLab } from './hooks/useInsightsLab';
 import { useDocumentQualityCheck } from './hooks/useDocumentQualityCheck';
-import { useAutoPresentor } from './hooks/useAutoPresentor';
+import { useSmartDeck } from './hooks/useSmartDeck';
 import { useBriefingSuggestions } from './hooks/useBriefingSuggestions';
 import { useTokenUsage, TokenUsageTotals } from './hooks/useTokenUsage';
 import { useTabManagement } from './hooks/useTabManagement';
@@ -182,14 +182,14 @@ const App: React.FC = () => {
     toggleFolderSelection,
   } = useCardOperations();
 
-  // ── Auto-Presentor workflow hook ──
+  // ── SmartDeck workflow hook ──
   const {
-    session: presentorSession,
-    generate: presentorGenerate,
-    acceptCards: presentorAcceptCards,
-    abort: presentorAbort,
-    reset: presentorReset,
-  } = useAutoPresentor(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
+    session: smartDeckSession,
+    generate: smartDeckGenerate,
+    acceptCards: smartDeckAcceptCards,
+    abort: smartDeckAbort,
+    reset: smartDeckReset,
+  } = useSmartDeck(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
 
   const { generateBriefingSuggestions, abortSuggestions: abortBriefingSuggestions } = useBriefingSuggestions(recordUsage);
 
@@ -353,7 +353,7 @@ const App: React.FC = () => {
 
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'auto-presentor' | 'cards' | 'quality' | null>('sources');
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'smart-deck' | 'cards' | 'quality' | null>('sources');
   const [qualityActiveTab, setQualityActiveTab] = useState<'logs' | 'brief' | 'assessment'>('brief');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
@@ -860,13 +860,13 @@ const App: React.FC = () => {
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 4: Auto-Presentor */}
-                  <ErrorBoundary name="Auto-Presentor">
-                    <AutoPresentorPanel
-                      isOpen={expandedPanel === 'auto-presentor'}
+                  {/* Panel 4: SmartDeck */}
+                  <ErrorBoundary name="SmartDeck">
+                    <SmartDeckPanel
+                      isOpen={expandedPanel === 'smart-deck'}
                       tabBarRef={tabBarRef}
                       onToggle={() =>
-                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'auto-presentor' ? null : 'auto-presentor')))
+                        appGatedAction(() => setExpandedPanel((prev) => (prev === 'smart-deck' ? null : 'smart-deck')))
                       }
                       documents={nuggetDocs}
                       briefing={selectedNugget?.briefing}
@@ -875,11 +875,11 @@ const App: React.FC = () => {
                       briefReviewNeeded={selectedNugget?.briefReviewNeeded}
                       onOpenBriefTab={() => appGatedAction(() => { setQualityActiveTab('brief'); setExpandedPanel('quality'); })}
                       onOpenSourcesTab={() => appGatedAction(() => setExpandedPanel('sources'))}
-                      session={presentorSession}
-                      onGenerate={presentorGenerate}
-                      onAcceptCards={presentorAcceptCards}
-                      onAbort={presentorAbort}
-                      onReset={presentorReset}
+                      session={smartDeckSession}
+                      onGenerate={smartDeckGenerate}
+                      onAcceptCards={smartDeckAcceptCards}
+                      onAbort={smartDeckAbort}
+                      onReset={smartDeckReset}
                     />
                   </ErrorBoundary>
 

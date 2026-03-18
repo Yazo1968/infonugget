@@ -4,7 +4,7 @@ import { useRef, useCallback } from 'react';
  * Shared AbortController management hook.
  *
  * Consolidates the identical abort pattern used across useCardGeneration,
- * useInsightsLab, and useAutoPresentor:
+ * useInsightsLab, and useSmartDeck:
  *   const controller = new AbortController();
  *   abortRef.current = controller;
  *   ...

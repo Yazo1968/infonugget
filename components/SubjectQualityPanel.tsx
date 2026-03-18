@@ -122,7 +122,7 @@ function getChangeIcon(type: string): React.ReactNode {
 const TriggerConfig: Record<SourcesLogTrigger, { label: string; color: string; darkColor: string }> = {
   chat_initiated: { label: 'Chat started', color: 'bg-blue-50 text-blue-600 border-blue-200', darkColor: 'dark:bg-blue-900/30 dark:text-blue-400 dark:border-blue-800' },
   chat_continued: { label: 'Chat continued', color: 'bg-sky-50 text-sky-600 border-sky-200', darkColor: 'dark:bg-sky-900/30 dark:text-sky-400 dark:border-sky-800' },
-  auto_presentor: { label: 'Auto-Presentor', color: 'bg-indigo-50 text-indigo-600 border-indigo-200', darkColor: 'dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800' },
+  smart_deck: { label: 'SmartDeck', color: 'bg-indigo-50 text-indigo-600 border-indigo-200', darkColor: 'dark:bg-indigo-900/30 dark:text-indigo-400 dark:border-indigo-800' },
   manual: { label: 'Manual', color: 'bg-zinc-50 text-zinc-600 border-zinc-200', darkColor: 'dark:bg-zinc-800 dark:text-zinc-400 dark:border-zinc-700' },
 };
 

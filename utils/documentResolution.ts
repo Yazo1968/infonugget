@@ -3,7 +3,7 @@ import type { UploadedFile } from '../types';
 /**
  * Document resolution utilities — consolidates the identical
  * document filtering logic used across useCardGeneration,
- * useInsightsLab, and useAutoPresentor.
+ * useInsightsLab, and useSmartDeck.
  */
 
 /**
