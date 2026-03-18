@@ -317,21 +317,31 @@ export async function exportFolderToDocx({
   children.push(new Paragraph({ text: '' }));
 
   // ── Documents Log ──
-  const enabledDocs = documents.filter((d) => d.enabled !== false);
-  if (enabledDocs.length > 0) {
+  if (documents.length > 0) {
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: 'Source Documents', bold: true })],
+        children: [new TextRun({ text: 'Documents Log', bold: true })],
         heading: HeadingLevel.HEADING_1,
         spacing: { before: 240, after: 120 },
       }),
     );
-    for (const doc of enabledDocs) {
+    for (const doc of documents) {
       const typeLabel = doc.sourceType === 'native-pdf' ? 'PDF' : 'Markdown';
+      const isActive = doc.enabled !== false;
       children.push(
         new Paragraph({
           children: [
-            new TextRun({ text: doc.name, bold: true }),
+            new TextRun({
+              text: isActive ? '[Active] ' : '[Inactive] ',
+              bold: true,
+              color: isActive ? '2E7D32' : '999999',
+              size: 18,
+            }),
+            new TextRun({
+              text: doc.name,
+              bold: isActive,
+              color: isActive ? '000000' : '999999',
+            }),
             new TextRun({ text: `  (${typeLabel})`, color: '888888', size: 18 }),
           ],
           bullet: { level: 0 },
@@ -363,16 +373,47 @@ export async function exportFolderToDocx({
       }),
     );
 
-    // Detail level label
+    // Card info table
+    const fmtDate = (ts?: number) =>
+      ts ? new Date(ts).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
+
+    const album = card.albumMap?.[level];
+    const imageCount = album ? album.length : 0;
+    const lastImageTs = album && album.length > 0 ? album[album.length - 1].createdAt : undefined;
+    const isStale = !!(lastImageTs && card.lastEditedAt && card.lastEditedAt > lastImageTs);
+
+    const infoRows: [string, string][] = [
+      ['Detail Level', level],
+      ['Content Generated', fmtDate(card.createdAt)],
+      ['Content Last Modified', card.lastEditedAt && card.lastEditedAt !== card.createdAt ? fmtDate(card.lastEditedAt) : '—'],
+      ['Image Versions', imageCount > 0 ? `${imageCount}` : 'None'],
+      ['Last Image Generated', lastImageTs ? `${fmtDate(lastImageTs)}${isStale ? ' (stale)' : ''}` : '—'],
+      ['Sources', card.sourceDocuments?.length ? card.sourceDocuments.join(', ') : '—'],
+    ];
+
     children.push(
-      new Paragraph({
-        children: [
-          new TextRun({ text: 'Detail Level: ', color: '888888', size: 18 }),
-          new TextRun({ text: level, bold: true, color: '888888', size: 18 }),
-        ],
-        spacing: { after: 120 },
+      new Table({
+        rows: infoRows.map(
+          ([label, value]) =>
+            new TableRow({
+              children: [
+                new TableCell({
+                  children: [new Paragraph({ children: [new TextRun({ text: label, bold: true, size: 18, color: '555555' })] })],
+                  width: { size: 30, type: WidthType.PERCENTAGE },
+                  borders: metaBorder,
+                }),
+                new TableCell({
+                  children: [new Paragraph({ children: [new TextRun({ text: value, size: 18 })] })],
+                  width: { size: 70, type: WidthType.PERCENTAGE },
+                  borders: metaBorder,
+                }),
+              ],
+            }),
+        ),
+        width: { size: 100, type: WidthType.PERCENTAGE },
       }),
     );
+    children.push(new Paragraph({ text: '', spacing: { after: 80 } }));
 
     // Card content converted from markdown
     const contentElements = markdownToDocxElements(content);
