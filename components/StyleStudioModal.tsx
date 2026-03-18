@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback, type ChangeEvent } from 'react';
 import { createPortal } from 'react-dom';
 import { CustomStyle, Palette, FontPair } from '../types';
 import { BUILTIN_STYLE_NAMES, generateStyleWithAI } from '../utils/ai';
@@ -88,6 +88,17 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
   const [nameError, setNameError] = useState('');
   const nameEditRef = useRef<HTMLInputElement>(null);
 
+  // Textarea auto-resize refs
+  const techniqueRef = useRef<HTMLTextAreaElement>(null);
+  const compositionRef = useRef<HTMLTextAreaElement>(null);
+  const moodRef = useRef<HTMLTextAreaElement>(null);
+
+  const autoResize = (el: HTMLTextAreaElement | null) => {
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  };
+
   // New-style dropdown menu
   const [showNewMenu, setShowNewMenu] = useState(false);
   const newMenuRef = useRef<HTMLDivElement>(null);
@@ -142,6 +153,15 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
       setShowDeleteConfirm(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedStyle is derived from selectedId; including it would reset edits on every keystroke
+  }, [selectedId]);
+
+  // Auto-resize textareas when selection changes or content loads
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      autoResize(techniqueRef.current);
+      autoResize(compositionRef.current);
+      autoResize(moodRef.current);
+    });
   }, [selectedId]);
 
   // ── Global change detection: compare draft vs original ──
@@ -789,13 +809,14 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
                     </span>
                   </div>
                   <textarea
+                    ref={techniqueRef}
                     id="style-technique"
                     value={editTechnique}
-                    onChange={(e) => { if (e.target.value.length <= 150) setEditTechnique(e.target.value); }}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => { if (e.target.value.length <= 150) { setEditTechnique(e.target.value); autoResize(e.target); } }}
                     placeholder="e.g. Solid color fills, no gradients or shadows. Crisp geometric shapes and simple flat icons."
-                    rows={2}
+                    rows={1}
                     maxLength={150}
-                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed overflow-hidden"
                   />
                 </div>
 
@@ -813,13 +834,14 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
                     </span>
                   </div>
                   <textarea
+                    ref={compositionRef}
                     id="style-composition"
                     value={editComposition}
-                    onChange={(e) => { if (e.target.value.length <= 100) setEditComposition(e.target.value); }}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => { if (e.target.value.length <= 100) { setEditComposition(e.target.value); autoResize(e.target); } }}
                     placeholder="e.g. Strict grid layout with generous whitespace and clear visual hierarchy."
-                    rows={2}
+                    rows={1}
                     maxLength={100}
-                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed overflow-hidden"
                   />
                 </div>
 
@@ -837,13 +859,14 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
                     </span>
                   </div>
                   <textarea
+                    ref={moodRef}
                     id="style-mood"
                     value={editMood}
-                    onChange={(e) => { if (e.target.value.length <= 60) setEditMood(e.target.value); }}
+                    onChange={(e: ChangeEvent<HTMLTextAreaElement>) => { if (e.target.value.length <= 60) { setEditMood(e.target.value); autoResize(e.target); } }}
                     placeholder="e.g. Clean, modern, and approachable."
                     rows={1}
                     maxLength={60}
-                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed"
+                    className="w-full px-4 py-2.5 rounded-2xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-xs text-zinc-800 dark:text-zinc-200 focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50 focus:border-black transition-colors placeholder:text-zinc-400 resize-none leading-relaxed overflow-hidden"
                   />
                 </div>
 
