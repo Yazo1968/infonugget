@@ -327,7 +327,9 @@ export function useCardOperations() {
   const handleSaveAsCard = useCallback(
     (message: ChatMessage, editedContent: string, targetFolderId?: string) => {
       if (!selectedNugget || selectedNugget.type !== 'insights') return;
-      const content = editedContent || message.content;
+      // Strip any residual card-suggestions block before storing
+      const raw = editedContent || message.content;
+      const content = raw.replace(/```card-suggestions(?:\s+multi)?\n[\s\S]*?```/, '').trimEnd();
 
       // Extract title from first # heading line, auto-increment if duplicate
       const titleMatch = content.match(/^#\s+(.+)$/m);
@@ -527,10 +529,12 @@ export function useCardOperations() {
    */
   const fillPlaceholderCard = useCallback(
     (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => {
+      // Strip any residual card-suggestions block before storing
+      const cleanContent = content.replace(/```card-suggestions(?:\s+multi)?\n[\s\S]*?```/, '').trimEnd();
       updateNuggetCard(cardId, (c) => ({
         ...c,
         ...(newTitle ? { text: newTitle } : {}),
-        synthesisMap: { ...(c.synthesisMap || {}), [detailLevel]: content },
+        synthesisMap: { ...(c.synthesisMap || {}), [detailLevel]: cleanContent },
         isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [detailLevel]: false },
         ...(layoutDirectives
           ? { layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [detailLevel]: layoutDirectives } }

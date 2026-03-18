@@ -8,6 +8,12 @@ import PanelRequirements from './PanelRequirements';
 import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 
+/** Strip the ```card-suggestions``` fenced block from card content before persisting. */
+const SUGGESTIONS_REGEX = /```card-suggestions(?:\s+multi)?\n[\s\S]*?```/;
+function stripSuggestionsBlock(content: string): string {
+  return content.replace(SUGGESTIONS_REGEX, '').trimEnd();
+}
+
 interface ChatPanelProps {
   isOpen: boolean;
   onToggle: () => void;
@@ -151,14 +157,16 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
         const pending = externalPlaceholderRef?.current || pendingPlaceholderRef.current;
         if (pending && onFillPlaceholderCard) {
           // Fill the existing placeholder with real content + extract H1 as title
-          const titleMatch = msg.content.match(/^#\s+(.+)$/m);
+          // Strip suggestions block — it's for the chat UI, not for card storage
+          const cardContent = stripSuggestionsBlock(msg.content);
+          const titleMatch = cardContent.match(/^#\s+(.+)$/m);
           const newTitle = titleMatch ? titleMatch[1].trim() : undefined;
-          onFillPlaceholderCard(pending.cardId, pending.level, msg.content, newTitle);
+          onFillPlaceholderCard(pending.cardId, pending.level, cardContent, newTitle);
           if (externalPlaceholderRef?.current) externalPlaceholderRef.current = null;
           pendingPlaceholderRef.current = null;
         } else {
           // Fallback: no placeholder exists, create card directly
-          onSaveAsCard(msg, msg.content);
+          onSaveAsCard(msg, stripSuggestionsBlock(msg.content));
         }
       }
     }
@@ -311,8 +319,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
   };
 
   const handleSaveCard = (msg: ChatMessage) => {
-    const content = editingMessageId === msg.id ? editContent : msg.content;
-    onSaveAsCard(msg, content);
+    const raw = editingMessageId === msg.id ? editContent : msg.content;
+    onSaveAsCard(msg, stripSuggestionsBlock(raw));
     setEditingMessageId(null);
   };
 
