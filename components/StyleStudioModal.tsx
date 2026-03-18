@@ -155,14 +155,14 @@ const StyleStudioModal: React.FC<StyleStudioModalProps> = ({ onClose }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- selectedStyle is derived from selectedId; including it would reset edits on every keystroke
   }, [selectedId]);
 
-  // Auto-resize textareas when selection changes or content loads
+  // Auto-resize textareas when content changes (selection switch or edits)
   useEffect(() => {
     requestAnimationFrame(() => {
       autoResize(techniqueRef.current);
       autoResize(compositionRef.current);
       autoResize(moodRef.current);
     });
-  }, [selectedId]);
+  }, [selectedId, editTechnique, editComposition, editMood]);
 
   // ── Global change detection: compare draft vs original ──
   const hasChanges = useMemo(() => {
