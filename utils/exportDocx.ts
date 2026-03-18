@@ -441,69 +441,89 @@ export async function exportFolderToDocx({
 
   children.push(sectionLabel('Card Content'));
 
+  // Shared borders for card meta table — light gray, clean
+  const metaCellBorder = {
+    top: { style: BorderStyle.SINGLE, size: 1, color: 'E0E0E0' },
+    bottom: { style: BorderStyle.SINGLE, size: 1, color: 'E0E0E0' },
+    left: { style: BorderStyle.SINGLE, size: 1, color: 'E0E0E0' },
+    right: { style: BorderStyle.SINGLE, size: 1, color: 'E0E0E0' },
+  };
+
   for (let idx = 0; idx < cardsWithContent.length; idx++) {
     const { card, content } = cardsWithContent[idx];
     const level = card.detailLevel || 'Standard';
 
-    // ── Card title (prominent) ──
+    // ── "Card Title: {name}" — dark, bold, with bottom border ──
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: card.text, bold: true, size: 28, color: '1A1A1A' })],
+        children: [
+          new TextRun({ text: 'Card Title: ', bold: true, size: 28, color: '333333' }),
+          new TextRun({ text: card.text, bold: true, size: 28, color: '1A1A1A' }),
+        ],
         heading: HeadingLevel.HEADING_1,
-        spacing: { before: idx === 0 ? 120 : 360, after: 40 },
+        border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: '888888' } },
+        spacing: { before: idx === 0 ? 120 : 400, after: 120 },
       }),
     );
 
-    // ── Card metadata — single compact line, muted ──
+    // ── "Card Meta Data:" — H3 subheading, muted color ──
+    children.push(
+      new Paragraph({
+        children: [new TextRun({ text: 'Card Meta Data:', bold: true, size: 20, color: LABEL_COLOR })],
+        heading: HeadingLevel.HEADING_3,
+        spacing: { before: 40, after: 60 },
+      }),
+    );
+
+    // ── Card metadata table — compact, shaded labels, muted values ──
     const album = card.albumMap?.[level];
     const imageCount = album ? album.length : 0;
     const lastImageTs = album && album.length > 0 ? album[album.length - 1].createdAt : undefined;
     const isStale = !!(lastImageTs && card.lastEditedAt && card.lastEditedAt > lastImageTs);
 
-    const metaParts: string[] = [level];
-    if (card.createdAt) metaParts.push(`Created ${fmtDate(card.createdAt)}`);
-    if (card.lastEditedAt && card.lastEditedAt !== card.createdAt)
-      metaParts.push(`Modified ${fmtDate(card.lastEditedAt)}`);
-    if (imageCount > 0) {
-      let imgText = `${imageCount} image${imageCount > 1 ? 's' : ''}`;
-      if (isStale) imgText += ' (stale)';
-      metaParts.push(imgText);
-    }
+    const metaEntries: [string, string][] = [
+      ['Detail Level', level],
+      ['Content Generated', fmtDate(card.createdAt)],
+      ['Content Last Modified', card.lastEditedAt && card.lastEditedAt !== card.createdAt ? fmtDate(card.lastEditedAt) : '—'],
+      ['Image Versions', imageCount > 0 ? `${imageCount}` : '—'],
+      ['Last Image Generated', lastImageTs ? `${fmtDate(lastImageTs)}${isStale ? '  (stale)' : ''}` : '—'],
+      ['Sources', card.sourceDocuments?.length ? card.sourceDocuments.join(', ') : '—'],
+    ];
 
     children.push(
-      new Paragraph({
-        children: [
-          new TextRun({
-            text: metaParts.join('  ·  '),
-            size: META_FONT_SIZE,
-            color: MUTED_COLOR,
-            italics: true,
-          }),
-        ],
-        spacing: { after: 40 },
+      new Table({
+        rows: metaEntries.map(
+          ([label, value]) =>
+            new TableRow({
+              children: [
+                new TableCell({
+                  children: [
+                    new Paragraph({
+                      children: [new TextRun({ text: label, bold: true, size: META_FONT_SIZE, color: LABEL_COLOR })],
+                    }),
+                  ],
+                  width: { size: 28, type: WidthType.PERCENTAGE },
+                  borders: metaCellBorder,
+                  shading: SHADING_LIGHT,
+                }),
+                new TableCell({
+                  children: [
+                    new Paragraph({
+                      children: [new TextRun({ text: value, size: META_FONT_SIZE, color: '333333' })],
+                    }),
+                  ],
+                  width: { size: 72, type: WidthType.PERCENTAGE },
+                  borders: metaCellBorder,
+                }),
+              ],
+            }),
+        ),
+        width: { size: 100, type: WidthType.PERCENTAGE },
       }),
     );
 
-    // Sources line (if any)
-    if (card.sourceDocuments?.length) {
-      children.push(
-        new Paragraph({
-          children: [
-            new TextRun({ text: 'Sources: ', size: META_FONT_SIZE, color: LABEL_COLOR, bold: true }),
-            new TextRun({ text: card.sourceDocuments.join(', '), size: META_FONT_SIZE, color: MUTED_COLOR }),
-          ],
-          spacing: { after: 60 },
-        }),
-      );
-    }
-
-    // Thin separator between meta and content
-    children.push(
-      new Paragraph({
-        border: { bottom: { style: BorderStyle.SINGLE, size: 1, color: 'E0E0E0' } },
-        spacing: { before: 40, after: 160 },
-      }),
-    );
+    // Spacer between meta table and content
+    children.push(new Paragraph({ text: '', spacing: { after: 200 } }));
 
     // ── Card content — full size, the star of the show ──
     const contentElements = markdownToDocxElements(content);
@@ -511,7 +531,7 @@ export async function exportFolderToDocx({
 
     // Card-to-card separator (skip after last card)
     if (idx < cardsWithContent.length - 1) {
-      children.push(thinRule());
+      children.push(thickRule());
     }
   }
 
