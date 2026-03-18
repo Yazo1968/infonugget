@@ -52,7 +52,8 @@ import { storage } from './components/StorageProvider';
 import {
   base64ToBlob,
 } from './utils/fileProcessing';
-import { flattenCards } from './utils/cardUtils';
+import { flattenCards, findFolder } from './utils/cardUtils';
+import { exportFolderToDocx } from './utils/exportDocx';
 import { useToast } from './components/ToastNotification';
 import PdfUploadChoiceDialog from './components/PdfUploadChoiceDialog';
 import PdfProcessorModal from './components/PdfProcessorModal';
@@ -517,6 +518,39 @@ const App: React.FC = () => {
     };
   }, [setZoomState, setManifestCards, setExpandedPanel]);
 
+  // ── Download folder content as DOCX ──
+  const handleDownloadContent = useCallback(
+    async (folderId: string) => {
+      if (!selectedNugget) return;
+      const folder = findFolder(selectedNugget.cards, folderId);
+      if (!folder) return;
+
+      const selectedCards = folder.cards.filter((c) => c.selected);
+      if (selectedCards.length === 0) {
+        addToast({ type: 'warning', message: 'No cards selected. Select cards first.' });
+        return;
+      }
+
+      try {
+        const count = await exportFolderToDocx({
+          projectName: openProject?.name || 'Untitled Project',
+          nuggetName: selectedNugget.name,
+          folder,
+          documents: selectedNugget.documents,
+        });
+        if (count === 0) {
+          addToast({ type: 'warning', message: 'No card content to export. Generate card content first.' });
+        } else {
+          addToast({ type: 'success', message: `Downloaded ${count} card${count > 1 ? 's' : ''} as DOCX.` });
+        }
+      } catch (err) {
+        console.error('DOCX export failed:', err);
+        addToast({ type: 'error', message: 'Failed to generate DOCX file.' });
+      }
+    },
+    [selectedNugget, openProject, addToast],
+  );
+
   // ── Click-outside to close overlay panels ──
   useEffect(() => {
     if (!expandedPanel) return;
@@ -882,6 +916,7 @@ const App: React.FC = () => {
                       onDeleteFolder={deleteFolder}
                       onDuplicateFolder={duplicateFolder}
                       onCopyMoveFolder={handleCopyMoveFolder}
+                      onDownloadContent={handleDownloadContent}
                       onCreateEmptyFolder={createEmptyFolder}
                       onCreateCustomCardInFolder={createCustomCardInFolder}
                       assetsSlot={

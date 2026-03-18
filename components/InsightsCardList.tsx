@@ -38,6 +38,7 @@ interface InsightsCardListProps {
   onDeleteFolder?: (folderId: string) => void;
   onDuplicateFolder?: (folderId: string) => void;
   onCopyMoveFolder?: (folderId: string, targetNuggetId: string, mode: 'copy' | 'move') => void;
+  onDownloadContent?: (folderId: string) => void;
   onCreateEmptyFolder?: () => void;
   onCreateCustomCardInFolder?: (folderId: string, name: string) => void;
 }
@@ -212,6 +213,7 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
   onDeleteFolder,
   onDuplicateFolder,
   onCopyMoveFolder,
+  onDownloadContent,
   onCreateEmptyFolder,
   onCreateCustomCardInFolder,
 }) => {
@@ -1504,6 +1506,25 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
                     </div>
                   )}
                 </div>
+              )}
+
+              {onDownloadContent && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setFolderContextMenu(null);
+                    onDownloadContent(folder.id);
+                  }}
+                  disabled={folder.cards.filter((c) => c.selected).length === 0}
+                  className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-500">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  Download Content
+                </button>
               )}
 
               <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />

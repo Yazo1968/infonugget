@@ -54,6 +54,7 @@ interface CardsPanelProps {
   onDeleteFolder?: (folderId: string) => void;
   onDuplicateFolder?: (folderId: string) => void;
   onCopyMoveFolder?: (folderId: string, targetNuggetId: string, mode: 'copy' | 'move') => void;
+  onDownloadContent?: (folderId: string) => void;
   onCreateEmptyFolder?: (name: string) => void;
   onCreateCustomCardInFolder?: (folderId: string, name: string) => void;
   /** Assets panel content rendered as the right section of this combined panel. */
@@ -124,6 +125,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
       onDeleteFolder,
       onDuplicateFolder,
       onCopyMoveFolder,
+      onDownloadContent,
       onCreateEmptyFolder,
       onCreateCustomCardInFolder,
       assetsSlot,
@@ -400,6 +402,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
           onDeleteFolder={onDeleteFolder}
           onDuplicateFolder={onDuplicateFolder}
           onCopyMoveFolder={onCopyMoveFolder}
+          onDownloadContent={onDownloadContent}
           onCreateEmptyFolder={handleCreateFolder}
           onCreateCustomCardInFolder={onCreateCustomCardInFolder}
         />
