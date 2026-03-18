@@ -34,6 +34,9 @@ export interface ExportFolderParams {
 
 // ── Shared style constants ──
 
+const META_FONT = 'Calibri';    // Sans-serif for structure & metadata
+const CONTENT_FONT = 'Cambria'; // Serif for card content — visually distinct
+
 const META_FONT_SIZE = 17; // 8.5pt — clearly smaller than body
 const BODY_FONT_SIZE = 22; // 11pt — standard reading size
 const LABEL_COLOR = '666666';
@@ -104,7 +107,7 @@ function parseMarkdownTable(lines: string[]): string[][] {
     );
 }
 
-/** Convert inline markdown to TextRun array (handles **bold**). */
+/** Convert inline markdown to TextRun array (handles **bold**). Uses content font. */
 function parseInlineFormatting(text: string): TextRun[] {
   const runs: TextRun[] = [];
   const regex = /\*\*(.+?)\*\*/g;
@@ -113,16 +116,16 @@ function parseInlineFormatting(text: string): TextRun[] {
 
   while ((match = regex.exec(text)) !== null) {
     if (match.index > lastIndex) {
-      runs.push(new TextRun({ text: text.slice(lastIndex, match.index), size: BODY_FONT_SIZE }));
+      runs.push(new TextRun({ text: text.slice(lastIndex, match.index), size: BODY_FONT_SIZE, font: CONTENT_FONT }));
     }
-    runs.push(new TextRun({ text: match[1], bold: true, size: BODY_FONT_SIZE }));
+    runs.push(new TextRun({ text: match[1], bold: true, size: BODY_FONT_SIZE, font: CONTENT_FONT }));
     lastIndex = regex.lastIndex;
   }
   if (lastIndex < text.length) {
-    runs.push(new TextRun({ text: text.slice(lastIndex), size: BODY_FONT_SIZE }));
+    runs.push(new TextRun({ text: text.slice(lastIndex), size: BODY_FONT_SIZE, font: CONTENT_FONT }));
   }
   if (runs.length === 0) {
-    runs.push(new TextRun({ text, size: BODY_FONT_SIZE }));
+    runs.push(new TextRun({ text, size: BODY_FONT_SIZE, font: CONTENT_FONT }));
   }
   return runs;
 }
@@ -145,11 +148,11 @@ function markdownToDocxElements(md: string): (Paragraph | Table)[] {
       continue;
     }
 
-    // Heading ###
+    // Heading ### — same size as body, bold, slightly muted
     if (trimmed.startsWith('### ')) {
       elements.push(
         new Paragraph({
-          children: [new TextRun({ text: trimmed.slice(4), bold: true, size: BODY_FONT_SIZE, color: '333333' })],
+          children: [new TextRun({ text: trimmed.slice(4), bold: true, size: BODY_FONT_SIZE, color: '333333', font: CONTENT_FONT })],
           heading: HeadingLevel.HEADING_4,
           spacing: { before: 120, after: 60 },
         }),
@@ -157,11 +160,11 @@ function markdownToDocxElements(md: string): (Paragraph | Table)[] {
       i++;
       continue;
     }
-    // Heading ##
+    // Heading ## — 11.5pt
     if (trimmed.startsWith('## ')) {
       elements.push(
         new Paragraph({
-          children: [new TextRun({ text: trimmed.slice(3), bold: true, size: 24, color: '222222' })],
+          children: [new TextRun({ text: trimmed.slice(3), bold: true, size: 23, color: ACCENT_COLOR, font: CONTENT_FONT })],
           heading: HeadingLevel.HEADING_3,
           spacing: { before: 160, after: 80 },
         }),
@@ -169,11 +172,11 @@ function markdownToDocxElements(md: string): (Paragraph | Table)[] {
       i++;
       continue;
     }
-    // Heading #
+    // Heading # — 12pt
     if (trimmed.startsWith('# ')) {
       elements.push(
         new Paragraph({
-          children: [new TextRun({ text: trimmed.slice(2), bold: true, size: 26, color: '111111' })],
+          children: [new TextRun({ text: trimmed.slice(2), bold: true, size: 24, color: ACCENT_COLOR, font: CONTENT_FONT })],
           heading: HeadingLevel.HEADING_2,
           spacing: { before: 200, after: 100 },
         }),
@@ -221,7 +224,7 @@ function markdownToDocxElements(md: string): (Paragraph | Table)[] {
     if (trimmed.startsWith('> ')) {
       elements.push(
         new Paragraph({
-          children: [new TextRun({ text: trimmed.slice(2), italics: true, color: '555555', size: BODY_FONT_SIZE })],
+          children: [new TextRun({ text: trimmed.slice(2), italics: true, color: '555555', size: BODY_FONT_SIZE, font: CONTENT_FONT })],
           indent: { left: 720 },
           border: { left: { style: BorderStyle.SINGLE, size: 6, color: 'CCCCCC' } },
           spacing: { before: 60, after: 60 },
@@ -319,7 +322,7 @@ export async function exportFolderToDocx({
   // Folder name as document title
   children.push(
     new Paragraph({
-      children: [new TextRun({ text: folder.name, bold: true, size: 40, color: '1A1A1A' })],
+      children: [new TextRun({ text: folder.name, bold: true, size: 32, color: '1A1A1A', font: META_FONT })],
       heading: HeadingLevel.TITLE,
       spacing: { after: 80 },
     }),
@@ -329,9 +332,9 @@ export async function exportFolderToDocx({
   children.push(
     new Paragraph({
       children: [
-        new TextRun({ text: projectName, size: 20, color: LABEL_COLOR }),
-        new TextRun({ text: '  >  ', size: 20, color: MUTED_COLOR }),
-        new TextRun({ text: nuggetName, size: 20, color: LABEL_COLOR }),
+        new TextRun({ text: projectName, size: 19, color: LABEL_COLOR, font: META_FONT }),
+        new TextRun({ text: '  >  ', size: 19, color: MUTED_COLOR, font: META_FONT }),
+        new TextRun({ text: nuggetName, size: 19, color: LABEL_COLOR, font: META_FONT }),
       ],
       spacing: { after: 40 },
     }),
@@ -347,6 +350,7 @@ export async function exportFolderToDocx({
           size: META_FONT_SIZE,
           color: MUTED_COLOR,
           italics: true,
+          font: META_FONT,
         }),
       ],
       spacing: { after: 60 },
@@ -384,6 +388,7 @@ export async function exportFolderToDocx({
                     size: 15,
                     bold: true,
                     color: isActive ? ACTIVE_COLOR : MUTED_COLOR,
+                    font: META_FONT,
                   }),
                 ],
               }),
@@ -401,6 +406,7 @@ export async function exportFolderToDocx({
                     text: doc.name,
                     size: META_FONT_SIZE,
                     color: isActive ? '333333' : MUTED_COLOR,
+                    font: META_FONT,
                   }),
                 ],
               }),
@@ -413,7 +419,7 @@ export async function exportFolderToDocx({
           new TableCell({
             children: [
               new Paragraph({
-                children: [new TextRun({ text: typeLabel, size: 15, color: MUTED_COLOR })],
+                children: [new TextRun({ text: typeLabel, size: 15, color: MUTED_COLOR, font: META_FONT })],
                 alignment: AlignmentType.RIGHT,
               }),
             ],
@@ -453,23 +459,23 @@ export async function exportFolderToDocx({
     const { card, content } = cardsWithContent[idx];
     const level = card.detailLevel || 'Standard';
 
-    // ── "Card Title: {name}" — dark, bold, with bottom border ──
+    // ── "Card Title: {name}" — Calibri, dark, bold, with bottom border ──
     children.push(
       new Paragraph({
         children: [
-          new TextRun({ text: 'Card Title: ', bold: true, size: 28, color: '333333' }),
-          new TextRun({ text: card.text, bold: true, size: 28, color: '1A1A1A' }),
+          new TextRun({ text: 'Card Title: ', bold: true, size: 24, color: '444444', font: META_FONT }),
+          new TextRun({ text: card.text, bold: true, size: 24, color: '1A1A1A', font: META_FONT }),
         ],
         heading: HeadingLevel.HEADING_1,
         border: { bottom: { style: BorderStyle.SINGLE, size: 2, color: '888888' } },
-        spacing: { before: idx === 0 ? 120 : 400, after: 120 },
+        spacing: { before: idx === 0 ? 120 : 400, after: 100 },
       }),
     );
 
-    // ── "Card Meta Data:" — H3 subheading, muted color ──
+    // ── "Card Meta Data:" — H3 subheading, Calibri, muted ──
     children.push(
       new Paragraph({
-        children: [new TextRun({ text: 'Card Meta Data:', bold: true, size: 20, color: LABEL_COLOR })],
+        children: [new TextRun({ text: 'Card Meta Data:', bold: true, size: 18, color: LABEL_COLOR, font: META_FONT })],
         heading: HeadingLevel.HEADING_3,
         spacing: { before: 40, after: 60 },
       }),
@@ -499,7 +505,7 @@ export async function exportFolderToDocx({
                 new TableCell({
                   children: [
                     new Paragraph({
-                      children: [new TextRun({ text: label, bold: true, size: META_FONT_SIZE, color: LABEL_COLOR })],
+                      children: [new TextRun({ text: label, bold: true, size: META_FONT_SIZE, color: LABEL_COLOR, font: META_FONT })],
                     }),
                   ],
                   width: { size: 28, type: WidthType.PERCENTAGE },
@@ -509,7 +515,7 @@ export async function exportFolderToDocx({
                 new TableCell({
                   children: [
                     new Paragraph({
-                      children: [new TextRun({ text: value, size: META_FONT_SIZE, color: '333333' })],
+                      children: [new TextRun({ text: value, size: META_FONT_SIZE, color: '333333', font: META_FONT })],
                     }),
                   ],
                   width: { size: 72, type: WidthType.PERCENTAGE },
@@ -545,6 +551,7 @@ export async function exportFolderToDocx({
           size: 15,
           color: MUTED_COLOR,
           italics: true,
+          font: META_FONT,
         }),
       ],
       alignment: AlignmentType.CENTER,
