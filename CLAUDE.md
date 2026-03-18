@@ -98,19 +98,23 @@ Three content generation paths exist, all feeding into the same image generation
 
 ### Word Count & Token Limits (Aligned Across All Paths)
 
-| Level | Word count | Token limit (Sources) | Token limit (Chat) |
-|---|---|---|---|
-| Executive | 50-70 | 95 | 250 |
-| Standard | 120-150 | 203 | 400 |
-| Detailed | 250-300 | 405 | 600 |
-| TitleCard | 15-25 | 150 | 150 |
-| TakeawayCard | 40-60 | 350 | 350 |
+| Level | Word count | Token limit (Sources) | Token limit (Chat: content) | Chat: + suggestions headroom |
+|---|---|---|---|---|
+| Executive | 50-70 | 95 | 95 | 95 + 120 = 215 |
+| Standard | 120-150 | 203 | 203 | 203 + 120 = 323 |
+| Detailed | 250-300 | 405 | 405 | 405 + 120 = 525 |
+| TitleCard | 15-25 | 150 | 150 | 150 + 120 = 270 |
+| TakeawayCard | 40-60 | 350 | 350 | 350 + 120 = 470 |
 
-Chat token limits are higher to accommodate the card-suggestions block appended to card responses. Word count ranges are identical across Sources (`contentGeneration.ts`), Chat (`chat-message` EF), and Auto-Presentor (`deckShared/constants.ts`).
+Content token limits are now **aligned** across Sources and Chat (v12). Chat `maxTokens` = content limit + `SUGGESTIONS_HEADROOM` (120 tokens) so the model stays within word count while still having room for the `card-suggestions` fenced block. Word count ranges are identical across Sources (`contentGeneration.ts`), Chat (`chat-message` EF), and Auto-Presentor (`deckShared/constants.ts`).
+
+**Chat card suggestions stripping**: Client-side `stripSuggestionsBlock()` in `ChatPanel.tsx` and defensive strips in `useCardOperations.ts` ensure the `card-suggestions` fenced block never contaminates `synthesisMap` storage.
 
 ### Card Folder System
 
 `Nugget.cards` is `CardItem[]` — discriminated union of `Card | CardFolder`. Folders use `kind: 'folder'` with `isCardFolder()` type guard. Tree utilities in `utils/cardUtils.ts`. InsightsCardList renders folders with drag-and-drop using `VisibleItem[]` index.
+
+**DOCX Export**: Folder kebab menu → "Download Content" exports selected cards as `.docx` via `utils/exportDocx.ts`. Uses `docx` + `file-saver` packages. Dual font system: Calibri (metadata/structure) + Cambria (card content). Includes cover section, documents log table, and per-card content with metadata tables. Prop threading: `App.tsx` → `CardsPanel` → `InsightsCardList`.
 
 ### Image Album System
 

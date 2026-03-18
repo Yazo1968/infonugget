@@ -16,7 +16,7 @@ export interface PresentorPromptConfig {
 const COVER_SPEC = '15–25 words total. Format: # Title\\n## Subtitle\\nOne-line tagline.';
 const CLOSING_SPEC = '40–60 words total. Format: # Title\\n- Bullet takeaway 1\\n- Bullet takeaway 2\\n- ... (3–5 key takeaways)';
 
-// ── Prohibited characters (matches auto-deck / content generation rules) ──
+// ── Prohibited characters (matches content generation rules) ──
 
 const PROHIBITED_CHARS = `PROHIBITED CHARACTERS — never use any of these:
 - Em dash (\u2014) or en dash (\u2013) — use hyphen (-) instead

@@ -377,7 +377,7 @@ export interface SourcesLogStats {
 // ── Sources Log checkpoint model ──
 
 /** What triggered creating a Sources Log checkpoint entry */
-export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'auto_deck' | 'auto_presentor' | 'manual';
+export type SourcesLogTrigger = 'chat_initiated' | 'chat_continued' | 'auto_presentor' | 'manual';
 
 /** A single change within a checkpoint — simplified view of a raw DocChangeEvent */
 export interface SourcesLogChange {

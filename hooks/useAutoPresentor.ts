@@ -197,7 +197,7 @@ export function useAutoPresentor(
           cacheWriteTokens: response.usage.cacheWriteTokens,
         });
 
-        // Parse the response — reuse auto-deck producer parser
+        // Parse the response — reuse producer parser
         const result = parseProducerResponse(response.responseText);
 
         if (result.status === 'ok' && result.cards.length > 0) {

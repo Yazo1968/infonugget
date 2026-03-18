@@ -12,7 +12,7 @@ const log = createLogger('BriefingSuggestions');
 
 /**
  * Standalone hook for generating AI briefing suggestions.
- * Extracted from useAutoDeck — uses chatMessageApi (not auto-deck EF).
+ * Generates AI briefing suggestions via chatMessageApi.
  */
 export function useBriefingSuggestions(recordUsage?: RecordUsageFn) {
   const { create: createAbort, abort: abortOp, clear: clearAbort, isAbortError } = useAbortController();

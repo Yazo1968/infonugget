@@ -3,7 +3,7 @@ import { useNuggetContext } from '../context/NuggetContext';
 import { useSelectionContext } from '../context/SelectionContext';
 
 // ── Requirement levels by panel ──
-// sources / chat / auto-deck → Project, Nugget, Document
+// sources / chat / auto-presentor → Project, Nugget, Document
 // cards                      → Project, Nugget, Document, Card
 // assets                     → Project, Nugget, Document, Card, Image
 
