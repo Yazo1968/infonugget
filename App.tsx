@@ -7,6 +7,7 @@ import {
   Nugget,
   DetailLevel,
   ChatMessage,
+  Card,
   isCardFolder,
 } from './types';
 import {
@@ -52,7 +53,7 @@ import { storage } from './components/StorageProvider';
 import {
   base64ToBlob,
 } from './utils/fileProcessing';
-import { flattenCards, findFolder } from './utils/cardUtils';
+import { flattenCards, findFolder, findParentFolder } from './utils/cardUtils';
 import { exportFolderToDocx } from './utils/exportDocx';
 import { useToast } from './components/ToastNotification';
 import PdfUploadChoiceDialog from './components/PdfUploadChoiceDialog';
@@ -930,15 +931,29 @@ const App: React.FC = () => {
                             genStatus={genStatus}
                             onGenerateCard={wrappedGenerateCard}
                             onGenerateAll={() => {
-                              const cards = flattenCards(selectedNugget?.cards || []);
-                              const selected = cards.filter((c) => c.selected);
+                              const allItems = selectedNugget?.cards || [];
+                              let scopeCards: Card[];
+                              if (activeCard) {
+                                const parentFolder = findParentFolder(allItems, activeCard.id);
+                                scopeCards = parentFolder ? parentFolder.cards.filter((c): c is Card => !isCardFolder(c)) : flattenCards(allItems);
+                              } else {
+                                scopeCards = flattenCards(allItems);
+                              }
+                              const selected = scopeCards.filter((c) => c.selected);
                               if (selected.length === 0) {
                                 alert('Please select cards first.');
                                 return;
                               }
                               setManifestCards(selected);
                             }}
-                            selectedCount={insightsSelectedCount}
+                            selectedCount={(() => {
+                              const allItems = selectedNugget?.cards || [];
+                              if (activeCard) {
+                                const pf = findParentFolder(allItems, activeCard.id);
+                                if (pf) return pf.cards.filter((c): c is Card => !isCardFolder(c) && !!c.selected).length;
+                              }
+                              return insightsSelectedCount;
+                            })()}
                             onZoomImage={openZoom}
                             onImageModified={handleInsightsImageModified}
                             contentDirty={false}
