@@ -1071,6 +1071,17 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
         ...overlayStyle,
       }}
     >
+      {/* Section header */}
+      <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+        <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(28,48,74)' : 'rgb(200,220,245)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+            <rect x="2" y="3" width="20" height="14" rx="2" />
+            <path d="M8 21h8" />
+            <path d="M12 17v4" />
+          </svg>
+        </div>
+        <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">SmartDeck</span>
+      </div>
       {renderContent()}
     </div>,
     document.body,

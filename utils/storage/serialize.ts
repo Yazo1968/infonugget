@@ -386,6 +386,7 @@ export function serializeNugget(n: Nugget): StoredNugget {
     briefing: n.briefing,
     briefingSuggestions: n.briefingSuggestions,
     lastClosedAt: n.lastClosedAt,
+    docVizResult: n.docVizResult,
     createdAt: n.createdAt,
     lastModifiedAt: n.lastModifiedAt,
   };
@@ -442,6 +443,7 @@ export function deserializeNugget(sn: StoredNugget, cards: CardItem[], documents
     briefing: sn.briefing,
     briefingSuggestions: sn.briefingSuggestions,
     lastClosedAt: sn.lastClosedAt,
+    docVizResult: sn.docVizResult,
     createdAt: sn.createdAt,
     lastModifiedAt: sn.lastModifiedAt,
   };

@@ -709,6 +709,8 @@ export interface Nugget {
   briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
+  /** Persisted DocViz analysis result */
+  docVizResult?: DocVizResult;
   createdAt: number;
   lastModifiedAt: number;
 }
@@ -788,4 +790,40 @@ export interface InitialPersistedState {
   tokenUsageTotals?: Record<string, number>;
   // User-created custom styles (global, not per-nugget)
   customStyles?: CustomStyle[];
+}
+
+// ── DocViz proposal types ──
+
+/** Universal tabular data format — headers + rows, structured to suit any visual type */
+export interface DocVizData {
+  headers: string[];
+  rows: (string | number)[][];
+}
+
+export interface DocVizProposal {
+  section_ref: string;
+  visual_title: string;
+  visual_type: string;
+  description: string;
+  data: DocVizData;
+  /** Other visual types that could effectively represent the same data */
+  alternative_types?: string[];
+  /** Public URL of the generated graphic (set after image generation) */
+  imageUrl?: string;
+  /** Storage path in card-images bucket (set after image generation) */
+  storagePath?: string;
+  /** The semantic prompt that was sent to Gemini for image generation (debug/review) */
+  lastPrompt?: string;
+}
+
+/** Persisted DocViz analysis result for a nugget */
+export interface DocVizResult {
+  /** ID of the document that was analysed */
+  documentId: string;
+  /** Document name at time of analysis */
+  documentName: string;
+  /** The proposals returned by the AI */
+  proposals: DocVizProposal[];
+  /** Timestamp of when the analysis was performed */
+  analysedAt: number;
 }

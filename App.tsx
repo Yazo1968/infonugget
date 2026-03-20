@@ -20,6 +20,7 @@ import { Dashboard } from './components/Dashboard';
 import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
 import SmartDeckPanel from './components/SmartDeckPanel';
+import DocVizPanel from './components/DocVizPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PanelTabBar from './components/PanelTabBar';
@@ -354,7 +355,7 @@ const App: React.FC = () => {
 
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'smart-deck' | 'cards' | 'quality' | null>('sources');
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'smart-deck' | 'docviz' | 'cards' | 'quality' | null>('sources');
   const [qualityActiveTab, setQualityActiveTab] = useState<'logs' | 'brief' | 'assessment'>('brief');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
@@ -881,6 +882,19 @@ const App: React.FC = () => {
                       onAcceptCards={smartDeckAcceptCards}
                       onAbort={smartDeckAbort}
                       onReset={smartDeckReset}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 5: DocViz */}
+                  <ErrorBoundary name="DocViz">
+                    <DocVizPanel
+                      isOpen={expandedPanel === 'docviz'}
+                      tabBarRef={tabBarRef}
+                      documents={nuggetDocs}
+                      menuDraftOptions={menuDraftOptions}
+                      setMenuDraftOptions={setMenuDraftOptions}
+                      onOpenStyleStudio={() => setShowStyleStudio(true)}
+                      onZoomImage={setZoomState}
                     />
                   </ErrorBoundary>
 

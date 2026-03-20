@@ -5,7 +5,8 @@ import { useAbortController } from './useAbortController';
 import { Card, DetailLevel, StylingOptions, AlbumImage, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard, cleanCardTitle } from '../utils/cardUtils';
-import { callClaude, uploadToFilesAPI } from '../utils/ai';
+import { callClaude, callGeminiProxy, uploadToFilesAPI } from '../utils/ai';
+import { GEMINI_FLASH_MODEL } from '../utils/constants';
 import { base64ToBlob } from '../utils/fileProcessing';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
@@ -22,17 +23,10 @@ const log = createLogger('CardGen');
 /** Feature flag: when true, Claude generates content-specific layout directives for Gemini. */
 const LAYOUT_DIRECTIVES_ENABLED = true;
 
-/** Extra tokens to allow for the <layout_directives> block in Claude's response. */
-const LAYOUT_DIRECTIVES_TOKEN_BUFFER = 100;
-
-/** Parse Claude's XML-tagged response into content and optional layout directives. */
-function parseDirectivesResponse(raw: string): { content: string; directives: string | null } {
+/** Parse Claude's response — strips any residual XML tags if present (backward compat). */
+function parseContentResponse(raw: string): string {
   const contentMatch = raw.match(/<card_content>([\s\S]*?)<\/card_content>/);
-  const directivesMatch = raw.match(/<layout_directives>([\s\S]*?)<\/layout_directives>/);
-  return {
-    content: contentMatch ? contentMatch[1].trim() : raw.trim(),
-    directives: directivesMatch ? directivesMatch[1].trim() : null,
-  };
+  return contentMatch ? contentMatch[1].trim() : raw.trim();
 }
 
 /**
@@ -215,13 +209,9 @@ export function useCardGeneration(
           },
         ];
 
-        // Add token buffer for layout directives when enabled (non-cover cards only)
-        const baseTokens = isCover
+        const maxTokens = isCover
           ? (CARD_TOKEN_LIMITS[level] ?? COVER_TOKEN_LIMIT)
           : (CARD_TOKEN_LIMITS[level] ?? CARD_TOKEN_LIMITS.Detailed);
-        const maxTokens = (!isCover && LAYOUT_DIRECTIVES_ENABLED)
-          ? baseTokens + LAYOUT_DIRECTIVES_TOKEN_BUFFER
-          : baseTokens;
 
         const { text: rawSynthesized, usage: claudeUsage } = await callClaude('', {
           systemBlocks,
@@ -240,16 +230,8 @@ export function useCardGeneration(
           cacheWriteTokens: claudeUsage?.cache_creation_input_tokens ?? 0,
         });
 
-        // Parse layout directives from Claude's XML-tagged response (non-cover only)
-        let layoutDirectives: string | null = null;
-        let contentText: string;
-        if (!isCover && LAYOUT_DIRECTIVES_ENABLED) {
-          const parsed = parseDirectivesResponse(rawSynthesized);
-          contentText = parsed.content;
-          layoutDirectives = parsed.directives;
-        } else {
-          contentText = rawSynthesized;
-        }
+        // Extract content (strips residual XML tags if present)
+        const contentText = parseContentResponse(rawSynthesized);
 
         // Sanitize prohibited characters the model may still produce
         let synthesizedText = contentText
@@ -269,12 +251,9 @@ export function useCardGeneration(
           ...c,
           synthesisMap: { ...(c.synthesisMap || {}), [level]: synthesizedText },
           isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [level]: false },
-          ...(layoutDirectives
-            ? { layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [level]: layoutDirectives } }
-            : {}),
         }));
 
-        return { content: synthesizedText, layoutDirectives };
+        return { content: synthesizedText };
       } catch (err: any) {
         if (isAbortError(err)) return null;
         log.error('Synthesis failed:', err);
@@ -387,32 +366,32 @@ Timeline phases -> horizontal flow with connecting arrows
 Key metrics -> prominent central placement with radiating details
 </layout_directives>`;
 
-            const { text: directivesRaw, usage: dirUsage } = await callClaude('', {
-              systemBlocks: [{ text: 'You are a visual layout analyst. Produce brief, actionable layout directives for infographic design.', cache: false }],
-              messages: [{ role: 'user' as const, content: [{ type: 'text' as const, text: directivesPrompt }] }],
-              maxTokens: 150,
-              temperature: 0.2,
+            const geminiResponse = await callGeminiProxy(
+              GEMINI_FLASH_MODEL,
+              [{ parts: [{ text: 'You are a visual layout analyst. Produce brief, actionable layout directives for infographic design.\n\n' + directivesPrompt }] }],
+              { thinkingConfig: { thinkingLevel: 'Minimal' } },
               signal,
-            });
+            );
+            const directivesRaw = geminiResponse.text || '';
+            const dirUsage = geminiResponse.usageMetadata;
 
             recordUsage?.({
-              provider: 'claude',
-              model: CLAUDE_MODEL,
-              inputTokens: dirUsage?.input_tokens ?? 0,
-              outputTokens: dirUsage?.output_tokens ?? 0,
-              cacheReadTokens: dirUsage?.cache_read_input_tokens ?? 0,
-              cacheWriteTokens: dirUsage?.cache_creation_input_tokens ?? 0,
+              provider: 'gemini',
+              model: GEMINI_FLASH_MODEL,
+              inputTokens: dirUsage?.promptTokenCount ?? 0,
+              outputTokens: dirUsage?.candidatesTokenCount ?? 0,
             });
 
-            const parsed = parseDirectivesResponse(directivesRaw);
-            if (parsed.directives) {
-              layoutDirectives = parsed.directives;
+            const directivesMatch = directivesRaw.match(/<layout_directives>([\s\S]*?)<\/layout_directives>/);
+            const directives = directivesMatch ? directivesMatch[1].trim() : directivesRaw.trim();
+            if (directives) {
+              layoutDirectives = directives;
               // Store on card for future regenerations
               updateNuggetCard(card.id, (c) => ({
                 ...c,
-                layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [currentLevel]: parsed.directives! },
+                layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [currentLevel]: directives },
               }));
-              log.info(`Layout directives generated: ${parsed.directives}`);
+              log.info(`Layout directives generated: ${directives}`);
             }
           } catch (err: any) {
             // Non-fatal — fall back to generic instructions

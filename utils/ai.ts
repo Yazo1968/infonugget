@@ -488,6 +488,8 @@ interface CallClaudeOptions {
   messages?: ClaudeMessage[];
   /** AbortSignal for cancelling the request */
   signal?: AbortSignal;
+  /** Enable extended thinking with a token budget. When set, temperature is ignored (API requirement). */
+  thinking?: { budgetTokens: number };
 }
 
 /**
@@ -513,6 +515,7 @@ export async function callClaude(
   let systemBlocks: SystemBlock[] | undefined;
   let messages: ClaudeMessage[] | undefined;
   let signal: AbortSignal | undefined;
+  let thinking: { budgetTokens: number } | undefined;
 
   if (options && 'base64' in options && 'mediaType' in options) {
     // Legacy format: direct document object
@@ -526,6 +529,7 @@ export async function callClaude(
     systemBlocks = opts.systemBlocks;
     messages = opts.messages;
     signal = opts.signal;
+    thinking = opts.thinking;
   }
 
   // ── Build system prompt ──
@@ -599,7 +603,10 @@ export async function callClaude(
     messages: messagesPayload,
   };
 
-  if (temperature != null) {
+  if (thinking) {
+    // Extended thinking: temperature must not be set (API requirement)
+    body.thinking = { type: 'enabled', budget_tokens: thinking.budgetTokens };
+  } else if (temperature != null) {
     body.temperature = temperature;
   }
 

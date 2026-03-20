@@ -60,6 +60,28 @@ async function convertPdfWithGemini(file: File): Promise<string> {
   return text;
 }
 
+/**
+ * Convert a PDF (from base64) to Markdown on the fly.
+ * Used by DocViz export when the source document is a native PDF without markdown content.
+ */
+export async function convertPdfBase64ToMarkdown(base64: string): Promise<string> {
+  log.debug(`Converting PDF base64 to markdown (${base64.length} chars)…`);
+
+  const response = await withGeminiRetry(async () => {
+    return await callGeminiProxy(
+      GEMINI_FLASH_MODEL,
+      [
+        { parts: [{ inlineData: { data: base64, mimeType: 'application/pdf' } }, { text: PDF_CONVERSION_PROMPT }] },
+      ],
+      { httpOptions: { timeout: 300000 } },
+    );
+  });
+
+  const text = response.text || '';
+  log.debug(`PDF-to-markdown conversion complete (${text.length} chars)`);
+  return text;
+}
+
 // ── Main Conversion Pipeline ──
 
 /**

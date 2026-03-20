@@ -1,6 +1,6 @@
 import React, { forwardRef, useState, useCallback, useRef } from 'react';
 
-type PanelId = 'sources' | 'chat' | 'smart-deck' | 'cards' | 'quality';
+type PanelId = 'sources' | 'chat' | 'smart-deck' | 'docviz' | 'cards' | 'quality';
 
 type QualityStatus = 'green' | 'amber' | 'red' | 'stale' | null;
 
@@ -65,6 +65,19 @@ const TABS: TabConfig[] = [
         <rect x="2" y="3" width="20" height="14" rx="2" />
         <path d="M8 21h8" />
         <path d="M12 17v4" />
+      </svg>
+    ),
+  },
+  {
+    id: 'docviz',
+    label: 'DocViz',
+    requiresNugget: true,
+    color: { dark: 'rgb(90,150,225)', light: 'rgb(90,150,225)' },
+    dimColor: { dark: 'rgb(48,82,125)', light: 'rgb(48,82,125)' },
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M3 3v18h18" />
+        <path d="M7 16l4-8 4 5 5-6" />
       </svg>
     ),
   },

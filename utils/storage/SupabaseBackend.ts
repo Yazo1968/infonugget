@@ -488,6 +488,7 @@ export class SupabaseBackend implements StorageBackend {
         briefing_suggestions: nugget.briefingSuggestions ?? null,
         nugget_last_closed_at: nugget.lastClosedAt ?? null,
         folders: nugget.folders ?? null,
+        docviz_result: nugget.docVizResult ?? null,
         created_at: nugget.createdAt,
         last_modified_at: nugget.lastModifiedAt,
       }, { onConflict: 'id' });
@@ -526,6 +527,7 @@ export class SupabaseBackend implements StorageBackend {
       briefingSuggestions: row.briefing_suggestions ?? undefined,
       lastClosedAt: row.nugget_last_closed_at ?? undefined,
       folders: row.folders ?? undefined,
+      docVizResult: row.docviz_result ?? undefined,
       createdAt: row.created_at,
       lastModifiedAt: row.last_modified_at,
     }));

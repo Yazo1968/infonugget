@@ -17,6 +17,7 @@ const GENERATE_CARD_URL = `${SUPABASE_URL}/functions/v1/generate-card`;
 const MANAGE_IMAGES_URL = `${SUPABASE_URL}/functions/v1/manage-images`;
 const CHAT_MESSAGE_URL = `${SUPABASE_URL}/functions/v1/chat-message`;
 const DOCUMENT_QUALITY_URL = `${SUPABASE_URL}/functions/v1/document-quality`;
+const GENERATE_GRAPHICS_URL = `${SUPABASE_URL}/functions/v1/generate-graphics`;
 
 /** Get a fresh auth token for Edge Function calls. */
 async function getAuthToken(): Promise<string> {
@@ -296,6 +297,45 @@ export async function documentQualityApi(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(body.error || `document-quality failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// generate-graphics API (DocViz)
+// ─────────────────────────────────────────────────────────────────
+
+export interface GenerateGraphicsRequest {
+  nuggetId: string;
+  proposalIndex: number;
+  prompt: string;
+  screenshotBase64: string;
+  aspectRatio: string;
+  resolution?: string;
+}
+
+export interface GenerateGraphicsResponse {
+  success: boolean;
+  imageUrl: string;
+  storagePath: string;
+}
+
+export async function generateGraphicsApi(
+  request: GenerateGraphicsRequest,
+  signal?: AbortSignal,
+): Promise<GenerateGraphicsResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(GENERATE_GRAPHICS_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `generate-graphics failed: ${res.status}`);
   }
 
   return res.json();

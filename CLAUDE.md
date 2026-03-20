@@ -50,6 +50,7 @@ Two AI call patterns coexist. **`utils/api.ts`** defines pipeline wrappers; **`u
 | Edge Function | Client wrapper | Purpose | Local source |
 |---|---|---|---|
 | `generate-card` | `generateCardApi()` | Multi-agent card pipeline: synthesis → image → storage | `supabase/functions/generate-card/` |
+| `generate-graphics` | `generateGraphicsApi()` | DocViz graphic generation: screenshot + prompt → Gemini image | `supabase/functions/generate-graphics/` |
 | `chat-message` | `chatMessageApi()` | Chat + card content generation via Claude | Remote only |
 | `manage-images` | `manageImagesApi()` | Image CRUD (delete, restore, history) | Remote only |
 | `document-quality` | `documentQualityApi()` | DQAF v2: 3-stage quality assessment | `supabase/functions/document-quality/` |
@@ -65,9 +66,8 @@ Three content generation paths exist, all feeding into the same image generation
 
 **Path 1 — Sources/Cards panel** (`hooks/useCardGeneration.ts` → `performSynthesis`):
 - Claude synthesizes content client-side via `callClaude` (legacy proxy)
-- Prompt requests XML output: `<card_content>` + `<layout_directives>` tags
-- `parseDirectivesResponse()` extracts content and layout directives
-- Directives stored on card's `layoutDirectivesMap`
+- Prompt requests XML output: `<card_content>` only (no layout directives at synthesis time)
+- Directives generated on-the-fly via Gemini Flash before image generation
 
 **Path 2 — Chat panel** (`hooks/useInsightsLab.ts` → `chatMessageApi`):
 - Content generated server-side by `chat-message` Edge Function
@@ -79,11 +79,10 @@ Three content generation paths exist, all feeding into the same image generation
 - No layout directives at synthesis time (generated on-the-fly at image gen)
 
 **Image generation** (all paths converge in `generateCard` within `useCardGeneration.ts`):
-1. Reads `layoutDirectivesMap` for pre-stored directives
-2. If none exist (Chat, SmartDeck, older cards), generates directives on-the-fly via a small Claude call
-3. Passes `layoutDirectives` to `generateCardApi()` → `generate-card` Edge Function
-4. EF injects directives as instruction #5 in Gemini's XML-structured prompt
-5. Feature flag: `LAYOUT_DIRECTIVES_ENABLED` in `useCardGeneration.ts` — set to `false` to revert to generic instructions
+1. Generates layout directives on-the-fly via Gemini Flash (`callGeminiProxy`) for all paths
+2. Passes `layoutDirectives` to `generateCardApi()` → `generate-card` Edge Function
+3. EF injects directives as instruction #5 in Gemini's XML-structured prompt
+4. Feature flag: `LAYOUT_DIRECTIVES_ENABLED` in `useCardGeneration.ts` — set to `false` to revert to generic instructions
 
 **Gemini prompt structure** (XML-tagged sections in `generate-card` EF):
 - `<visual_style>` — role priming, style identity, palette, typography, canvas
@@ -125,11 +124,40 @@ Each card has an **album** per detail level — a collection of generated/modifi
 - **Server-managed**: `generate-card` EF inserts new album rows, `manage-images` EF handles CRUD
 - **Show Generation Prompt**: Button in AssetsPanel displays the actual `lastPromptMap` data — the real prompt sent to Gemini for the active image. Shows empty state when no image has been generated.
 
-### 5-Panel Accordion Layout
+### DocViz (Document Visualization)
 
-Dashboard (when no project open) or workspace with 5 mutually exclusive panels controlled by `PanelTabBar`. Only one panel open at a time. **Default panel is Sources** — there is never a state where all panels are collapsed; toggling the active panel or pressing Escape falls back to Sources.
+`components/DocVizPanel.tsx` + `hooks/useDocViz.ts` — AI-powered document visual analysis and chart/diagram generation.
 
-Panel order: Sources | Brief & Quality | Chat | SmartDeck | Cards & Assets. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'smart-deck' | 'cards'`.
+**Analysis pipeline**:
+1. User selects a single document within the current nugget (separate from active documents in other panels)
+2. Claude (via `claude-proxy` with extended thinking) analyses the document and proposes visuals with structured data
+3. Proposals displayed in an expandable table: Section | Visual | Type (dropdown with alternatives) | Generate button
+4. Analysis prompt: `utils/docviz/prompt.ts` — two-step reasoning (extract data first, then evaluate visual types)
+
+**Image generation pipeline** (screenshot-based):
+1. User clicks Generate → `html-to-image` captures the data section (description + table) as a PNG screenshot
+2. Fixed prompt template assembled with injections: visual type + style (fonts, technique, mood, palette from shared `stylingOptions`)
+3. Screenshot image + text prompt sent to `generate-graphics` EF → Gemini Image renders the chart/diagram
+4. No intermediate AI reformatting — Gemini reads the data directly from the screenshot
+
+**Prompt structure** (`generate-graphics` EF):
+```
+Create a [visual type] that accurately and completely represents the data provided...
+Use the following style: FONTS, TECHNIQUE, MOOD, Color Palette
++ attached screenshot image
+```
+
+**Shared with Cards & Assets**: `StyleToolbar` component — same Style Studio, style selector, aspect ratio, resolution. Same `stylingOptions` on the nugget. Different prompt and generation pipeline.
+
+**Persistence**: `docVizResult` stored as JSONB on the nugget record (same pattern as Chat messages). Survives refresh, logout, redeployment. Image URLs stored per proposal.
+
+**DOCX Export**: `utils/exportDocViz.ts` — exports document markdown with generated images inserted at matching section locations. Section matching via `section_ref` (exact → contains → fuzzy). PDF documents converted to markdown on-the-fly via `convertPdfBase64ToMarkdown()`. Numbered figure captions, headers, footers, page numbers.
+
+### 6-Panel Accordion Layout
+
+Dashboard (when no project open) or workspace with 6 mutually exclusive panels controlled by `PanelTabBar`. Only one panel open at a time. **Default panel is Sources** — there is never a state where all panels are collapsed; toggling the active panel or pressing Escape falls back to Sources.
+
+Panel order: Sources | Brief & Quality | Chat | SmartDeck | DocViz | Cards & Assets. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'smart-deck' | 'docviz' | 'cards'`.
 
 **Click-outside handler** (`App.tsx`): Resets to Sources when clicking outside panels. Excludes: `[data-panel-overlay]`, `[data-panel-strip]`, `[data-breadcrumb-dropdown]`, `header`, and portal-rendered `.fixed` elements.
 
@@ -199,6 +227,18 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx`. When a project is o
 
 **Subject generation** (`utils/subjectGeneration.ts`): 30-40 word domain-specific priming via `buildExpertPriming()`.
 
+### Style Studio
+
+`components/StyleStudioModal.tsx` — custom visual style editor. AI-generated or manual styles with palette, fonts, technique, composition, mood fields. Textareas auto-resize via `autoResize()` + refs. No `maxLength` HTML attribute — soft char limits enforced in `onChange` guards that allow deletions when over limit (AI generation can exceed limits). Styles persisted to `custom_styles` Supabase table.
+
+### Generate Selected (Cards & Assets Panel)
+
+"Generate Selected" button in AssetsPanel is **scoped to the active card's folder**. Uses `findParentFolder(allItems, activeCard.id)` to find the containing folder, then filters to selected cards within that folder only. Falls back to all selected cards if active card is at root level.
+
+### SmartDeck Folder Naming
+
+SmartDeck-generated folders are prefixed with `"Deck- "` followed by the nugget name (e.g., `"Deck- Market Analysis"`).
+
 ### Annotation Workbench
 
 `components/workbench/` — Canvas-based image annotation and modification. Types: pin, arrow, rectangle, sketch, text, zoom. State in `hooks/useAnnotations.ts`, version stack in `hooks/useVersionHistory.ts` (max 10). Modifications via `utils/modificationEngine.ts` → Gemini.
@@ -238,7 +278,8 @@ Main orchestrator. Renders `Dashboard` when no project open, full workspace othe
 - Brief & Quality panel / Hard lock overlay: `z-[106]`
 - Chat panel: `z-[105]` (strip `z-[2]`)
 - SmartDeck panel: `z-[104]` (strip `z-[1]`)
-- Cards/Assets: `z-[103]`
+- DocViz panel: `z-[103]`
+- Cards/Assets: `z-[102]`
 - FootnoteBar / Footer: `z-[102]`
 
 ## Code Modification Safety
@@ -262,3 +303,10 @@ Do NOT independently take screenshots from the preview server. If a screenshot i
 - `resolveOrderedDocs()` doesn't check `enabled` flag
 - Annotation workbench modifications create local album entries (no server-side storage upload yet)
 - Hardcoded token cost rates in `useTokenUsage`
+
+## Data Integrity Rules
+
+* When adding a new field to a type that gets persisted, ensure both `save*()` and `load*()` in `SupabaseBackend.ts` include the field. Missing fields in upserts silently null out existing data.
+* When renaming enum/union values (e.g., trigger types, status codes), migrate existing data in the DB — old values will crash the UI if the rendering code uses strict lookups without guards.
+* The `TriggerConfig` map in `SubjectQualityPanel.tsx` must stay in sync with the `SourcesLogTrigger` type. Any new trigger value must be added to both.
+* Project-nugget relationships are stored as `nugget_ids` on the `projects` table, NOT via `project_id` on `nuggets`. Always update the project's `nugget_ids` array when adding/removing nuggets.

@@ -126,6 +126,8 @@ export interface StoredNugget {
   briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
+  /** Persisted DocViz analysis result */
+  docVizResult?: import('../../types').DocVizResult;
   /** CardFolder metadata for nuggets that contain card folders. */
   folders?: Array<{
     id: string;
