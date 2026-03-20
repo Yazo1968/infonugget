@@ -62,6 +62,7 @@ import PdfProcessorModal from './components/PdfProcessorModal';
 import PanelRequirements from './components/PanelRequirements';
 import StyleStudioModal from './components/StyleStudioModal';
 import FolderPickerDialog from './components/FolderPickerDialog';
+import ExportImagesModal from './components/ExportImagesModal';
 import FootnoteBar from './components/FootnoteBar';
 
 const App: React.FC = () => {
@@ -274,6 +275,7 @@ const App: React.FC = () => {
     | { type: 'sourceGeneration'; headingId: string; detailLevel: DetailLevel; cardTitle: string; sourceDocName: string };
 
   const [pendingFolderSelection, setPendingFolderSelection] = useState<PendingFolderSelection | null>(null);
+  const [exportImagesFolderId, setExportImagesFolderId] = useState<string | null>(null);
 
   const handleGenerateCardContentWrapped = useCallback(
     (headingId: string, detailLevel: DetailLevel, cardTitle: string, sourceDocName?: string, existingCardId?: string) => {
@@ -552,6 +554,10 @@ const App: React.FC = () => {
     },
     [selectedNugget, openProject, addToast],
   );
+
+  const handleExportImages = useCallback((folderId: string) => {
+    setExportImagesFolderId(folderId);
+  }, []);
 
   // ── Click-outside to close overlay panels ──
   useEffect(() => {
@@ -932,6 +938,7 @@ const App: React.FC = () => {
                       onDuplicateFolder={duplicateFolder}
                       onCopyMoveFolder={handleCopyMoveFolder}
                       onDownloadContent={handleDownloadContent}
+                      onExportImages={handleExportImages}
                       onCreateEmptyFolder={createEmptyFolder}
                       onCreateCustomCardInFolder={createCustomCardInFolder}
                       assetsSlot={
@@ -1073,6 +1080,18 @@ const App: React.FC = () => {
           </div>
         </>
       )}
+      {/* Export Images modal */}
+      {exportImagesFolderId && selectedNugget && (() => {
+        const folder = findFolder(selectedNugget.cards, exportImagesFolderId);
+        if (!folder) return null;
+        return (
+          <ExportImagesModal
+            folder={folder}
+            darkMode={darkMode}
+            onClose={() => setExportImagesFolderId(null)}
+          />
+        );
+      })()}
       {/* Folder picker dialog for single-card generation (no loose cards) */}
       {pendingFolderSelection && selectedNugget && (
         <FolderPickerDialog

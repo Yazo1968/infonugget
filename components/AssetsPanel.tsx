@@ -725,28 +725,20 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          const image = new Image();
-                          image.crossOrigin = 'anonymous';
-                          image.onload = () => {
-                            const canvas = document.createElement('canvas');
-                            canvas.width = image.naturalWidth;
-                            canvas.height = image.naturalHeight;
-                            const ctx = canvas.getContext('2d');
-                            ctx?.drawImage(image, 0, 0);
-                            canvas.toBlob((blob) => {
-                              if (!blob) return;
+                          fetch(img.imageUrl)
+                            .then((res) => res.blob())
+                            .then((blob) => {
                               const blobUrl = URL.createObjectURL(blob);
                               const link = document.createElement('a');
                               link.href = blobUrl;
                               const cardName = (activeCard?.text || 'image').replace(/[^a-zA-Z0-9 _-]/g, '').trim().replace(/\s+/g, '_');
-                              link.download = `${cardName}.png`;
+                              const ext = img.imageUrl.split('?')[0].match(/\.(png|jpg|jpeg|webp)$/i)?.[1] || 'jpg';
+                              link.download = `${cardName}.${ext}`;
                               document.body.appendChild(link);
                               link.click();
                               document.body.removeChild(link);
                               URL.revokeObjectURL(blobUrl);
-                            }, 'image/png');
-                          };
-                          image.src = img.imageUrl;
+                            });
                         }}
                         className="w-5 h-5 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-[#2a9fd4] transition-colors"
                         title={`Download ${img.label}`}
