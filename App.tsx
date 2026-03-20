@@ -929,6 +929,7 @@ const App: React.FC = () => {
                       onSaveCardContent={handleSaveCardContent}
                       detailLevel={activeLogicTab}
                       onGenerateCardImage={wrappedGenerateCard}
+                      onGenerateBatchCards={setManifestCards}
                       onReorderCards={reorderInsightsCards}
                       onReorderCardItem={reorderCardItem}
                       onToggleFolderCollapsed={toggleFolderCollapsed}

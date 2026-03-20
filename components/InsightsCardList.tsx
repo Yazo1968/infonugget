@@ -29,6 +29,7 @@ interface InsightsCardListProps {
   /** The active detail level from the parent — used to look up synthesisMap/activeImageMap for Card Info */
   activeDetailLevel?: DetailLevel;
   onGenerateCardImage?: (card: Card) => void;
+  onGenerateBatchCards?: (cards: Card[]) => void;
   onReorderCards?: (fromIndex: number, toIndex: number) => void;
   onReorderCardItem?: (from: DragLocation, to: DragLocation, itemType: 'card' | 'folder') => void;
   // Folder callbacks
@@ -206,6 +207,7 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
   projectNuggets,
   activeDetailLevel,
   onGenerateCardImage,
+  onGenerateBatchCards,
   onReorderCards,
   onReorderCardItem,
   onToggleFolderCollapsed,
@@ -1168,7 +1170,7 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
                     </svg>
                     Deselect All
                   </button>
-                  {onGenerateCardImage && (
+                  {(onGenerateBatchCards || onGenerateCardImage) && (
                     <>
                       <div className="h-px bg-zinc-100 dark:bg-zinc-700 my-1" />
                       <button
@@ -1176,7 +1178,12 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
                           e.stopPropagation();
                           setContextMenu(null);
                           const selected = allCards.filter((c) => c.selected);
-                          selected.forEach((c) => onGenerateCardImage(c));
+                          if (selected.length === 0) return;
+                          if (onGenerateBatchCards) {
+                            onGenerateBatchCards(selected);
+                          } else {
+                            selected.forEach((c) => onGenerateCardImage!(c));
+                          }
                         }}
                         className="w-full text-left px-3 py-2 text-[11px] text-zinc-600 dark:text-zinc-400 hover:bg-zinc-50 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors flex items-center gap-2"
                       >

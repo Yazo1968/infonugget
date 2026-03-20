@@ -45,6 +45,7 @@ interface CardsPanelProps {
   onSaveCardContent: (cardId: string, level: DetailLevel, newContent: string) => void;
   detailLevel: DetailLevel;
   onGenerateCardImage?: (card: Card) => void;
+  onGenerateBatchCards?: (cards: Card[]) => void;
   onReorderCards?: (fromIndex: number, toIndex: number) => void;
   onReorderCardItem?: (from: DragLocation, to: DragLocation, itemType: 'card' | 'folder') => void;
   // Folder callbacks
@@ -118,6 +119,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
       onSaveCardContent,
       detailLevel,
       onGenerateCardImage,
+      onGenerateBatchCards,
       onReorderCards,
       onReorderCardItem,
       onToggleFolderCollapsed,
@@ -396,6 +398,7 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
           projectNuggets={projectNuggets}
           activeDetailLevel={detailLevel}
           onGenerateCardImage={onGenerateCardImage}
+          onGenerateBatchCards={onGenerateBatchCards}
           onReorderCards={handleReorderCards}
           onReorderCardItem={handleReorderCardItem}
           onToggleFolderCollapsed={onToggleFolderCollapsed}
