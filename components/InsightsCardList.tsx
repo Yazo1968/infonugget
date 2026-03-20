@@ -799,8 +799,8 @@ const InsightsCardList: React.FC<InsightsCardListProps> = ({
               visIdx={rootVisIdx}
               isActive={card.id === activeCardId}
               isSelected={!!card.selected}
-              isGenerating={!!(activeDetailLevel && card.isGeneratingMap?.[activeDetailLevel])}
-              isSynthesizing={!!(activeDetailLevel && card.isSynthesizingMap?.[activeDetailLevel])}
+              isGenerating={!!card.isGeneratingMap && Object.values(card.isGeneratingMap).some(Boolean)}
+              isSynthesizing={!!card.isSynthesizingMap && Object.values(card.isSynthesizingMap).some(Boolean)}
               gapStyle={getGapStyle(rootVisIdx)}
               isDragging={dragSourceVisIdx === rootVisIdx}
               isRenaming={renamingId === card.id}

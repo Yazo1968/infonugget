@@ -517,7 +517,14 @@ Key metrics -> prominent central placement with radiating details
     for (const item of selectedItems) {
       setCardStatus(item.id, `Queued for batch generation...`);
     }
-    await Promise.allSettled(selectedItems.map((item) => generateCard(item, undefined, controller.signal)));
+
+    // Process in chunks of MAX_CONCURRENT to avoid Gemini API 502/503 errors
+    const MAX_CONCURRENT = 10;
+    for (let i = 0; i < selectedItems.length; i += MAX_CONCURRENT) {
+      if (controller.signal.aborted) break;
+      const chunk = selectedItems.slice(i, i + MAX_CONCURRENT);
+      await Promise.allSettled(chunk.map((item) => generateCard(item, undefined, controller.signal)));
+    }
     // Individual card statuses are cleared in generateCard's finally block
   };
 
