@@ -21,6 +21,7 @@ import SourcesPanel from './components/SourcesPanel';
 import ChatPanel from './components/ChatPanel';
 import SmartDeckPanel from './components/SmartDeckPanel';
 import DocVizPanel from './components/DocVizPanel';
+import ComposerPanel from './components/ComposerPanel';
 import CardsPanel, { PanelEditorHandle } from './components/CardsPanel';
 import ErrorBoundary from './components/ErrorBoundary';
 import PanelTabBar from './components/PanelTabBar';
@@ -357,7 +358,7 @@ const App: React.FC = () => {
 
   // ── Panel accordion state (only one panel can be open at a time) ──
   // null = all collapsed
-  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'smart-deck' | 'docviz' | 'cards' | 'quality' | null>('sources');
+  const [expandedPanel, setExpandedPanel] = useState<'sources' | 'chat' | 'smart-deck' | 'docviz' | 'composer' | 'cards' | 'quality' | null>('sources');
   const [qualityActiveTab, setQualityActiveTab] = useState<'logs' | 'brief' | 'assessment'>('brief');
   // selectedDocumentId is now in AppContext (with guard effect for auto-selection)
 
@@ -904,7 +905,25 @@ const App: React.FC = () => {
                     />
                   </ErrorBoundary>
 
-                  {/* Panel 6: Cards & Assets (portal overlay) */}
+                  {/* Panel 6: Composer */}
+                  <ErrorBoundary name="Composer">
+                    <ComposerPanel
+                      isOpen={expandedPanel === 'composer'}
+                      tabBarRef={tabBarRef}
+                      cards={nuggetCards}
+                      projectName={openProject?.name || 'Untitled Project'}
+                      nuggetName={selectedNugget?.name || 'Untitled Nugget'}
+                      documents={nuggetDocs}
+                      branding={openProject?.branding}
+                      onUpdateBranding={(b) => {
+                        if (openProject) {
+                          updateProject(openProject.id, (p) => ({ ...p, branding: b, lastModifiedAt: Date.now() }));
+                        }
+                      }}
+                    />
+                  </ErrorBoundary>
+
+                  {/* Panel 7: Cards & Assets (portal overlay) */}
                   <ErrorBoundary name="Cards">
                     <CardsPanel
                       ref={cardsPanelRef}

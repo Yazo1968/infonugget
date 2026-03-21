@@ -188,6 +188,7 @@ export interface StoredProject {
   name: string;
   nuggetIds: string[];
   isCollapsed?: boolean;
+  branding?: import('../../types').BrandingSettings;
   createdAt: number;
   lastModifiedAt: number;
 }

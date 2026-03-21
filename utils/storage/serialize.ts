@@ -540,6 +540,7 @@ export function serializeProject(p: Project): StoredProject {
     name: p.name,
     nuggetIds: p.nuggetIds,
     isCollapsed: p.isCollapsed,
+    branding: p.branding,
     createdAt: p.createdAt,
     lastModifiedAt: p.lastModifiedAt,
   };
@@ -551,6 +552,7 @@ export function deserializeProject(sp: StoredProject): Project {
     name: sp.name,
     nuggetIds: sp.nuggetIds,
     isCollapsed: sp.isCollapsed,
+    branding: sp.branding,
     createdAt: sp.createdAt,
     lastModifiedAt: sp.lastModifiedAt,
   };

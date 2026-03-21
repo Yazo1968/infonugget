@@ -2,6 +2,7 @@ import { useState, useMemo, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import type { Card, CardFolder, DetailLevel, AlbumImage } from '../types';
 import { exportImagesToZip, type ExportImageItem } from '../utils/exportImages';
+import { exportImagesToPdf } from '../utils/exportImagesPdf';
 
 interface ExportImagesModalProps {
   folder: CardFolder;
@@ -50,7 +51,7 @@ function getDefaultSelection(cards: Card[]): Set<string> {
 
 export default function ExportImagesModal({ folder, darkMode, onClose }: ExportImagesModalProps) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => getDefaultSelection(folder.cards));
-  const [isExporting, setIsExporting] = useState(false);
+  const [isExporting, setIsExporting] = useState<false | 'zip' | 'pdf'>(false);
   const [progress, setProgress] = useState<{ fetched: number; total: number } | null>(null);
 
   const allIds = useMemo(() => getAllImageIds(folder.cards), [folder.cards]);
@@ -68,12 +69,8 @@ export default function ExportImagesModal({ folder, darkMode, onClose }: ExportI
   const selectAll = useCallback(() => setSelectedIds(new Set(allIds)), [allIds]);
   const deselectAll = useCallback(() => setSelectedIds(new Set()), []);
 
-  const handleExport = useCallback(async () => {
-    if (selectedIds.size === 0) return;
-    setIsExporting(true);
-    setProgress({ fetched: 0, total: selectedIds.size });
-
-    // Build export list from selected IDs
+  /** Build export list from selected image IDs. */
+  const buildExportList = useCallback((): ExportImageItem[] => {
     const items: ExportImageItem[] = [];
     for (const card of folder.cards) {
       if (!card.albumMap) continue;
@@ -91,9 +88,19 @@ export default function ExportImagesModal({ folder, darkMode, onClose }: ExportI
         }
       }
     }
+    return items;
+  }, [selectedIds, folder.cards]);
+
+  const handleExport = useCallback(async (format: 'zip' | 'pdf') => {
+    if (selectedIds.size === 0) return;
+    setIsExporting(format);
+    setProgress({ fetched: 0, total: selectedIds.size });
+
+    const items = buildExportList();
 
     try {
-      const count = await exportImagesToZip({
+      const exportFn = format === 'zip' ? exportImagesToZip : exportImagesToPdf;
+      const count = await exportFn({
         folderName: folder.name,
         images: items,
         onProgress: (fetched, total) => setProgress({ fetched, total }),
@@ -108,7 +115,7 @@ export default function ExportImagesModal({ folder, darkMode, onClose }: ExportI
       setIsExporting(false);
       setProgress(null);
     }
-  }, [selectedIds, folder, onClose]);
+  }, [selectedIds, folder.name, buildExportList, onClose]);
 
   const dm = darkMode;
 
@@ -268,7 +275,7 @@ export default function ExportImagesModal({ folder, darkMode, onClose }: ExportI
         }`}>
           <button
             onClick={onClose}
-            disabled={isExporting}
+            disabled={!!isExporting}
             className={`px-3 py-1.5 rounded-md text-[11px] font-medium transition-colors ${
               dm
                 ? 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800'
@@ -277,28 +284,58 @@ export default function ExportImagesModal({ folder, darkMode, onClose }: ExportI
           >
             Cancel
           </button>
-          <button
-            onClick={handleExport}
-            disabled={selectedIds.size === 0 || isExporting}
-            className="px-4 py-1.5 rounded-md bg-accent-blue text-white text-[11px] font-semibold hover:brightness-110 transition-all disabled:opacity-40 flex items-center gap-2"
-          >
-            {isExporting ? (
-              <>
-                <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
-                  <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
-                  <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-75" />
-                </svg>
-                {progress ? `${progress.fetched}/${progress.total}` : 'Exporting...'}
-              </>
-            ) : (
-              <>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                Export ZIP
-              </>
-            )}
-          </button>
+          <div className="flex items-center gap-2">
+            {/* Download ZIP button */}
+            <button
+              onClick={() => handleExport('zip')}
+              disabled={selectedIds.size === 0 || !!isExporting}
+              className={`px-4 py-1.5 rounded-md text-[11px] font-semibold transition-all disabled:opacity-40 flex items-center gap-2 ${
+                dm
+                  ? 'bg-zinc-700 text-zinc-200 hover:bg-zinc-600'
+                  : 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300'
+              }`}
+            >
+              {isExporting === 'zip' ? (
+                <>
+                  <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                    <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-75" />
+                  </svg>
+                  {progress ? `${progress.fetched}/${progress.total}` : 'Exporting...'}
+                </>
+              ) : (
+                <>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" /><polyline points="7 10 12 15 17 10" /><line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                  ZIP
+                </>
+              )}
+            </button>
+            {/* Download PDF button */}
+            <button
+              onClick={() => handleExport('pdf')}
+              disabled={selectedIds.size === 0 || !!isExporting}
+              className="px-4 py-1.5 rounded-md bg-accent-blue text-white text-[11px] font-semibold hover:brightness-110 transition-all disabled:opacity-40 flex items-center gap-2"
+            >
+              {isExporting === 'pdf' ? (
+                <>
+                  <svg className="animate-spin w-3 h-3" viewBox="0 0 24 24" fill="none">
+                    <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-25" />
+                    <path d="M4 12a8 8 0 018-8" stroke="currentColor" strokeWidth="3" strokeLinecap="round" className="opacity-75" />
+                  </svg>
+                  {progress ? `${progress.fetched}/${progress.total}` : 'Exporting...'}
+                </>
+              ) : (
+                <>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" /><polyline points="14 2 14 8 20 8" />
+                  </svg>
+                  PDF
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </div>
     </div>,

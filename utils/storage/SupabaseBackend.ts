@@ -855,6 +855,7 @@ export class SupabaseBackend implements StorageBackend {
         name: project.name,
         nugget_ids: project.nuggetIds,
         is_collapsed: project.isCollapsed ?? false,
+        branding: project.branding ?? null,
         created_at: project.createdAt,
         last_modified_at: project.lastModifiedAt,
       }, { onConflict: 'id' });
@@ -879,6 +880,7 @@ export class SupabaseBackend implements StorageBackend {
       name: row.name,
       nuggetIds: row.nugget_ids ?? [],
       isCollapsed: row.is_collapsed ?? false,
+      branding: row.branding ?? undefined,
       createdAt: row.created_at,
       lastModifiedAt: row.last_modified_at,
     }));

@@ -715,6 +715,28 @@ export interface Nugget {
   lastModifiedAt: number;
 }
 
+// ── Branding types ──
+
+export type LogoPosition =
+  | 'top-left' | 'top-center' | 'top-right'
+  | 'middle-left' | 'middle-center' | 'middle-right'
+  | 'bottom-left' | 'bottom-center' | 'bottom-right';
+
+export interface LogoOverride {
+  xPercent: number;      // 0-100, logo left edge as % of image width
+  yPercent: number;      // 0-100, logo top edge as % of image height
+  sizePercent: number;   // logo width as % of image width
+}
+
+export interface BrandingSettings {
+  logoUrl: string | null;
+  logoStoragePath: string | null;
+  position: LogoPosition;
+  sizePercent: number;   // 5-50% of image width
+  opacity: number;       // 0-100
+  customOverrides?: Record<string, LogoOverride>;  // keyed by image ID
+}
+
 // ── Project types ──
 
 export interface Project {
@@ -723,6 +745,7 @@ export interface Project {
   description?: string;
   nuggetIds: string[];
   isCollapsed?: boolean;
+  branding?: BrandingSettings;
   createdAt: number;
   lastModifiedAt: number;
 }
