@@ -324,12 +324,11 @@ function assembleRendererPrompt(cardTitle: string, synthesisContent: string, set
   const themeBlock = domain ? `\n<theme_context>\n${domain.trim()}\n</theme_context>` : "";
   const refLine = referenceNote ? `\n<reference_note>${referenceNote}</reference_note>` : "";
 
-  // Instructions 5-6: use content-specific layout directives from Claude when available,
-  // otherwise fall back to generic relationship analysis instructions.
-  const layoutInstructions = layoutDirectives
-    ? `5. Apply these content-specific layout directives:\n${layoutDirectives.split('\n').map(line => `   - ${line.trim()}`).filter(l => l !== '   - ').join('\n')}`
-    : `5. Analyze the logical relationships between the provided content elements (e.g., hierarchy, cause-effect, comparisons, sequences, groupings).
-6. Structure the visual layout to explicitly reflect this logic. Use visual tools (connectors, spatial proximity, containment shapes, flow arrows, font sizing, or contrast) to make these relationships visible and meaningful, not just decorative.`;
+  // Layout directives are required for non-cover cards — no silent fallback.
+  if (!layoutDirectives) {
+    throw new Error('Layout directives are required for non-cover cards. This indicates a pipeline error — directives should have been generated before image generation.');
+  }
+  const layoutInstructions = `5. Apply these content-specific layout directives:\n${layoutDirectives.split('\n').map(line => `   - ${line.trim()}`).filter(l => l !== '   - ').join('\n')}`;
 
   return `<visual_style>
 You are an expert graphic designer and illustrator. Create an infographic illustration using the exact parameters below.

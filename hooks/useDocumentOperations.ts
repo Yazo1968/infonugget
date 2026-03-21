@@ -29,27 +29,14 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('DocOps');
 
-/** Feature flag: when true, Claude generates content-specific layout directives for Gemini. */
-const LAYOUT_DIRECTIVES_ENABLED = true;
-
-/** Extra tokens to allow for the <layout_directives> block in Claude's response. */
-const LAYOUT_DIRECTIVES_TOKEN_BUFFER = 100;
-
-/** Parse Claude's XML-tagged response into content and optional layout directives. */
-function parseDirectivesResponse(raw: string): { content: string; directives: string | null } {
-  const contentMatch = raw.match(/<card_content>([\s\S]*?)<\/card_content>/);
-  const directivesMatch = raw.match(/<layout_directives>([\s\S]*?)<\/layout_directives>/);
-  return {
-    content: contentMatch ? contentMatch[1].trim() : raw.trim(),
-    directives: directivesMatch ? directivesMatch[1].trim() : null,
-  };
-}
+// Layout directives are generated at image generation time via Gemini Flash (useCardGeneration.ts).
+// Claude only synthesizes content — no directive generation in synthesis prompts.
 
 export interface UseDocumentOperationsParams {
   recordUsage: RecordUsageFn;
   onDomainGenPending: (nuggetId: string, docIds: string[]) => void;
   createPlaceholderCards: (titles: string[], detailLevel: DetailLevel, options?: { sourceDocuments?: string[]; targetFolderId?: string }) => { id: string; title: string }[];
-  fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => void;
+  fillPlaceholderCard: (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => void;
   removePlaceholderCard: (cardId: string, detailLevel: DetailLevel) => void;
 }
 
@@ -309,9 +296,7 @@ export function useDocumentOperations({
           },
         ];
 
-        // Add token buffer for layout directives when enabled (non-cover, non-snapshot)
-        const useDirectives = !isSnapshot && !isCover && LAYOUT_DIRECTIVES_ENABLED;
-        const baseTokens = isSnapshot
+        const maxTokens = isSnapshot
           ? 4096
           : isCover
             ? detailLevel === 'TakeawayCard'
@@ -322,7 +307,6 @@ export function useDocumentOperations({
               : detailLevel === 'Standard'
                 ? 600
                 : 1200;
-        const maxTokens = useDirectives ? baseTokens + LAYOUT_DIRECTIVES_TOKEN_BUFFER : baseTokens;
 
         const { text: rawSynthesized, usage: claudeUsage } = await callClaude('', {
           systemBlocks,
@@ -339,26 +323,17 @@ export function useDocumentOperations({
           cacheWriteTokens: claudeUsage.cache_creation_input_tokens,
         });
 
-        // Parse layout directives from Claude's XML-tagged response (non-cover, non-snapshot)
-        let layoutDirectives: string | null = null;
-        let contentText: string;
-        if (useDirectives) {
-          const parsed = parseDirectivesResponse(rawSynthesized);
-          contentText = parsed.content;
-          layoutDirectives = parsed.directives;
-        } else {
-          contentText = rawSynthesized;
-        }
-
-        let synthesizedText = contentText;
+        // Strip any residual XML tags Claude may have wrapped around the content
+        const contentMatch = rawSynthesized.match(/<card_content>([\s\S]*?)<\/card_content>/);
+        let synthesizedText = contentMatch ? contentMatch[1].trim() : rawSynthesized.trim();
         if (!isCover) {
           // Strip any leading H1 that Claude may have included, then re-add with the correct title
           synthesizedText = synthesizedText.replace(/^\s*#\s+[^\n]*\n*/, '');
           synthesizedText = `# ${cardTitle}\n\n${synthesizedText.trimStart()}`;
         }
 
-        // Fill the placeholder card with the synthesized content and layout directives
-        fillPlaceholderCard(placeholderId, detailLevel, synthesizedText, undefined, layoutDirectives ?? undefined);
+        // Fill the placeholder card with the synthesized content
+        fillPlaceholderCard(placeholderId, detailLevel, synthesizedText);
         setActiveCardId(placeholderId);
       } catch (err: any) {
         log.error('Generate card content failed:', err);

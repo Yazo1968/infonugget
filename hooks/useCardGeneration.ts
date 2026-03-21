@@ -20,8 +20,8 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('CardGen');
 
-/** Feature flag: when true, Claude generates content-specific layout directives for Gemini. */
-const LAYOUT_DIRECTIVES_ENABLED = true;
+// Layout directives are always generated for non-cover cards (multi-agent pipeline).
+// Cached in card.layoutDirectivesMap[level] — regenerated on-the-fly if missing.
 
 /** Parse Claude's response — strips any residual XML tags if present (backward compat). */
 function parseContentResponse(raw: string): string {
@@ -339,13 +339,11 @@ export function useCardGeneration(
           structure: d.structure,
         }));
 
-        // Read layout directives stored during synthesis (multi-agent pipeline)
-        // If none exist (Chat, SmartDeck, or older cards), generate them on-the-fly
-        let layoutDirectives: string | undefined = LAYOUT_DIRECTIVES_ENABLED
-          ? (card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined)
-          : undefined;
+        // Read cached layout directives — generate on-the-fly if missing
+        let layoutDirectives: string | undefined =
+          card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined;
 
-        if (LAYOUT_DIRECTIVES_ENABLED && !layoutDirectives && !isCoverLevel(currentLevel as DetailLevel)) {
+        if (!layoutDirectives && !isCoverLevel(currentLevel as DetailLevel)) {
           try {
             log.info(`Generating layout directives on-the-fly for "${card.text}" [${currentLevel}]`);
             const directivesPrompt = `Analyze the following card content and produce layout directives for an infographic illustration.

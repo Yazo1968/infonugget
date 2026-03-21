@@ -82,7 +82,7 @@ Three content generation paths exist, all feeding into the same image generation
 1. Generates layout directives on-the-fly via Gemini Flash (`callGeminiProxy`) for all paths
 2. Passes `layoutDirectives` to `generateCardApi()` → `generate-card` Edge Function
 3. EF injects directives as instruction #5 in Gemini's XML-structured prompt
-4. Feature flag: `LAYOUT_DIRECTIVES_ENABLED` in `useCardGeneration.ts` — set to `false` to revert to generic instructions
+4. Layout directives are always generated for non-cover cards; cached in `card.layoutDirectivesMap[level]`
 
 **Gemini prompt structure** (XML-tagged sections in `generate-card` EF):
 - `<visual_style>` — role priming, style identity, palette, typography, canvas

@@ -528,7 +528,7 @@ export function useCardOperations() {
    * Turns off the synthesis spinner and populates synthesisMap.
    */
   const fillPlaceholderCard = useCallback(
-    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string, layoutDirectives?: string) => {
+    (cardId: string, detailLevel: DetailLevel, content: string, newTitle?: string) => {
       // Strip any residual card-suggestions block before storing
       const cleanContent = content.replace(/```card-suggestions(?:\s+multi)?\n[\s\S]*?```/, '').trimEnd();
       updateNuggetCard(cardId, (c) => ({
@@ -536,9 +536,6 @@ export function useCardOperations() {
         ...(newTitle ? { text: newTitle } : {}),
         synthesisMap: { ...(c.synthesisMap || {}), [detailLevel]: cleanContent },
         isSynthesizingMap: { ...(c.isSynthesizingMap || {}), [detailLevel]: false },
-        ...(layoutDirectives
-          ? { layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [detailLevel]: layoutDirectives } }
-          : {}),
         lastEditedAt: Date.now(),
       }));
     },
