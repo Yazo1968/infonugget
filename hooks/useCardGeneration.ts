@@ -1,6 +1,8 @@
 import { useState, useCallback, useMemo, useRef } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
+import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
+import { useAppContext } from '../context/AppContext';
 import { useAbortController } from './useAbortController';
 import { Card, DetailLevel, StylingOptions, AlbumImage, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
@@ -40,6 +42,8 @@ export function useCardGeneration(
   recordUsage?: RecordUsageFn,
 ) {
   const { selectedNugget, updateNuggetCard, updateNuggetDocument } = useNuggetContext();
+  const { projects } = useProjectContext();
+  const { openProjectId } = useAppContext();
   const { activeCardId } = useSelectionContext();
 
   const { addToast } = useToast();
@@ -324,10 +328,23 @@ export function useCardGeneration(
         const shouldUseRef = !!(referenceImage && useReferenceImage && !skipReferenceOnce);
         let refImagePayload: { base64: string; mimeType: string } | null = null;
         if (shouldUseRef) {
-          refImagePayload = {
-            base64: extractBase64(referenceImage!.url),
-            mimeType: extractMime(referenceImage!.url),
-          };
+          const refUrl = referenceImage!.url;
+          if (refUrl.startsWith('data:')) {
+            refImagePayload = {
+              base64: extractBase64(refUrl),
+              mimeType: extractMime(refUrl),
+            };
+          } else {
+            // CDN URL — fetch and convert to base64
+            const resp = await fetch(refUrl);
+            const blob = await resp.blob();
+            const mimeType = blob.type || 'image/png';
+            const buffer = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+            refImagePayload = { base64: btoa(binary), mimeType };
+          }
         }
 
         // Prepare document references for the API

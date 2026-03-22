@@ -86,10 +86,11 @@ export default function EditProfileModal({ darkMode, onClose }: EditProfileModal
   }, []);
 
   // Preview profile for the avatar component
-  const previewProfile = {
+  const previewProfile: import('../context/AuthContext').UserProfile = {
     displayName,
     avatarInitials: initials || null,
     avatarUrl: previewDataUrl ?? (removeImage ? null : avatarUrl) ?? null,
+    devMode: false,
   };
 
   const handleChangePassword = async () => {

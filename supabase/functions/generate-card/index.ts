@@ -281,6 +281,34 @@ ${typeLine}
 Canvas: ${settings.aspectRatio} ${describeCanvas(settings.aspectRatio)}`;
 }
 
+// ── Title spec table — deterministic size/position per aspect ratio ──
+interface TitleSpec { reservedHeight: string; fontSize: string; x: string; y: string; }
+const TITLE_SPECS: Record<string, TitleSpec> = {
+  "16:9": { reservedHeight: "10%", fontSize: "3.2%", x: "5%", y: "5%" },
+  "3:2":  { reservedHeight: "10%", fontSize: "3.2%", x: "5%", y: "5%" },
+  "4:3":  { reservedHeight: "9%",  fontSize: "3.0%", x: "5%", y: "5%" },
+  "5:4":  { reservedHeight: "9%",  fontSize: "3.0%", x: "5%", y: "5%" },
+  "1:1":  { reservedHeight: "8%",  fontSize: "3.5%", x: "5%", y: "4%" },
+  "4:5":  { reservedHeight: "7%",  fontSize: "3.8%", x: "5%", y: "4%" },
+  "3:4":  { reservedHeight: "7%",  fontSize: "4.0%", x: "5%", y: "3.5%" },
+  "2:3":  { reservedHeight: "6%",  fontSize: "4.0%", x: "5%", y: "3.5%" },
+  "9:16": { reservedHeight: "6%",  fontSize: "4.2%", x: "5%", y: "3%" },
+  "21:9": { reservedHeight: "12%", fontSize: "2.8%", x: "4%", y: "6%" },
+};
+const DEFAULT_TITLE_SPEC: TitleSpec = { reservedHeight: "10%", fontSize: "3.2%", x: "5%", y: "5%" };
+
+function getTitleSpec(aspectRatio: string): TitleSpec {
+  return TITLE_SPECS[aspectRatio] || DEFAULT_TITLE_SPEC;
+}
+
+function buildTitleInstruction(cardTitle: string, aspectRatio: string): string {
+  const spec = getTitleSpec(aspectRatio);
+  return `- Reserved height: the first ${spec.reservedHeight} of the image height
+- Title text: "${cardTitle}"
+- Font size: ${spec.fontSize} of image canvas width bold
+- Position: ${spec.x} from left, ${spec.y} from top of the image canvas`;
+}
+
 function prepareContentBlock(synthesisContent: string, cardTitle: string): string {
   let content = synthesisContent;
   // Strip H1 (title is provided separately)
@@ -293,7 +321,8 @@ function prepareContentBlock(synthesisContent: string, cardTitle: string): strin
   // Collapse excessive blank lines
   content = content.replace(/\n{3,}/g, "\n\n");
   content = content.trim();
-  return `${cardTitle}\n\n${content}`;
+  // Title excluded from content — specified separately via buildTitleInstruction()
+  return content;
 }
 
 function prepareCoverContentBlock(coverContent: string): string {
@@ -319,15 +348,17 @@ function parseDomain(domain?: string): { sector: string; contentNature: string; 
 }
 
 function assembleRendererPrompt(cardTitle: string, synthesisContent: string, settings: StylingOptions, referenceNote?: string, domain?: string, layoutDirectives?: string): string {
-  const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareContentBlock(synthesisContent, cardTitle);
-  const themeBlock = domain ? `\n<theme_context>\n${domain.trim()}\n</theme_context>` : "";
-  const refLine = referenceNote ? `\n<reference_note>${referenceNote}</reference_note>` : "";
 
   // Layout directives are required for non-cover cards — no silent fallback.
   if (!layoutDirectives) {
     throw new Error('Layout directives are required for non-cover cards. This indicates a pipeline error — directives should have been generated before image generation.');
   }
+
+  const styleBlock = buildStyleBlock(settings);
+  const titleInstruction = buildTitleInstruction(cardTitle, settings.aspectRatio);
+  const themeBlock = domain ? `\n<theme_context>\n${domain.trim()}\n</theme_context>` : "";
+  const refLine = referenceNote ? `\n<reference_note>${referenceNote}</reference_note>` : "";
   const layoutInstructions = `5. Apply these content-specific layout directives:\n${layoutDirectives.split('\n').map(line => `   - ${line.trim()}`).filter(l => l !== '   - ').join('\n')}`;
 
   return `<visual_style>
@@ -336,12 +367,16 @@ ${styleBlock}
 </visual_style>${themeBlock}${refLine}
 
 <instructions>
-1. Design a visual layout to represent the text content provided in the <exact_text_content> block.
+1. Design a visual layout to represent the body text content provided in the <exact_text_content> block.
 2. Render ONLY the text provided below. Do not add, change, hallucinate, or omit any words.
 3. Do not repeat the same content in the illustration.
 4. Integrate the text cleanly into the design without overlapping complex background shapes.
 ${layoutInstructions}
 </instructions>
+
+<image_title>
+${titleInstruction}
+</image_title>
 
 <exact_text_content>
 ${contentBlock}

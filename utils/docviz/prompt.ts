@@ -19,9 +19,9 @@ Return a JSON array. Each element represents one proposed visual.
 
 Every proposal must contain these fields:
 - "section_ref": the section or subsection heading exactly as it appears in the document
-- "visual_title": a short descriptive title for the proposed visual
+- "visual_title": a brief content-focused title (2-6 words) describing what the data shows, not the visual type (e.g., "Revenue by Region" not "Bar Chart of Revenue by Region")
 - "visual_type": the specific visual type you recommend, using the exact industry-standard name — one type only, no combinations, no qualifiers, no descriptions appended. Correct: "Gantt chart", "Network diagram", "Radar chart". Incorrect: "Gantt/milestone timeline", "Bar chart with trend overlay", "Network diagram showing dependencies".
-- "description": one sentence explaining what analytical value this visual adds beyond the text
+- "description": one neutral sentence describing what this visual shows — like a figure caption (e.g., "Breakdown of regulatory timelines across three legislative instruments"). Do NOT mention the visual type, chart mechanics, or why the visual is useful — just state what data or relationship it depicts
 - "alternative_types": an array of other visual types that could also effectively represent the same data (for example, data suited for a pie chart might also work as a bar chart or treemap). Same naming rule: exact industry-standard names only, one type per entry. Include only when genuinely applicable — do not force alternatives.
 - "data": the underlying data extracted from the document, structured as a table with "headers" (array of column name strings) and "rows" (array of arrays, each inner array being one row of values). Structure the columns to suit the proposed visual — for example, a process flow might have columns ["Step", "From", "To", "Condition"], a radar chart might have ["Dimension", "Score", "Basis"], a matrix might have ["Row label", "Column A", "Column B"]. Choose whatever columns best capture the data for the visual. Keep cell values as concise as possible — use the absolute minimum wording needed for the reader to understand the data point. Prefer short labels, abbreviations, and keywords over full sentences. The data will be used to generate a visual, not read as prose.
 

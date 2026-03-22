@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom';
 import { useThemeContext } from '../context/ThemeContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
-import type { CardItem, Card, CardFolder, DetailLevel, AlbumImage, UploadedFile, BrandingSettings, LogoPosition } from '../types';
+import type { CardItem, Card, CardFolder, DetailLevel, AlbumImage, UploadedFile, BrandingSettings, HeaderFooterSettings, LogoPosition } from '../types';
 import { isCardFolder } from '../types';
 import { exportImagesToZip, type ExportImageItem } from '../utils/exportImages';
 import { exportImagesToPdf } from '../utils/exportImagesPdf';
@@ -17,6 +17,8 @@ interface ComposerPanelProps {
   documents: UploadedFile[];
   branding?: BrandingSettings;
   onUpdateBranding?: (branding: BrandingSettings) => void;
+  headerFooter?: HeaderFooterSettings;
+  onUpdateHeaderFooter?: (settings: HeaderFooterSettings) => void;
 }
 
 // ── Album helpers (shared logic from ExportImagesModal) ──
@@ -160,6 +162,7 @@ function BrandSlider({
   min,
   max,
   suffix,
+  step,
   onChange,
   darkMode: dm,
 }: {
@@ -168,10 +171,15 @@ function BrandSlider({
   min: number;
   max: number;
   suffix: string;
+  step?: number;
   onChange: (v: number) => void;
   darkMode: boolean;
 }) {
   const pct = ((value - min) / (max - min)) * 100;
+  const snap = (raw: number) => {
+    if (step) return Math.round(raw / step) * step;
+    return Math.round(raw);
+  };
   return (
     <div>
       <div className="flex items-center justify-between mb-1">
@@ -179,7 +187,7 @@ function BrandSlider({
           {label}
         </label>
         <span className={`text-[10px] font-mono font-medium ${dm ? 'text-zinc-400' : 'text-zinc-500'}`}>
-          {value}{suffix}
+          {step ? value.toFixed(1) : value}{suffix}
         </span>
       </div>
       <div
@@ -187,7 +195,7 @@ function BrandSlider({
         onClick={(e) => {
           const rect = e.currentTarget.getBoundingClientRect();
           const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-          onChange(Math.round(min + x * (max - min)));
+          onChange(snap(min + x * (max - min)));
         }}
       >
         {/* Filled track */}
@@ -205,7 +213,7 @@ function BrandSlider({
             const move = (ev: MouseEvent) => {
               const rect = track.getBoundingClientRect();
               const x = Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
-              onChange(Math.round(min + x * (max - min)));
+              onChange(snap(min + x * (max - min)));
             };
             const up = () => {
               document.removeEventListener('mousemove', move);
@@ -474,12 +482,17 @@ function getCardImages(card: Card): AlbumImage[] {
   return albums.flatMap(({ images }) => images);
 }
 
-/** Single thumbnail with optional logo compositing. */
+/** Single thumbnail with optional logo compositing and footer preview. */
 function BrandedThumbnail({
   img,
   card,
   isSelected,
   branding,
+  headerFooter,
+  projectName,
+  nuggetName,
+  pageNum,
+  totalPages,
   onToggle,
   onZoom,
   darkMode: dm,
@@ -488,6 +501,11 @@ function BrandedThumbnail({
   card: Card;
   isSelected: boolean;
   branding?: BrandingSettings;
+  headerFooter?: HeaderFooterSettings;
+  projectName: string;
+  nuggetName: string;
+  pageNum?: number;
+  totalPages?: number;
   onToggle: () => void;
   onZoom: (url: string, title: string, imageId: string) => void;
   darkMode: boolean;
@@ -495,6 +513,7 @@ function BrandedThumbnail({
   const hasBranding = !!(branding?.logoUrl);
   const compositedUrl = useCompositedImage(img.imageUrl, branding, hasBranding, img.id);
   const displayUrl = compositedUrl ?? img.imageUrl;
+  const showHF = headerFooter?.enabled;
 
   return (
     <div
@@ -510,6 +529,15 @@ function BrandedThumbnail({
       onClick={() => onZoom(img.imageUrl, `${card.text} — ${img.label}`, img.id)}
     >
       <img src={displayUrl} alt={img.label} className="w-full h-full object-cover" loading="lazy" />
+      {showHF && (
+        <div className="absolute bottom-0 left-0 right-0 px-1.5 py-0.5 flex items-center justify-between">
+          <span className="text-[4px] text-zinc-500 truncate max-w-[40%]">{projectName} — {nuggetName}</span>
+          {pageNum != null && totalPages != null && (
+            <span className="text-[4px] text-zinc-500">{pageNum} of {totalPages}</span>
+          )}
+          <span className="text-[4px] text-zinc-500">{new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
+        </div>
+      )}
       <button
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
         className={`absolute top-1.5 right-1.5 w-5 h-5 rounded flex items-center justify-center text-white transition-colors ${
@@ -532,12 +560,24 @@ function ZoomOverlayWithLogo({
   imageId,
   branding,
   onUpdateBranding,
+  headerFooter,
+  projectName,
+  nuggetName,
+  pageNum,
+  totalPages,
+  allImageIds,
   onClose,
 }: {
   imageUrl: string;
   imageId: string;
   branding?: BrandingSettings;
   onUpdateBranding?: (b: BrandingSettings) => void;
+  headerFooter?: HeaderFooterSettings;
+  projectName: string;
+  nuggetName: string;
+  pageNum?: number;
+  totalPages?: number;
+  allImageIds?: string[];
   onClose: () => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -650,6 +690,16 @@ function ZoomOverlayWithLogo({
     setLogoPosState(null); // will re-init from grid via useEffect
   }, [branding, onUpdateBranding, imageId]);
 
+  // Apply current logo position/size to all images
+  const applyToAll = useCallback(() => {
+    if (!branding || !onUpdateBranding || !logoPosState || !allImageIds?.length) return;
+    const newOverrides = { ...branding.customOverrides };
+    for (const id of allImageIds) {
+      newOverrides[id] = { xPercent: logoPosState.xPct, yPercent: logoPosState.yPct, sizePercent: logoPosState.sizePct };
+    }
+    onUpdateBranding({ ...branding, customOverrides: newOverrides });
+  }, [branding, onUpdateBranding, logoPosState, allImageIds]);
+
   return (
     <div
       className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 cursor-pointer"
@@ -692,8 +742,36 @@ function ZoomOverlayWithLogo({
           </div>
         )}
 
+        {/* Footer overlay — font size as % of image width */}
+        {headerFooter?.enabled && imgLoaded && imgRef.current && (() => {
+          const renderedW = imgRef.current!.clientWidth;
+          const fsPct = headerFooter.fontSize ?? 1.2;
+          const fsPx = renderedW * fsPct / 100;
+          const padPx = renderedW * 0.02;
+          const dateStr = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+
+          return (
+            <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between" style={{ padding: `0 ${padPx}px ${padPx * 0.5}px` }}>
+              <span className="text-zinc-500 truncate max-w-[40%]" style={{ fontSize: `${fsPx}px` }}>{projectName} — {nuggetName}</span>
+              {pageNum != null && totalPages != null && (
+                <span className="text-zinc-500" style={{ fontSize: `${fsPx}px` }}>{pageNum} of {totalPages}</span>
+              )}
+              <span className="text-zinc-500" style={{ fontSize: `${fsPx}px` }}>{dateStr}</span>
+            </div>
+          );
+        })()}
+
         {/* Controls */}
-        <div className="absolute top-2 right-2 flex items-center gap-1.5">
+        <div className="absolute top-2 right-2 flex items-center gap-1.5 bg-black/50 backdrop-blur-sm rounded-full px-2 py-1">
+          {hasLogo && logoPosState && allImageIds && allImageIds.length > 1 && (
+            <button
+              onClick={applyToAll}
+              className="px-2 py-1 rounded-full bg-accent-blue/80 hover:bg-accent-blue text-white text-[10px] font-medium transition-colors"
+              title="Apply this logo position to all images"
+            >
+              Apply to all
+            </button>
+          )}
           {hasLogo && override && (
             <button
               onClick={resetToGrid}
@@ -731,6 +809,9 @@ function CardImageGrid({
   darkMode: dm,
   branding,
   onUpdateBranding,
+  headerFooter,
+  projectName,
+  nuggetName,
 }: {
   cards: Card[];
   selectedImageIds: Set<string>;
@@ -738,6 +819,9 @@ function CardImageGrid({
   darkMode: boolean;
   branding?: BrandingSettings;
   onUpdateBranding?: (b: BrandingSettings) => void;
+  headerFooter?: HeaderFooterSettings;
+  projectName: string;
+  nuggetName: string;
 }) {
   const [zoomImage, setZoomImage] = useState<{ url: string; title: string; imageId: string } | null>(null);
 
@@ -746,6 +830,31 @@ function CardImageGrid({
       .map((card) => ({ card, images: getCardImages(card) }))
       .filter(({ images }) => images.length > 0);
   }, [cards]);
+
+  // Compute total selected images for page numbering
+  const totalSelectedImages = useMemo(() => {
+    let count = 0;
+    for (const { images } of cardBlocks) {
+      for (const img of images) {
+        if (selectedImageIds.has(img.id)) count++;
+      }
+    }
+    return count;
+  }, [cardBlocks, selectedImageIds]);
+
+  // Build a map: imageId → page number (1-based, only selected images)
+  const pageNumMap = useMemo(() => {
+    const map = new Map<string, number>();
+    let page = 1;
+    for (const { images } of cardBlocks) {
+      for (const img of images) {
+        if (selectedImageIds.has(img.id)) {
+          map.set(img.id, page++);
+        }
+      }
+    }
+    return map;
+  }, [cardBlocks, selectedImageIds]);
 
   return (
     <>
@@ -764,6 +873,11 @@ function CardImageGrid({
                   card={card}
                   isSelected={selectedImageIds.has(img.id)}
                   branding={branding}
+                  headerFooter={headerFooter}
+                  projectName={projectName}
+                  nuggetName={nuggetName}
+                  pageNum={pageNumMap.get(img.id)}
+                  totalPages={totalSelectedImages}
                   onToggle={() => toggleImage(img.id)}
                   onZoom={(url, title, imageId) => setZoomImage({ url, title, imageId })}
                   darkMode={dm}
@@ -789,6 +903,12 @@ function CardImageGrid({
         imageId={zoomImage.imageId}
         branding={branding}
         onUpdateBranding={onUpdateBranding}
+        headerFooter={headerFooter}
+        projectName={projectName}
+        nuggetName={nuggetName}
+        pageNum={pageNumMap.get(zoomImage.imageId)}
+        totalPages={totalSelectedImages}
+        allImageIds={Array.from(selectedImageIds)}
         onClose={() => setZoomImage(null)}
       />
     )}
@@ -807,6 +927,8 @@ export default function ComposerPanel({
   documents,
   branding,
   onUpdateBranding,
+  headerFooter,
+  onUpdateHeaderFooter,
 }: ComposerPanelProps) {
   const { darkMode } = useThemeContext();
   const { shouldRender, overlayStyle } = usePanelOverlay({ isOpen, defaultWidth: 520, minWidth: 380, anchorRef: tabBarRef });
@@ -911,19 +1033,29 @@ export default function ComposerPanel({
 
     setProgress({ fetched: 0, total: items.length });
     try {
-      const exportFn = format === 'zip' ? exportImagesToZip : exportImagesToPdf;
-      await exportFn({
-        folderName: selectedFolder.name,
-        images: items,
-        onProgress: (fetched, total) => setProgress({ fetched, total }),
-      });
+      if (format === 'zip') {
+        await exportImagesToZip({
+          folderName: selectedFolder.name,
+          images: items,
+          onProgress: (fetched, total) => setProgress({ fetched, total }),
+        });
+      } else {
+        await exportImagesToPdf({
+          folderName: selectedFolder.name,
+          images: items,
+          onProgress: (fetched, total) => setProgress({ fetched, total }),
+          headerFooter: headerFooter?.enabled ? headerFooter : undefined,
+          projectName,
+          nuggetName,
+        });
+      }
     } catch (err) {
       console.error('Export failed:', err);
     } finally {
       setIsExporting(false);
       setProgress(null);
     }
-  }, [selectedImageIds, selectedFolder, buildExportList, branding]);
+  }, [selectedImageIds, selectedFolder, buildExportList, branding, headerFooter]);
 
   const handleExportDocx = useCallback(async () => {
     if (!selectedFolder) return;
@@ -1008,6 +1140,42 @@ export default function ComposerPanel({
               onUpdate={(b) => onUpdateBranding?.(b)}
               darkMode={dm}
             />
+
+            {/* Footer section */}
+            <div className="px-4 py-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className={`text-[10px] font-semibold uppercase tracking-wider ${dm ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  Footer
+                </label>
+                <button
+                  onClick={() => {
+                    const current = headerFooter ?? { enabled: false };
+                    onUpdateHeaderFooter?.({ ...current, enabled: !current.enabled });
+                  }}
+                  className={`relative w-7 h-4 rounded-full transition-colors ${
+                    headerFooter?.enabled ? 'bg-accent-blue' : dm ? 'bg-zinc-600' : 'bg-zinc-300'
+                  }`}
+                >
+                  <span className={`absolute top-0.5 left-0.5 w-3 h-3 rounded-full bg-white transition-transform ${headerFooter?.enabled ? 'translate-x-3' : ''}`} />
+                </button>
+              </div>
+              <p className={`text-[9px] ${dm ? 'text-zinc-600' : 'text-zinc-400'}`}>{projectName} — {nuggetName} | page | date</p>
+
+              {headerFooter?.enabled && (
+                <div className="pt-1">
+                  <BrandSlider
+                    label="Font size"
+                    value={headerFooter.fontSize ?? 1.2}
+                    min={0.8}
+                    max={2.5}
+                    step={0.1}
+                    suffix="%"
+                    onChange={(v) => onUpdateHeaderFooter?.({ ...headerFooter, fontSize: Number(v.toFixed(1)) })}
+                    darkMode={dm}
+                  />
+                </div>
+              )}
+            </div>
 
             {/* Export actions */}
             {selectedFolder && (
@@ -1131,6 +1299,9 @@ export default function ComposerPanel({
                 darkMode={dm}
                 branding={branding}
                 onUpdateBranding={onUpdateBranding}
+                headerFooter={headerFooter}
+                projectName={projectName}
+                nuggetName={nuggetName}
               />
             )}
           </div>

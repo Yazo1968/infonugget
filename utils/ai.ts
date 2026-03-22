@@ -751,7 +751,7 @@ Return ONLY valid JSON with no markdown fencing, no explanation, in this exact s
 
 Rules:
 - All palette colors must be valid 6-digit hex codes with # prefix
-- Choose fonts available on Google Fonts
+- CRITICAL: Font names MUST be exact Google Fonts names (fonts.google.com). Do NOT use system fonts (Arial, Helvetica, Impact, Georgia, Futura, DIN Condensed, Times New Roman, Comic Sans MS) — these are not available for programmatic loading. Use Google Fonts equivalents instead (e.g., Jost instead of Futura, Barlow Condensed instead of DIN Condensed, Roboto instead of Helvetica, Merriweather instead of Georgia)
 - Ensure sufficient contrast between background and text colors
 - technique: EXACTLY 15-20 words. Describe rendering approach — what shapes, fills, strokes, textures are used. Two concise sentences.
 - composition: EXACTLY 10-15 words. Describe layout rules — grid system, spacing, hierarchy, element arrangement. One concise sentence.

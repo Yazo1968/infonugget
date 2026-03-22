@@ -737,6 +737,13 @@ export interface BrandingSettings {
   customOverrides?: Record<string, LogoOverride>;  // keyed by image ID
 }
 
+// ── Footer types ──
+
+export interface HeaderFooterSettings {
+  enabled: boolean;
+  fontSize?: number;         // font size as % of image width, default 1.2
+}
+
 // ── Project types ──
 
 export interface Project {
@@ -746,6 +753,7 @@ export interface Project {
   nuggetIds: string[];
   isCollapsed?: boolean;
   branding?: BrandingSettings;
+  headerFooter?: HeaderFooterSettings;
   createdAt: number;
   lastModifiedAt: number;
 }

@@ -59,12 +59,13 @@ export function useImageOperations({
   const openZoom = useCallback(
     (imageUrl: string) => {
       const settings = committedSettings;
+      const cardLevel = activeCard?.detailLevel || activeLogicTab;
       setZoomState({
         imageUrl,
         cardId: activeCard?.id || null,
         cardText: activeCard?.text || null,
         palette: settings.palette || null,
-        album: activeCard?.albumMap?.[activeLogicTab],
+        album: activeCard?.albumMap?.[cardLevel],
         aspectRatio: settings.aspectRatio,
         resolution: settings.resolution,
       });
@@ -170,10 +171,10 @@ export function useImageOperations({
   const handleSetActiveImage = useCallback(
     (imageId: string) => {
       if (!activeCardId || !selectedNugget) return;
-      const level = activeLogicTab;
       const cardId = activeCardId;
       const nuggetId = selectedNugget.id;
       const card = findCard(selectedNugget.cards, cardId);
+      const level = card?.detailLevel || activeLogicTab;
       const album = card?.albumMap?.[level] || [];
       const targetImage = album.find((img) => img.id === imageId);
       if (!targetImage || targetImage.isActive) return;
@@ -235,7 +236,8 @@ export function useImageOperations({
   const handleDeleteAlbumImage = useCallback(
     async (imageId: string) => {
       if (!activeCardId || !selectedNugget) return;
-      const level = activeLogicTab;
+      const cardForLevel = findCard(selectedNugget.cards, activeCardId);
+      const level = cardForLevel?.detailLevel || activeLogicTab;
       const cardId = activeCardId;
       const nuggetId = selectedNugget.id;
       const card = findCard(selectedNugget.cards, cardId);

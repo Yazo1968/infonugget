@@ -920,6 +920,12 @@ const App: React.FC = () => {
                           updateProject(openProject.id, (p) => ({ ...p, branding: b, lastModifiedAt: Date.now() }));
                         }
                       }}
+                      headerFooter={openProject?.headerFooter}
+                      onUpdateHeaderFooter={(hf) => {
+                        if (openProject) {
+                          updateProject(openProject.id, (p) => ({ ...p, headerFooter: hf, lastModifiedAt: Date.now() }));
+                        }
+                      }}
                     />
                   </ErrorBoundary>
 

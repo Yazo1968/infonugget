@@ -182,26 +182,6 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                   )}
                 </button>
 
-                {/* Close tab button */}
-                {!isRenaming && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCloseTab(nugget.id);
-                    }}
-                    className={`shrink-0 h-4 rounded-sm flex items-center justify-center transition-all w-0 overflow-hidden group-hover:w-4 ${
-                      darkMode
-                        ? 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-700'
-                        : 'text-zinc-400 hover:text-zinc-600 hover:bg-zinc-300'
-                    }`}
-                    title="Close tab"
-                  >
-                    <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                    </svg>
-                  </button>
-                )}
-
                 {/* Dropdown menu — portalled to body to escape overflow clipping */}
                 {menuId === nugget.id && menuPos && createPortal(
                   <div
@@ -211,6 +191,23 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
                     }`}
                     style={{ top: menuPos.top, left: menuPos.left }}
                   >
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setMenuId(null);
+                        setMenuPos(null);
+                        onCloseTab(nugget.id);
+                      }}
+                      className={`w-full text-left px-3 py-1.5 text-[11px] flex items-center gap-2 transition-colors ${
+                        darkMode ? 'text-zinc-300 hover:bg-zinc-800' : 'text-zinc-700 hover:bg-zinc-50'
+                      }`}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">
+                        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                      Close Tab
+                    </button>
+                    <div className={`my-1 h-px ${darkMode ? 'bg-zinc-700' : 'bg-zinc-200'}`} />
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
@@ -367,7 +364,7 @@ const NuggetTabBar: React.FC<NuggetTabBarProps> = ({
         const nug = projectNuggets.find((n) => n.id === confirmDeleteId);
         if (!nug) return null;
         return (
-          <div className="fixed inset-0 z-50 flex items-center justify-center" onClick={() => setConfirmDeleteId(null)}>
+          <div className="fixed inset-0 z-[120] flex items-center justify-center" onClick={() => setConfirmDeleteId(null)}>
             <div className="absolute inset-0 bg-black/50" />
             <div
               onClick={(e) => e.stopPropagation()}

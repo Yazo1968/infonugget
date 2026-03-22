@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { toPng } from 'html-to-image';
 import { UploadedFile, DocVizProposal, DocVizData, StylingOptions, ZoomState } from '../types';
 import { useThemeContext } from '../context/ThemeContext';
+import { useAuth } from '../context/AuthContext';
 import { usePanelOverlay } from '../hooks/usePanelOverlay';
 import { useDocViz } from '../hooks/useDocViz';
 import PanelRequirements from './PanelRequirements';
@@ -25,6 +26,8 @@ interface DocVizPanelProps {
 
 const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents, menuDraftOptions, setMenuDraftOptions, onOpenStyleStudio, onZoomImage }) => {
   const { darkMode } = useThemeContext();
+  const { profile } = useAuth();
+  const isDevMode = profile?.devMode ?? false;
   const { shouldRender, overlayStyle } = usePanelOverlay({
     isOpen,
     defaultWidth: Math.min(window.innerWidth * 0.5, 700),
@@ -496,7 +499,7 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
                           </div>
                         )}
                       {/* Debug: show semantic prompt sent to Gemini */}
-                      {p.lastPrompt && (
+                      {isDevMode && p.lastPrompt && (
                         <div className={`mt-3 border ${cellBorder} rounded-lg overflow-hidden`}>
                           <div className={`px-3 py-1.5 ${miniHeaderBg} text-[10px] font-medium uppercase tracking-wider ${textSecondary}`}>
                             Prompt sent to Gemini

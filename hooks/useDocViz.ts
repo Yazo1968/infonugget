@@ -127,7 +127,7 @@ export function useDocViz(): UseDocVizReturn {
 
     try {
       // Build the text prompt from template — no AI call
-      const prompt = buildGraphicsPrompt(activeType, settings);
+      const prompt = buildGraphicsPrompt(activeType, settings, proposal.visual_title, proposal.description, proposal.section_ref);
       log.info(`Generating graphic for proposal ${proposalIndex}: ${activeType} — ${proposal.visual_title}`);
       log.debug('Prompt:', prompt);
       log.debug('Screenshot size:', Math.round(screenshotBase64.length / 1024), 'KB');

@@ -88,12 +88,18 @@ Three content generation paths exist, all feeding into the same image generation
 - `<visual_style>` — role priming, style identity, palette, typography, canvas
 - `<theme_context>` — domain, content nature, visualization paradigm, visual vocabulary
 - `<instructions>` — 5 numbered rules (instruction #5 = layout directives or generic fallback)
-- `<exact_text_content>` — card title + synthesized content (markdown stripped of `#`, `##`, `**`)
+- `<image_title>` — title spec with reserved height, font, size (% of canvas width), position; values injected from `TITLE_SPEC_TABLE` keyed by aspect ratio. Title is separated from body content to improve rendering consistency. Cover cards (TitleCard/TakeawayCard) skip this block. Bullet-point format (not sentence).
+- `<exact_text_content>` — body content only (no title); markdown stripped of `#`, `##`, `**`
+
+**Title spec table** (`TITLE_SPEC_TABLE` in `generate-card` EF):
+- Maps aspect ratio → `{ reservedHeight, fontSize, x, y }` (all percentages)
+- Landscape (16:9): 10% reserved, 3.2% font. Portrait (9:16): 6% reserved, 4.2% font.
+- Font name + color injected from style settings (`fonts.primary`, `palette.text`)
 
 **Content preparation** (`prepareContentBlock` in `generate-card` EF):
 - Strips all markdown heading syntax (`#`, `##`, `###`) — Gemini renders `#` literally
 - Strips bold markers (`**`) — Gemini renders `**` literally
-- Title passed as plain text, not markdown heading
+- Title NOT included in content block (moved to `<image_title>` spec)
 
 ### Word Count & Token Limits (Aligned Across All Paths)
 
@@ -122,7 +128,7 @@ Each card has an **album** per detail level — a collection of generated/modifi
 - **Card fields**: `albumMap` (all images), `activeImageMap` (displayed image URL)
 - **DB**: `card_images` table with `is_active`, `label`, `sort_order` columns. Partial unique index enforces one active per album.
 - **Server-managed**: `generate-card` EF inserts new album rows, `manage-images` EF handles CRUD
-- **Show Generation Prompt**: Button in AssetsPanel displays the actual `lastPromptMap` data — the real prompt sent to Gemini for the active image. Shows empty state when no image has been generated.
+- **Show Generation Prompt**: Button in AssetsPanel displays the raw `lastPromptMap` data (monospace `<pre>` format) — the actual prompt text sent to Gemini for the active image. Shows empty state when no image has been generated. DocViz also displays `lastPrompt` per proposal inline. **Both gated behind `profile.devMode`** — only visible when the user's `dev_mode` column in `profiles` table is `true`.
 
 ### DocViz (Document Visualization)
 
@@ -135,17 +141,18 @@ Each card has an **album** per detail level — a collection of generated/modifi
 4. Analysis prompt: `utils/docviz/prompt.ts` — two-step reasoning (extract data first, then evaluate visual types)
 
 **Image generation pipeline** (screenshot-based):
-1. User clicks Generate → `html-to-image` captures the data section (description + table) as a PNG screenshot
-2. Fixed prompt template assembled with injections: visual type + style (fonts, technique, mood, palette from shared `stylingOptions`)
+1. User clicks Generate → `html-to-image` captures the data section (subtitle + table) as a PNG screenshot
+2. XML-structured prompt assembled with injections: visual type, title, subtitle, footnote, style (fonts, technique, composition, mood, palette, canvas from shared `stylingOptions`)
 3. Screenshot image + text prompt sent to `generate-graphics` EF → Gemini Image renders the chart/diagram
 4. No intermediate AI reformatting — Gemini reads the data directly from the screenshot
 
-**Prompt structure** (`generate-graphics` EF):
-```
-Create a [visual type] that accurately and completely represents the data provided...
-Use the following style: FONTS, TECHNIQUE, MOOD, Color Palette
-+ attached screenshot image
-```
+**Prompt structure** (`generate-graphics` EF, XML-tagged):
+- `<visual_spec>` — visual type, title (`visual_title`), subtitle (`description`), footnote (`section_ref`), rendering rules
+- `<visual_style>` — fonts (title + body), technique, composition, mood, palette, canvas orientation
+- Screenshot image attached as inline data
+- Prompt displayed inline per proposal (gated behind `profile.devMode`)
+
+**DocViz proposal fields**: `section_ref` (document heading as footnote), `visual_title` (brief, type-agnostic — no visual type in title), `visual_type` (chart/diagram type), `description` (neutral one-line subtitle — no visual-type-specific language), `alternative_types`, `data` (headers + rows)
 
 **Shared with Cards & Assets**: `StyleToolbar` component — same Style Studio, style selector, aspect ratio, resolution. Same `stylingOptions` on the nugget. Different prompt and generation pipeline.
 
@@ -153,13 +160,15 @@ Use the following style: FONTS, TECHNIQUE, MOOD, Color Palette
 
 **DOCX Export**: `utils/exportDocViz.ts` — exports document markdown with generated images inserted at matching section locations. Section matching via `section_ref` (exact → contains → fuzzy). PDF documents converted to markdown on-the-fly via `convertPdfBase64ToMarkdown()`. Numbered figure captions, headers, footers, page numbers.
 
-### 6-Panel Accordion Layout
+### 8-Panel Accordion Layout
 
-Dashboard (when no project open) or workspace with 6 mutually exclusive panels controlled by `PanelTabBar`. Only one panel open at a time. **Default panel is Sources** — there is never a state where all panels are collapsed; toggling the active panel or pressing Escape falls back to Sources.
+Dashboard (when no project open) or workspace with 8 mutually exclusive panels controlled by `PanelTabBar`. Only one panel open at a time. **Default panel is Sources** — there is never a state where all panels are collapsed; toggling the active panel or pressing Escape falls back to Sources.
 
-Panel order: Sources | Brief & Quality | Chat | SmartDeck | DocViz | Cards & Assets. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'smart-deck' | 'docviz' | 'cards'`.
+Panel order: Sources | Brief & Quality | Chat | SmartDeck | DocViz | Cards & Images | Composer. Portal overlays (`createPortal` to `document.body`). `expandedPanel` values: `'sources' | 'quality' | 'chat' | 'smart-deck' | 'docviz' | 'cards' | 'composer'`.
 
 **Click-outside handler** (`App.tsx`): Resets to Sources when clicking outside panels. Excludes: `[data-panel-overlay]`, `[data-panel-strip]`, `[data-breadcrumb-dropdown]`, `header`, and portal-rendered `.fixed` elements.
+
+**Nugget Tab Bar** (`NuggetTabBar.tsx`): Horizontal tabs for nugget selection within the open project. Each tab has a dropdown menu (Close Tab, Rename, Duplicate, Delete — no separate "x" close button). "+" button opens a dropdown: "Create new" (opens `NuggetCreationDialog`) or "Open existing" (shows closed tabs). Delete confirmation dialog at `z-[120]`. Managed by `useTabManagement` hook.
 
 ### Brief & Quality Panel Layout
 
@@ -205,7 +214,7 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx`. When a project is o
 
 ### Backend Architecture (Supabase)
 
-- **Database**: PostgreSQL with RLS — tables: `profiles`, `projects`, `nuggets`, `documents`, `card_images`, `app_state`, `token_usage`, `custom_styles`. All rows scoped to `auth.uid() = user_id`.
+- **Database**: PostgreSQL with RLS — tables: `profiles` (with `dev_mode` boolean), `projects`, `nuggets`, `documents`, `card_images`, `app_state`, `token_usage`, `custom_styles`. All rows scoped to `auth.uid() = user_id`.
 - **Storage**: Two buckets: `pdfs` (native PDF files), `card-images` (generated card images). Path prefix: `{user_id}/`.
 - **Storage Backend**: `utils/storage/SupabaseBackend.ts` implements `StorageBackend` interface. Cards stored as JSONB on nuggets table.
 - **Supabase Client**: `utils/supabase.ts` — singleton `createClient` using env vars.
@@ -229,7 +238,7 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx`. When a project is o
 
 ### Style Studio
 
-`components/StyleStudioModal.tsx` — custom visual style editor. AI-generated or manual styles with palette, fonts, technique, composition, mood fields. Textareas auto-resize via `autoResize()` + refs. No `maxLength` HTML attribute — soft char limits enforced in `onChange` guards that allow deletions when over limit (AI generation can exceed limits). Styles persisted to `custom_styles` Supabase table.
+`components/StyleStudioModal.tsx` — custom visual style editor. AI-generated or manual styles with palette, fonts, technique, composition, mood fields. Textareas auto-resize via `autoResize()` + refs. No `maxLength` HTML attribute — soft char limits enforced in `onChange` guards that allow deletions when over limit (AI generation can exceed limits). Styles persisted to `custom_styles` Supabase table. AI style generation (`generateStyleWithAI` in `ai.ts`) is instructed to use exact Google Fonts names for font fields.
 
 ### Generate Selected (Cards & Assets Panel)
 
@@ -238,6 +247,31 @@ When `openProjectId` is null, `App` renders `Dashboard.tsx`. When a project is o
 ### SmartDeck Folder Naming
 
 SmartDeck-generated folders are prefixed with `"Deck- "` followed by the nugget name (e.g., `"Deck- Market Analysis"`).
+
+### Composer Panel
+
+`components/ComposerPanel.tsx` — Export composition panel with branding support. Two-column layout: Settings (left, 280px fixed) and Cards (right, flex).
+
+**Settings column:**
+- Folder selector — dropdown to pick card folder for export
+- Branding — logo upload (drag/drop or click, PNG/SVG/WebP), 9-point position grid, size slider (5-50%), opacity slider (10-100%). Logo composited onto images client-side via Canvas API at export time. Original images never modified.
+- Footer — toggle + font size slider (0.8-2.5% of image width). Three-part layout: left (project — nugget), center (page number), right (date). Shown as overlay preview on thumbnails and zoom. Persisted as `HeaderFooterSettings` JSONB on `projects` table (`header_footer` column).
+- Export buttons — DOCX (content), ZIP (images), PDF (images). All scoped to selected folder and selected images.
+
+**Cards column:**
+- Bento grid layout — cards displayed as blocks with thumbnails (170px), grouped by card. Select/deselect via checkboxes. Click thumbnail to zoom.
+- Zoom overlay — shows full-size image with interactive logo overlay. User can drag logo to reposition and drag corner handle to resize. Per-image custom positions stored as `customOverrides` in `BrandingSettings`. "Apply to all" button copies current logo position/size to all selected images.
+
+**Branding data model:**
+- `BrandingSettings` on `Project` — `logoUrl`, `logoStoragePath`, `position` (9-point grid), `sizePercent`, `opacity`, `customOverrides` (per-image `LogoOverride`).
+- `HeaderFooterSettings` on `Project` — `enabled`, `fontSize` (% of image width, default 1.2).
+- Both persisted as JSONB columns (`branding`, `header_footer`) on `projects` table.
+- When custom overrides exist, position grid shows "User defined (N)" with no highlighted position. Clicking a grid position shows confirmation dialog before clearing overrides.
+
+**Export pipeline:**
+- `exportImagesToZip` (`utils/exportImages.ts`) — fetches raw images, converts data URLs to blobs without `fetch()` (CSP-safe), packages as ZIP via JSZip
+- `exportImagesToPdf` (`utils/exportImagesPdf.ts`) — one image per page, preserves aspect ratio, via jsPDF. Footer overlay (project-nugget, page number, date) when enabled.
+- Both apply logo compositing via Canvas API when branding is active, respecting per-image overrides
 
 ### Annotation Workbench
 
@@ -266,20 +300,22 @@ Shared by `useCardGeneration`, `useInsightsLab`, and `useSmartDeck`. Provides `c
 - Default resolution: `2K` (same token cost as 1K)
 - `generate-card` EF uses `thinkingLevel: 'High'` for image generation
 
-## App.tsx Structure (~1020 lines)
+## App.tsx Structure (~1130 lines)
 
 Main orchestrator. Renders `Dashboard` when no project open, full workspace otherwise. Consumes ~14 hooks for card generation, chat, quality checks, card/project/document/image operations, tab management, styling sync, token tracking, and Files API sync. Modals/Dialogs coordinated here: `PdfUploadChoiceDialog`, `PdfProcessorModal`, `StyleStudioModal`, `ZoomOverlay`, `FolderPickerDialog`, `UnsavedChangesDialog`.
 
 ## Z-Index Stacking (highest to lowest)
 
+- Composer zoom overlay: `z-[130]`
 - Folder context menu: `z-[130]`
 - Modals/Dialogs: `z-[120]`
 - Main Header: `z-[110]`
 - Brief & Quality panel / Hard lock overlay: `z-[106]`
 - Chat panel: `z-[105]` (strip `z-[2]`)
 - SmartDeck panel: `z-[104]` (strip `z-[1]`)
+- Composer panel: `z-[103]`
 - DocViz panel: `z-[103]`
-- Cards/Assets: `z-[102]`
+- Cards & Images: `z-[102]`
 - FootnoteBar / Footer: `z-[102]`
 
 ## Code Modification Safety

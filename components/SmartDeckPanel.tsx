@@ -197,7 +197,7 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
         </div>
 
         {/* Card list */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>
+        <div className="[&>*]:max-w-2xl [&>*]:mx-auto" style={{ flex: 1, overflowY: 'auto', padding: '12px 20px' }}>
           {cards.map((card) => {
             const isExpanded = expandedCards.has(card.number);
             const isCover = session.includeCover && card.number === 0;
@@ -304,6 +304,10 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
             display: 'flex',
             gap: '10px',
             flexShrink: 0,
+            maxWidth: '42rem',
+            marginLeft: 'auto',
+            marginRight: 'auto',
+            width: '100%',
           }}
         >
           <button

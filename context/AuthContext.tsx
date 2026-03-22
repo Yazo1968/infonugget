@@ -8,6 +8,7 @@ export interface UserProfile {
   displayName: string | null;
   avatarInitials: string | null;
   avatarUrl: string | null;
+  devMode: boolean;
 }
 
 export interface AuthContextValue {
@@ -45,7 +46,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const fetchProfile = useCallback(async (userId: string) => {
     const { data } = await supabase
       .from('profiles')
-      .select('display_name, avatar_initials, avatar_url')
+      .select('display_name, avatar_initials, avatar_url, dev_mode')
       .eq('id', userId)
       .single();
     if (data) {
@@ -53,6 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         displayName: data.display_name,
         avatarInitials: data.avatar_initials,
         avatarUrl: data.avatar_url,
+        devMode: data.dev_mode ?? false,
       });
     }
   }, []);

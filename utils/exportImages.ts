@@ -34,6 +34,20 @@ function getExtension(url: string, blob: Blob): string {
   return mimeMap[blob.type] || 'png';
 }
 
+/** Convert a data URL to a Blob without using fetch (avoids CSP connect-src restriction). */
+export function dataUrlToBlob(dataUrl: string): Blob {
+  const commaIdx = dataUrl.indexOf(',');
+  const header = dataUrl.substring(0, commaIdx);
+  const base64 = dataUrl.substring(commaIdx + 1);
+  const mime = header.match(/:(.*?);/)?.[1] || 'image/png';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return new Blob([bytes], { type: mime });
+}
+
 /** Deduplicate a filename within a set, appending _2, _3, etc. */
 function dedupeFilename(name: string, used: Set<string>): string {
   if (!used.has(name)) {
@@ -65,9 +79,13 @@ export async function exportImagesToZip(params: {
 
   const results = await Promise.allSettled(
     images.map(async (item) => {
-      const response = await fetch(item.imageUrl);
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const blob = await response.blob();
+      // Data URLs (from Canvas branding composite) can't use fetch() due to CSP connect-src
+      const blob = item.imageUrl.startsWith('data:')
+        ? dataUrlToBlob(item.imageUrl)
+        : await fetch(item.imageUrl).then((r) => {
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            return r.blob();
+          });
       const ext = getExtension(item.imageUrl, blob);
       const rawName = `${sanitizeFilename(item.cardTitle)}_${item.detailLevel}_${sanitizeFilename(item.label)}.${ext}`;
       const filename = dedupeFilename(rawName, usedNames);

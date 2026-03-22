@@ -10,6 +10,7 @@ import { ReferenceMismatchDialog, ManifestModal } from './Dialogs';
 import { useThemeContext } from '../context/ThemeContext';
 import { useSelectionContext } from '../context/SelectionContext';
 import { useNuggetContext } from '../context/NuggetContext';
+import { useAuth } from '../context/AuthContext';
 import PanelRequirements from './PanelRequirements';
 import ChiselLoader from './ChiselLoader';
 import StyleToolbar from './StyleToolbar';
@@ -80,6 +81,8 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const { darkMode } = useThemeContext();
   const { activeCard } = useSelectionContext();
   const { selectedNugget } = useNuggetContext();
+  const { profile } = useAuth();
+  const isDevMode = profile?.devMode ?? false;
   // Use the card's own detail level — the toolbar LOD selector was removed
   const cardLevel: DetailLevel = activeCard?.detailLevel || activeLogicTab;
   const _colorRefs = useRef<Record<string, HTMLInputElement | null>>({});
@@ -413,29 +416,33 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                 )}
               </div>
 
-              <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
+              {isDevMode && (
+                <>
+                  <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
 
-              {/* Toggle image / prompt view */}
-              <button
-                onClick={() => setShowPrompt((prev) => !prev)}
-                title={showPrompt ? 'Show generated image' : 'Show generation prompt'}
-                aria-label={showPrompt ? 'Show generated image' : 'Show generation prompt'}
-                className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
-              >
-                <svg
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="16 18 22 12 16 6" />
-                  <polyline points="8 6 2 12 8 18" />
-                </svg>
-              </button>
+                  {/* Toggle image / prompt view (dev mode only) */}
+                  <button
+                    onClick={() => setShowPrompt((prev) => !prev)}
+                    title={showPrompt ? 'Show generated image' : 'Show generation prompt'}
+                    aria-label={showPrompt ? 'Show generated image' : 'Show generation prompt'}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <polyline points="16 18 22 12 16 6" />
+                      <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                  </button>
+                </>
+              )}
 
               <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
 
@@ -514,27 +521,9 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
         ) : showPrompt ? (
           <div className="absolute inset-0 overflow-y-auto text-left px-6 py-4 animate-in fade-in duration-300">
             {effectivePrompt ? (
-              <article
-                className="document-prose chat-prose pb-20 max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: sanitizeHtml(
-                    marked.parse(
-                      effectivePrompt
-                        .replace(/<visual_style>/g, '## Visual Style\n')
-                        .replace(/<\/visual_style>/g, '\n---\n')
-                        .replace(/<theme_context>/g, '## Theme Context\n')
-                        .replace(/<\/theme_context>/g, '\n---\n')
-                        .replace(/<reference_note>/g, '## Reference Note\n')
-                        .replace(/<\/reference_note>/g, '\n---\n')
-                        .replace(/<instructions>/g, '## Instructions\n')
-                        .replace(/<\/instructions>/g, '\n---\n')
-                        .replace(/<exact_text_content>/g, '## Exact Text Content\n')
-                        .replace(/<\/exact_text_content>/g, ''),
-                      { async: false },
-                    ) as string,
-                  ),
-                }}
-              />
+              <pre
+                className="pb-20 max-w-none text-[11px] leading-[1.6] text-zinc-700 dark:text-zinc-300 whitespace-pre-wrap break-words font-mono"
+              >{effectivePrompt}</pre>
             ) : (
               <div className="flex items-center justify-center h-full">
                 <p className="text-[12px] text-zinc-400 dark:text-zinc-500 italic">
@@ -557,7 +546,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
           <div ref={imageContainerRef} className="w-full h-full animate-in fade-in duration-300 relative">
             <ErrorBoundary name="Annotation Workbench">
               <AnnotationWorkbench
-                imageUrl={activeCard!.activeImageMap![cardLevel]!}
+                imageUrl={album.find((img) => img.isActive)?.imageUrl || activeCard!.activeImageMap![cardLevel]!}
                 cardId={activeCard!.id}
                 cardText={activeCard!.text}
                 palette={committedSettings.palette}
@@ -571,7 +560,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                 }))}
                 mode="inline"
                 onImageModified={onImageModified}
-                onRequestFullscreen={() => onZoomImage(activeCard!.activeImageMap![cardLevel] || '')}
+                onRequestFullscreen={() => onZoomImage(album.find((img) => img.isActive)?.imageUrl || activeCard!.activeImageMap![cardLevel] || '')}
                 contentDirty={contentDirty}
                 currentContent={currentContent}
                 onToolbarStateChange={setToolbarState}
@@ -653,9 +642,12 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                 <rect width="10" height="8" x="7" y="8" rx="1" />
               </svg>
             </button>
-            {toolbarState.onRequestFullscreen && (
+            {hasImage && (
               <button
-                onClick={toolbarState.onRequestFullscreen}
+                onClick={() => {
+                  const url = album.find((img) => img.isActive)?.imageUrl || activeCard?.activeImageMap?.[cardLevel] || '';
+                  if (url) onZoomImage(url);
+                }}
                 title="Open Fullscreen"
                 aria-label="Open Fullscreen"
                 className="w-6 h-6 rounded-full flex items-center justify-center transition-all text-zinc-600 dark:text-zinc-400 hover:text-zinc-800 dark:hover:text-zinc-200 hover:bg-white/80 dark:hover:bg-zinc-800/80"

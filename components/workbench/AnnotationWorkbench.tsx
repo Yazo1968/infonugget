@@ -639,7 +639,7 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
       onZoomIn: () => handleZoomInRef.current(),
       onZoomOut: () => handleZoomOutRef.current(),
       onZoomReset: handleZoomReset,
-      onRequestFullscreen: isInline ? onRequestFullscreen : undefined,
+      onRequestFullscreen: isInline && onRequestFullscreen ? onRequestFullscreen : undefined,
       globalInstruction,
       onGlobalInstructionChange: (text: string) => setGlobalInstruction(text),
     });
