@@ -110,8 +110,6 @@ const App: React.FC = () => {
     setActiveLogicTab,
     manifestCards,
     setManifestCards,
-    currentSynthesisContent: _currentSynthesisContent,
-    contentDirty: _contentDirty,
     selectedCount: _selectedCount,
     generateCard,
     handleGenerateAll: _handleGenerateAll,
@@ -1003,8 +1001,6 @@ const App: React.FC = () => {
                             })()}
                             onZoomImage={openZoom}
                             onImageModified={handleInsightsImageModified}
-                            contentDirty={false}
-                            currentContent={activeCard?.synthesisMap?.[activeCard?.detailLevel || activeLogicTab] || ''}
                             referenceImage={referenceImage}
                             onStampReference={handleStampReference}
                             useReferenceImage={useReferenceImage}

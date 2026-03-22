@@ -357,6 +357,22 @@ export const AppProvider: React.FC<{
     }
   }, [selectedNuggetId, projects]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // ── Guard effect: auto-select first nugget when project is open but no valid nugget selected ──
+  useEffect(() => {
+    if (!openProjectId) return;
+    const project = projects.find((p) => p.id === openProjectId);
+    if (!project || project.nuggetIds.length === 0) return;
+    // Check if current selection is valid for this project
+    const currentValid = selectedNuggetId && project.nuggetIds.includes(selectedNuggetId) && nuggets.some((n) => n.id === selectedNuggetId);
+    if (!currentValid) {
+      // Find the first nugget that actually exists
+      const firstValidId = project.nuggetIds.find((id) => nuggets.some((n) => n.id === id));
+      if (firstValidId) {
+        selectEntity({ nuggetId: firstValidId });
+      }
+    }
+  }, [openProjectId, projects, nuggets, selectedNuggetId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Guard effect: keep selectedDocumentId valid when nugget/docs change ──
   useEffect(() => {
     if (!selectedNuggetId) {

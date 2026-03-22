@@ -26,7 +26,7 @@ import {
 import AnnotationEditorPopover from './AnnotationEditorPopover';
 import { simplifyPath } from '../../utils/geometry';
 import { generateRedlineMap } from '../../utils/redline';
-import { executeModification, executeContentModification } from '../../utils/modificationEngine';
+import { executeModification } from '../../utils/modificationEngine';
 import { useVersionHistory } from '../../hooks/useVersionHistory';
 
 export interface AnnotationToolbarState {
@@ -39,7 +39,6 @@ export interface AnnotationToolbarState {
   activeColor: string;
   onColorChange: (color: string) => void;
   palette?: Palette;
-  contentDirty?: boolean;
   hasSelection: boolean;
   onDeleteSelected: () => void;
   zoomScale: number;
@@ -63,8 +62,6 @@ interface AnnotationWorkbenchProps {
   mode: 'inline' | 'fullscreen';
   onImageModified?: (cardId: string, newImageUrl: string, history: ImageVersion[]) => void;
   onRequestFullscreen?: () => void;
-  contentDirty?: boolean;
-  currentContent?: string;
   onZoomChange?: (scale: number) => void;
   onToolbarStateChange?: (state: AnnotationToolbarState) => void;
   overlay?: React.ReactNode;
@@ -94,8 +91,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
   mode,
   onImageModified,
   onRequestFullscreen,
-  contentDirty,
-  currentContent,
   onZoomChange,
   onToolbarStateChange,
   overlay,
@@ -496,7 +491,7 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
   );
 
   // --- MODIFICATION ENGINE ---
-  const canModify = annotations.length > 0 || !!contentDirty || !!globalInstruction.trim();
+  const canModify = annotations.length > 0 || !!globalInstruction.trim();
 
   const handleModify = useCallback(async () => {
     if (!canModify || isModifying) return;
@@ -504,7 +499,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
 
     const hasAnnotations = annotations.length > 0;
     const hasGlobalText = !!globalInstruction.trim();
-    const isContentOnly = !hasAnnotations && !hasGlobalText && !!contentDirty && !!currentContent;
 
     // Annotation-based modification needs image naturals for redline
     if (hasAnnotations && (imageNaturals.w === 0 || imageNaturals.h === 0)) return;
@@ -513,59 +507,32 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
     setModifyError(null);
 
     try {
-      let result;
+      const { redlineDataUrl, instructions } = hasAnnotations
+        ? generateRedlineMap(annotations, imageNaturals.w, imageNaturals.h)
+        : { redlineDataUrl: '', instructions: '' };
 
-      if (isContentOnly) {
-        // Content-only: send reference image + new content
-        result = await executeContentModification(
-          {
-            originalImageUrl: displayImageUrl,
-            content: currentContent,
-            cardText: cardText ?? null,
-            style,
-            palette: palette
-              ? {
-                  background: palette.background,
-                  primary: palette.primary,
-                  secondary: palette.secondary,
-                  accent: palette.accent,
-                  text: palette.text,
-                }
-              : undefined,
-            aspectRatio,
-            resolution,
-          },
-          onUsage,
-        );
-      } else {
-        // Annotation-based (or global instruction): send original + redline + instructions
-        const { redlineDataUrl, instructions } = hasAnnotations
-          ? generateRedlineMap(annotations, imageNaturals.w, imageNaturals.h)
-          : { redlineDataUrl: '', instructions: '' };
-
-        // Prepend global instruction before spatial annotations
-        let combinedInstructions = '';
-        if (hasGlobalText) {
-          combinedInstructions += `[GLOBAL INSTRUCTION]: "${globalInstruction.trim()}"`;
-          if (instructions) combinedInstructions += '\n\n';
-        }
-        if (instructions) combinedInstructions += instructions;
-
-        result = await executeModification(
-          {
-            originalImageUrl: displayImageUrl,
-            redlineDataUrl,
-            instructions: combinedInstructions,
-            cardText: cardText ?? null,
-            aspectRatio,
-            resolution,
-          },
-          onUsage,
-        );
+      // Prepend global instruction before spatial annotations
+      let combinedInstructions = '';
+      if (hasGlobalText) {
+        combinedInstructions += `[GLOBAL INSTRUCTION]: "${globalInstruction.trim()}"`;
+        if (instructions) combinedInstructions += '\n\n';
       }
+      if (instructions) combinedInstructions += instructions;
+
+      const result = await executeModification(
+        {
+          originalImageUrl: displayImageUrl,
+          redlineDataUrl,
+          instructions: combinedInstructions,
+          cardText: cardText ?? null,
+          aspectRatio,
+          resolution,
+        },
+        onUsage,
+      );
 
       setCurrentImageUrl(result.newImageUrl);
-      const label = isContentOnly ? `Content Update ${modificationCount + 1}` : `Modification ${modificationCount + 1}`;
+      const label = `Modification ${modificationCount + 1}`;
       pushVersion(result.newImageUrl, label);
       clearAll();
       select(null);
@@ -590,8 +557,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
     isModifying,
     annotations,
     globalInstruction,
-    contentDirty,
-    currentContent,
     imageNaturals,
     displayImageUrl,
     cardText,
@@ -630,7 +595,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
       activeColor,
       onColorChange: (color: string) => setActiveColor(color),
       palette: palette || undefined,
-      contentDirty,
       hasSelection: !!selectedAnnotationId,
       onDeleteSelected: () => {
         if (selectedAnnotationId) remove(selectedAnnotationId);
@@ -650,7 +614,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
     isModifying,
     activeColor,
     palette,
-    contentDirty,
     selectedAnnotationId,
     clearAll,
     remove,
@@ -1354,7 +1317,6 @@ const AnnotationWorkbench: React.FC<AnnotationWorkbenchProps> = ({
           activeColor={activeColor}
           onColorChange={handleColorChange}
           palette={palette || undefined}
-          contentDirty={contentDirty}
           hasSelection={!!selectedAnnotationId}
           onDeleteSelected={() => {
             if (selectedAnnotationId) remove(selectedAnnotationId);

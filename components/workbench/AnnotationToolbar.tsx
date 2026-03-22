@@ -12,7 +12,6 @@ interface AnnotationToolbarProps {
   onColorChange?: (color: string) => void;
   palette?: Palette;
   disabled?: boolean;
-  contentDirty?: boolean;
   hasSelection?: boolean;
   onDeleteSelected?: () => void;
   inline?: boolean;
@@ -147,7 +146,6 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   onColorChange,
   palette,
   disabled,
-  contentDirty,
   hasSelection,
   onDeleteSelected,
   inline,
@@ -169,7 +167,7 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const hasGlobalText = !!(globalInstruction && globalInstruction.trim());
-  const canModify = annotationCount > 0 || !!contentDirty || hasGlobalText;
+  const canModify = annotationCount > 0 || hasGlobalText;
 
   // Close color picker on click outside
   useEffect(() => {
@@ -391,7 +389,7 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       <div className="relative" ref={deleteMenuRef}>
         <button
           onClick={() => setShowDeleteMenu(!showDeleteMenu)}
-          disabled={annotationCount === 0 && !hasSelection}
+          disabled={(annotationCount === 0 && !hasSelection)}
           title="Delete annotations"
           aria-label="Delete annotations"
           className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${showDeleteMenu ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950'} disabled:opacity-40 disabled:pointer-events-none`}
@@ -546,12 +544,8 @@ const AnnotationToolbar: React.FC<AnnotationToolbarProps> = ({
       <button
         onClick={onModify}
         disabled={!canModify || isModifying}
-        title={
-          contentDirty && annotationCount === 0 && !hasGlobalText ? 'Re-render with updated content' : 'Apply Changes'
-        }
-        aria-label={
-          contentDirty && annotationCount === 0 && !hasGlobalText ? 'Re-render with updated content' : 'Apply Changes'
-        }
+        title="Apply Changes"
+        aria-label="Apply Changes"
         className={`w-7 h-7 rounded-full flex items-center justify-center transition-all ${isModifying ? 'animate-spin text-zinc-600 dark:text-zinc-400' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'} disabled:opacity-40 disabled:pointer-events-none`}
       >
         <svg

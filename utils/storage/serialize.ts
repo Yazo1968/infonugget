@@ -71,7 +71,7 @@ export function deserializeFile(sf: StoredFile, structure?: Heading[]): Uploaded
 // ── Card serialization (runtime Card ↔ StoredHeading) ──
 
 export function serializeCard(card: Card, fileId: string): StoredHeading {
-  return {
+  const sh: StoredHeading = {
     fileId,
     headingId: card.id,
     level: card.level,
@@ -88,6 +88,9 @@ export function serializeCard(card: Card, fileId: string): StoredHeading {
     sourceDocuments: card.sourceDocuments,
     // Excluded: isSynthesizingMap, isGeneratingMap, startIndex, cardUrlMap, imageHistoryMap
   };
+  // Optional maps — only include if present to keep JSONB compact
+  if (card.layoutDirectivesMap) (sh as any).layoutDirectivesMap = card.layoutDirectivesMap;
+  return sh;
 }
 
 /** Extract album images from a card for persistence. */
@@ -268,6 +271,7 @@ export function deserializeCard(stored: StoredHeading, images: StoredImage[] | S
     visualPlanMap: migrateLevelMap(stored.visualPlanMap),
     lastGeneratedContentMap: migrateLevelMap(stored.lastGeneratedContentMap),
     lastPromptMap: migrateLevelMap(stored.lastPromptMap),
+    layoutDirectivesMap: migrateLevelMap((stored as any).layoutDirectivesMap),
     isSynthesizingMap: {},
     isGeneratingMap: {},
     createdAt: stored.createdAt,

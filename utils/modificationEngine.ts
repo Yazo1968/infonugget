@@ -1,6 +1,6 @@
 import { GEMINI_IMAGE_MODEL } from './constants';
 import { withGeminiRetry, PRO_IMAGE_CONFIG, callGeminiProxy } from './ai';
-import { buildModificationPrompt, buildContentModificationPrompt } from './prompts/imageGeneration';
+import { buildModificationPrompt } from './prompts/imageGeneration';
 
 interface ModificationRequest {
   originalImageUrl: string; // data URL or signed HTTP URL of the original image
@@ -115,87 +115,6 @@ export async function executeModification(
     throw new Error(
       'AI did not return a modified image. The model may have returned text instead of an image. Please try again with clearer instructions.',
     );
-  }
-
-  return { newImageUrl };
-}
-
-/**
- * Content-only regeneration: sends the original image as a style/layout reference
- * alongside updated text content. No redline map — the AI re-renders the infographic
- * with the new content while preserving the visual style of the reference image.
- */
-interface ContentModificationRequest {
-  originalImageUrl: string; // data URL or signed HTTP URL — reference image for style continuity
-  content: string; // the updated synthesis content
-  cardText: string | null;
-  style?: string;
-  palette?: { background: string; primary: string; secondary: string; accent: string; text: string };
-  aspectRatio?: string;
-  resolution?: string;
-}
-
-export async function executeContentModification(
-  request: ContentModificationRequest,
-  onUsage?: (entry: { provider: 'gemini'; model: string; inputTokens: number; outputTokens: number }) => void,
-): Promise<ModificationResult> {
-  const { originalImageUrl, content, cardText, style, palette, aspectRatio, resolution } = request;
-
-  // Resolve image data — handles both data URLs and HTTP(S) signed URLs
-  const rawImage = await resolveImageData(originalImageUrl);
-
-  // Compress to avoid WORKER_LIMIT 546 on the gemini-proxy EF
-  const { base64: originalBase64, mimeType: originalMime } = await compressForProxy(
-    rawImage.base64, rawImage.mimeType, PROXY_MAX_DIM,
-  );
-
-  const systemPrompt = buildContentModificationPrompt(content, cardText, style, palette);
-
-  const imageConfig: Record<string, string> = {};
-  if (aspectRatio) imageConfig.aspectRatio = aspectRatio;
-  if (resolution) imageConfig.imageSize = resolution;
-
-  const response = await withGeminiRetry(async () => {
-    return await callGeminiProxy(
-      GEMINI_IMAGE_MODEL,
-      [
-        {
-          parts: [
-            { text: systemPrompt },
-            {
-              inlineData: {
-                mimeType: originalMime,
-                data: originalBase64,
-              },
-            },
-          ],
-        },
-      ],
-      {
-        ...PRO_IMAGE_CONFIG,
-        ...(Object.keys(imageConfig).length > 0 && { imageConfig }),
-      },
-    );
-  });
-
-  // Record Gemini usage
-  if (response.usageMetadata) {
-    onUsage?.({
-      provider: 'gemini',
-      model: GEMINI_IMAGE_MODEL,
-      inputTokens: response.usageMetadata.promptTokenCount ?? 0,
-      outputTokens: response.usageMetadata.candidatesTokenCount ?? 0,
-    });
-  }
-
-  let newImageUrl = '';
-  if (response.images && response.images.length > 0) {
-    const img = response.images[0];
-    newImageUrl = `data:${img.mimeType || 'image/png'};base64,${img.data}`;
-  }
-
-  if (!newImageUrl) {
-    throw new Error('AI did not return a modified image. Please try again.');
   }
 
   return { newImageUrl };

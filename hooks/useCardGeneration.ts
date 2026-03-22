@@ -84,23 +84,7 @@ export function useCardGeneration(
     return allCards[0] || null;
   }, [selectedNugget]);
 
-  const currentSynthesisContent = useMemo(() => {
-    const allCards = flattenCards(selectedNugget?.cards ?? []);
-    const card = allCards[0];
-    if (!card) return '';
-    const level = card.detailLevel || 'Standard';
-    return card.synthesisMap?.[level] || '';
-  }, [selectedNugget]);
 
-  const contentDirty = useMemo(() => {
-    if (!selectedNugget) return false;
-    const allCards = flattenCards(selectedNugget.cards);
-    const card = allCards[0];
-    if (!card?.activeImageMap?.[activeLogicTab]) return false;
-    if (!card.lastGeneratedContentMap?.[activeLogicTab]) return false;
-    const content = card.synthesisMap?.[card.detailLevel || 'Standard'] || '';
-    return content !== card.lastGeneratedContentMap[activeLogicTab];
-  }, [selectedNugget, activeLogicTab]);
 
   const selectedCount = useMemo(() => {
     const cards = flattenCards(selectedNugget?.cards ?? []);
@@ -587,8 +571,6 @@ Key metrics -> prominent central placement with radiating details
     setActiveLogicTab,
     manifestCards,
     setManifestCards,
-    currentSynthesisContent,
-    contentDirty,
     selectedCount,
     generateCard,
     stopGeneration,

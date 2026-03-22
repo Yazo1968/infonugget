@@ -27,8 +27,6 @@ interface AssetsPanelProps {
   selectedCount: number;
   onZoomImage: (url: string) => void;
   onImageModified?: (cardId: string, newImageUrl: string, history: ImageVersion[]) => void;
-  contentDirty?: boolean;
-  currentContent?: string;
   referenceImage?: ReferenceImage | null;
   onStampReference?: () => void;
   useReferenceImage?: boolean;
@@ -59,8 +57,6 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   selectedCount,
   onZoomImage,
   onImageModified,
-  contentDirty,
-  currentContent,
   referenceImage,
   onStampReference,
   useReferenceImage,
@@ -80,7 +76,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 }) => {
   const { darkMode } = useThemeContext();
   const { activeCard } = useSelectionContext();
-  const { selectedNugget } = useNuggetContext();
+  const { selectedNugget, updateNuggetCard } = useNuggetContext();
   const { profile } = useAuth();
   const isDevMode = profile?.devMode ?? false;
   // Use the card's own detail level — the toolbar LOD selector was removed
@@ -123,9 +119,10 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
       setCardLabMode('generate');
     }
   }, [hasImage]);
+
   const isGenerating = !!activeCard?.isGeneratingMap?.[cardLevel];
   const album = activeCard?.albumMap?.[cardLevel] || [];
-  const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating;
+  const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating && cardLabMode !== 'inpaint';
 
   // Show the actual prompt sent to Gemini — only available after image generation
   const effectivePrompt = useMemo(() => {
@@ -461,7 +458,6 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                   activeColor={toolbarState.activeColor}
                   onColorChange={toolbarState.onColorChange}
                   palette={toolbarState.palette}
-                  contentDirty={toolbarState.contentDirty}
                   hasSelection={toolbarState.hasSelection}
                   onDeleteSelected={toolbarState.onDeleteSelected}
                   inline
@@ -561,8 +557,6 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                 mode="inline"
                 onImageModified={onImageModified}
                 onRequestFullscreen={() => onZoomImage(album.find((img) => img.isActive)?.imageUrl || activeCard!.activeImageMap![cardLevel] || '')}
-                contentDirty={contentDirty}
-                currentContent={currentContent}
                 onToolbarStateChange={setToolbarState}
                 onUsage={onUsage}
               />
