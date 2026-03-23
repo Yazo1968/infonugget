@@ -6,7 +6,7 @@ const CLAUDE_MODEL = 'claude-sonnet-4-6';
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
 
 const CARD_TOKEN_LIMITS: Record<string, number> = {
-  TitleCard: 150, TakeawayCard: 350, Executive: 95, Standard: 203, Detailed: 405,
+  TitleCard: 150, TakeawayCard: 350, Executive: 108, Standard: 230, Detailed: 405,
 };
 const COVER_TOKEN_LIMIT = 256;
 const CHAT_MAX_TOKENS = 8192;
@@ -196,12 +196,12 @@ ${SUGGESTION_SPEC}`;
 }
 
 function buildCardContentInstruction(detailLevel: string): string {
-  let wordCountRange = '120-150';
+  let wordCountRange = '120-170';
   let scopeGuidance = '';
   let formattingGuidance = '';
 
   if (detailLevel === 'Executive') {
-    wordCountRange = '50-70';
+    wordCountRange = '60-80';
     scopeGuidance = 'This is an EXECUTIVE SUMMARY. Prioritize ruthlessly - include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. No tables. No sub-sections. Use at most 2-3 bullet points or a single short paragraph under one ## heading. Think: what would a CEO need to see in a 10-second glance?';
     formattingGuidance = `- Use bold for 1-2 key metrics or terms only
 - Maximum one ## heading below the title

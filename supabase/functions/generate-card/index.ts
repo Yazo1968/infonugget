@@ -384,13 +384,13 @@ ${contentBlock}
 }
 
 function buildContentPrompt(cardTitle: string, level: string, domain?: string): string {
-  let wordCountRange = "120-150";
+  let wordCountRange = "120-170";
   let wordCountHard = "150";
   let scopeGuidance = "";
   let formattingGuidance = "";
   if (level === "Executive") {
-    wordCountRange = "50-70";
-    wordCountHard = "70";
+    wordCountRange = "60-80";
+    wordCountHard = "80";
     scopeGuidance = "**Scope:** EXECUTIVE SUMMARY — ruthlessly concise. Include ONLY the single most important insight or finding. Cut everything else.";
     formattingGuidance = "**Formatting (strict):**\n- Maximum one ## heading\n- 1 tight paragraph OR 2-3 bullets — nothing more\n- No tables, no numbered lists, no ###";
   } else if (level === "Detailed") {
@@ -399,7 +399,7 @@ function buildContentPrompt(cardTitle: string, level: string, domain?: string): 
     scopeGuidance = "**Scope:** DETAILED analysis. Include comprehensive data, supporting evidence, comparisons, and relationships.";
     formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables when comparing items\n- Use bold for key terms";
   } else {
-    wordCountHard = "150";
+    wordCountHard = "170";
     scopeGuidance = "**Scope:** STANDARD summary. Cover key points, important data, and primary relationships.";
     formattingGuidance = "**Formatting:**\n- Use bullet points for lists\n- Use numbered lists for sequential steps\n- Use tables only when comparing 3+ items\n- Use bold for key terms";
   }

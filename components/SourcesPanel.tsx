@@ -1147,8 +1147,8 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
 
                                                 {/* Executive / Standard / Detailed — gated by word count */}
                                                 {[
-                                                  { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
-                                                  { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                                                  { level: 'Executive' as DetailLevel, label: 'Executive', desc: '60-80 words' },
+                                                  { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-170 words' },
                                                   { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                                                 ].map((opt) => {
                                                   const lodKey = opt.level as 'Executive' | 'Standard' | 'Detailed';
@@ -1159,7 +1159,7 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                                   const badgeText = pdfLodCounts === null
                                                     ? opt.desc
                                                     : isSingle
-                                                      ? (pdfLodCounts.wordCounts[0] !== null ? `~${pdfLodCounts.wordCounts[0]}w` : opt.desc)
+                                                      ? opt.desc
                                                       : `${passCount}/${total}`;
                                                   const tooltip = isDisabled
                                                     ? (isSingle
@@ -1259,7 +1259,7 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                                   const takeawayBadge = pdfLodCounts === null
                                                     ? 'Title + Key Takeaways'
                                                     : isSingle
-                                                      ? (pdfLodCounts.wordCounts[0] !== null ? `~${pdfLodCounts.wordCounts[0]}w` : 'Title + Key Takeaways')
+                                                      ? 'Title + Key Takeaways'
                                                       : `${takeawayPassCount}/${takeawayTotal}`;
                                                   const takeawayTooltip = takeawayDisabled
                                                     ? (isSingle
@@ -1547,8 +1547,8 @@ const SourcesPanel = forwardRef<PanelEditorHandle, SourcesPanelProps>(
                                             <span className="text-[9px] text-zinc-500 dark:text-zinc-400">Content as-is</span>
                                           </button>
                                           {[
-                                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
-                                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '60-80 words' },
+                                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-170 words' },
                                             { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                                           ].map((opt) => {
                                             const isDisabled = pdfDocEligible !== null && !pdfDocEligible.has(opt.level);

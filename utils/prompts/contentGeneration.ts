@@ -18,12 +18,12 @@ export function buildContentPrompt(
     throw new Error(`Use buildCoverContentPrompt for card cover levels (got '${level}')`);
   }
 
-  let wordCountRange = '120-150';
+  let wordCountRange = '120-170';
   let scopeGuidance = '';
   let formattingGuidance = '';
 
   if (level === 'Executive') {
-    wordCountRange = '50-70';
+    wordCountRange = '60-80';
     scopeGuidance = `Scope: This is an EXECUTIVE SUMMARY. Prioritize ruthlessly - include only the single most important insight, conclusion, or finding. Omit supporting details, examples, breakdowns, and secondary points. Think: what would a CEO need to see in a 10-second glance?`;
     formattingGuidance = `Formatting (Executive):
 - Maximum one subheading below the title

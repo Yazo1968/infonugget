@@ -1080,8 +1080,8 @@ const ChatPanel: React.FC<ChatPanelProps> = ({
                       {showCardSubmenu && (
                         <div className="absolute right-full bottom-0 mr-1 min-w-[160px] bg-white dark:bg-zinc-900 rounded-lg shadow-lg border border-zinc-200 dark:border-zinc-700 py-1 z-[201]">
                           {[
-                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '50-70 words' },
-                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-150 words' },
+                            { level: 'Executive' as DetailLevel, label: 'Executive', desc: '60-80 words' },
+                            { level: 'Standard' as DetailLevel, label: 'Standard', desc: '120-170 words' },
                             { level: 'Detailed' as DetailLevel, label: 'Detailed', desc: '250-300 words' },
                           ].map((opt) => (
                             <button

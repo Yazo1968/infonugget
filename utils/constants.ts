@@ -37,8 +37,8 @@ export const RETRY_DELAY_CAP_MS = 32_000;
 export const CARD_TOKEN_LIMITS: Record<string, number> = {
   TitleCard: 150,
   TakeawayCard: 350,
-  Executive: 95,
-  Standard: 203,
+  Executive: 108,
+  Standard: 230,
   Detailed: 405,
 };
 

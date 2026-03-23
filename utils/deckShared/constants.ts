@@ -15,17 +15,17 @@ export const LOD_LEVELS: Record<AutoDeckLod, LodConfig> = {
   executive: {
     name: 'executive',
     label: 'Executive',
-    wordCountMin: 50,
-    wordCountMax: 70,
-    midpoint: 60,
+    wordCountMin: 60,
+    wordCountMax: 80,
+    midpoint: 70,
     detailLevel: 'Executive',
   },
   standard: {
     name: 'standard',
     label: 'Standard',
     wordCountMin: 120,
-    wordCountMax: 150,
-    midpoint: 135,
+    wordCountMax: 170,
+    midpoint: 145,
     detailLevel: 'Standard',
   },
   detailed: {
