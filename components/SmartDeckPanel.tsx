@@ -33,6 +33,8 @@ interface SmartDeckPanelProps {
   onAcceptCards?: () => void;
   onAbort?: () => void;
   onReset?: () => void;
+  onSuggestCardCount?: (briefing: AutoDeckBriefing, lod: AutoDeckLod) => Promise<{ min: number; max: number } | null>;
+  isSuggesting?: boolean;
 }
 
 // ── Component ──
@@ -53,6 +55,8 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
   onAcceptCards,
   onAbort,
   onReset,
+  onSuggestCardCount,
+  isSuggesting,
 }) => {
   const { darkMode } = useThemeContext();
   const { shouldRender, overlayStyle } = usePanelOverlay({
@@ -844,6 +848,34 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
               }}
             />
           </div>
+          {onSuggestCardCount && selectedLod && propBriefing?.objective?.trim() && (
+            <button
+              onClick={async () => {
+                if (!selectedLod || !propBriefing) return;
+                const result = await onSuggestCardCount(propBriefing, selectedLod);
+                if (result) {
+                  setCardMin(String(result.min));
+                  setCardMax(String(result.max));
+                }
+              }}
+              disabled={isSuggesting}
+              style={{
+                fontSize: '10px',
+                fontWeight: 600,
+                padding: '7px 12px',
+                borderRadius: '6px',
+                border: `1px solid ${darkMode ? '#3f3f46' : '#d4d4d8'}`,
+                backgroundColor: darkMode ? '#27272a' : '#f4f4f5',
+                color: darkMode ? '#a1a1aa' : '#52525b',
+                cursor: isSuggesting ? 'wait' : 'pointer',
+                opacity: isSuggesting ? 0.6 : 1,
+                whiteSpace: 'nowrap',
+                marginTop: '16px',
+              }}
+            >
+              {isSuggesting ? 'Analyzing...' : 'Let AI suggest'}
+            </button>
+          )}
         </div>
         {cardMin && parseInt(cardMin, 10) < 5 && (
           <div style={{ fontSize: '11px', color: darkMode ? '#f87171' : '#dc2626', marginTop: '4px' }}>
@@ -860,8 +892,8 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
             Min cannot exceed max.
           </div>
         )}
-        <div style={{ fontSize: '10px', color: hintColor, marginTop: '4px', fontStyle: 'italic' }}>
-          Range: 5–50. Leave blank to let the AI decide.
+        <div style={{ fontSize: '10px', color: hintColor, fontStyle: 'italic', marginTop: '6px' }}>
+          Range: 5-50. Leave blank to let the AI decide.
         </div>
       </div>
 

@@ -17,9 +17,10 @@ import { createLogger } from '../utils/logger';
 import { useAbortController } from './useAbortController';
 import { resolveEnabledDocs } from '../utils/documentResolution';
 import { chatMessageApi, ChatMessageDocument } from '../utils/api';
-import { uploadToFilesAPI } from '../utils/ai';
+import { uploadToFilesAPI, callClaude } from '../utils/ai';
 import { base64ToBlob } from '../utils/fileProcessing';
 import { buildSmartDeckPrompt } from '../utils/smartDeck/prompt';
+import type { ClaudeMessage } from '../utils/ai';
 
 const log = createLogger('SmartDeck');
 
@@ -317,11 +318,158 @@ export function useSmartDeck(
     setSession(null);
   }, [abortOp]);
 
+  // ── AI Suggest Card Count ──
+
+  const [isSuggesting, setIsSuggesting] = useState(false);
+
+  const suggestCardCount = useCallback(async (
+    briefing: AutoDeckBriefing,
+    lod: AutoDeckLod,
+  ): Promise<{ min: number; max: number } | null> => {
+    if (!selectedNugget) return null;
+
+    const docs = resolveEnabledDocs(selectedNugget.documents);
+    if (docs.length === 0) {
+      addToast({ type: 'warning', message: 'No documents available for analysis.' });
+      return null;
+    }
+
+    setIsSuggesting(true);
+    try {
+      // Ensure docs have file IDs
+      const docsWithFiles = await ensureDocFileIds(docs);
+      if (!docsWithFiles) {
+        addToast({ type: 'warning', message: 'Could not upload documents for analysis.' });
+        return null;
+      }
+
+      // Build file reference content blocks for the user message
+      const contentBlocks: any[] = [];
+      for (const doc of docsWithFiles) {
+        if (doc.fileId) {
+          contentBlocks.push({
+            type: 'document',
+            source: { type: 'file', file_id: doc.fileId },
+            title: doc.name,
+          });
+        }
+      }
+
+      const lodConfig = LOD_LEVELS[lod];
+      const briefingLines = [
+        briefing.objective ? `- Objective: ${briefing.objective}` : null,
+        briefing.audience ? `- Audience: ${briefing.audience}` : null,
+        briefing.type ? `- Presentation type: ${briefing.type}` : null,
+        briefing.tone ? `- Tone: ${briefing.tone}` : null,
+        briefing.focus ? `- Focus: ${briefing.focus}` : null,
+      ].filter(Boolean).join('\n');
+
+      const domainFirstLine = selectedNugget.domain?.split('\n').find(l => l.trim().startsWith('Domain:'))?.replace(/^-?\s*Domain:\s*/i, '').trim() || '';
+      const domainRole = domainFirstLine ? ` in the domain of ${domainFirstLine}` : '';
+
+      const prompt = `You are a top tier expert${domainRole}. Your task is to recommend the optimal number of content cards for a presentation deck with the judgment of a seasoned consultant — tight, boardroom-ready, and never padded.
+
+ANALYTICAL PROCESS (execute silently before outputting JSON):
+
+Step 1 — Content Inventory
+- Identify all distinct topics, themes, and sections in the documents
+- Estimate total meaningful word count (exclude headers, labels, metadata)
+- Note content density: are topics deep and interconnected, or shallow and discrete?
+
+Step 2 — Topic Consolidation
+- Merge related sub-topics that share a common argument or theme into one card
+- Avoid card-per-heading thinking — a heading is not a card
+- Only treat a topic as a standalone card if it cannot be meaningfully combined with another without losing clarity
+
+Step 3 — LOD Calibration
+Apply the appropriate word-per-card benchmark to estimate raw card count:
+- Executive: 60-80 words/card — high-level summaries, minimal elaboration
+- Standard: 120-170 words/card — balanced coverage with supporting points
+- Detailed: 250-300 words/card — comprehensive analysis with evidence
+Formula: Estimated card count = Total meaningful words / LOD benchmark (midpoint)
+
+Step 4 — Briefing Adjustment
+Adjust the raw count based on briefing context:
+- Quick brief / status update — reduce by up to 20%
+- Standard presentation — no adjustment
+- Comprehensive / board-level / multi-stakeholder — increase by up to 15%
+
+Step 5 — Conservative Bias Check
+Before finalizing, apply this editorial test to each card:
+"Does this card carry a distinct, standalone argument or insight?"
+If no — merge it. A tight deck always outperforms a padded one.
+When in doubt, recommend fewer cards.
+
+BRIEFING CONTEXT:
+${briefingLines}
+
+LEVEL OF DETAIL: ${lodConfig.label}
+
+HARD CONSTRAINTS:
+- Content cards only — do not count cover or takeaway cards
+- Minimum: 3 cards (no deck is meaningful below this)
+- Maximum: 18 cards (beyond this, the deck should be split)
+- Spread: 2-3 cards maximum between min and max
+- If content genuinely warrants more than 18 cards, cap recommendation at 18 and bias toward the higher LOD setting instead
+
+Respond with ONLY a JSON object, no other text:
+{"min": <number>, "max": <number>}`;
+
+      contentBlocks.push({ type: 'text', text: prompt });
+
+      const messages: ClaudeMessage[] = [{ role: 'user', content: contentBlocks }];
+
+      const result = await callClaude('', {
+        messages,
+        maxTokens: 50,
+        temperature: 0,
+      });
+
+      // Parse the JSON response
+      const jsonMatch = result.text.match(/\{\s*"min"\s*:\s*(\d+)\s*,\s*"max"\s*:\s*(\d+)\s*\}/);
+      if (!jsonMatch) {
+        log.warn('AI suggest: could not parse response:', result.text);
+        addToast({ type: 'warning', message: 'Could not parse AI suggestion. Try again.' });
+        return null;
+      }
+
+      const min = parseInt(jsonMatch[1], 10);
+      const max = parseInt(jsonMatch[2], 10);
+
+      // Validate range
+      if (min < 3 || max > 18 || min > max) {
+        log.warn('AI suggest: invalid range:', { min, max });
+        addToast({ type: 'warning', message: 'AI returned an invalid range. Try again.' });
+        return null;
+      }
+
+      recordUsage?.({
+        provider: 'claude',
+        model: CLAUDE_MODEL,
+        inputTokens: result.usage?.input_tokens ?? 0,
+        outputTokens: result.usage?.output_tokens ?? 0,
+      });
+
+      log.info(`AI suggested card count: ${min}-${max} for ${lod}`);
+      return { min, max };
+    } catch (err: any) {
+      if (!isAbortError(err)) {
+        log.error('AI suggest failed:', err.message);
+        addToast({ type: 'error', message: 'Failed to get AI suggestion.', detail: err.message });
+      }
+      return null;
+    } finally {
+      setIsSuggesting(false);
+    }
+  }, [selectedNugget, ensureDocFileIds, addToast, recordUsage, isAbortError]);
+
   return {
     session,
     generate,
     acceptCards,
     abort,
     reset,
+    suggestCardCount,
+    isSuggesting,
   };
 }

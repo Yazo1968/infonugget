@@ -193,6 +193,8 @@ const App: React.FC = () => {
     acceptCards: smartDeckAcceptCards,
     abort: smartDeckAbort,
     reset: smartDeckReset,
+    suggestCardCount: smartDeckSuggestCardCount,
+    isSuggesting: smartDeckIsSuggesting,
   } = useSmartDeck(recordUsage, { createPlaceholderCards, createPlaceholderCardsInFolder, fillPlaceholderCard, removePlaceholderCard });
 
   const { generateBriefingSuggestions, abortSuggestions: abortBriefingSuggestions } = useBriefingSuggestions(recordUsage);
@@ -889,6 +891,8 @@ const App: React.FC = () => {
                       onAcceptCards={smartDeckAcceptCards}
                       onAbort={smartDeckAbort}
                       onReset={smartDeckReset}
+                      onSuggestCardCount={smartDeckSuggestCardCount}
+                      isSuggesting={smartDeckIsSuggesting}
                     />
                   </ErrorBoundary>
 
