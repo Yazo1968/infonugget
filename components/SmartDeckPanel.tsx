@@ -33,7 +33,7 @@ interface SmartDeckPanelProps {
   onAcceptCards?: () => void;
   onAbort?: () => void;
   onReset?: () => void;
-  onSuggestCardCount?: (briefing: AutoDeckBriefing, lod: AutoDeckLod) => Promise<{ min: number; max: number } | null>;
+  onSuggestCardCount?: (briefing: AutoDeckBriefing) => Promise<Record<AutoDeckLod, { min: number; max: number }> | null>;
   isSuggesting?: boolean;
 }
 
@@ -68,8 +68,13 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
 
   // ── Configuration state (local UI only) ──
   const [selectedLod, setSelectedLod] = useState<AutoDeckLod | null>(null);
-  const [cardMin, setCardMin] = useState<string>('');
-  const [cardMax, setCardMax] = useState<string>('');
+  const [lodRanges, setLodRanges] = useState<Record<AutoDeckLod, { min: string; max: string }>>({
+    executive: { min: '', max: '' },
+    standard: { min: '', max: '' },
+    detailed: { min: '', max: '' },
+  });
+  const cardMin = selectedLod ? lodRanges[selectedLod].min : '';
+  const cardMax = selectedLod ? lodRanges[selectedLod].max : '';
   const [includeCover, setIncludeCover] = useState(false);
   const [includeClosing, setIncludeClosing] = useState(false);
   const [expandedCards, setExpandedCards] = useState<Set<number>>(new Set());
@@ -727,173 +732,107 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
         )}
       </div>
 
-      {/* LOD selector */}
+      {/* Level of Detail & Card Count — unified table */}
       <div style={{ marginBottom: '20px' }}>
-        <div
-          style={{
-            fontSize: '12px',
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: labelColor,
-            marginBottom: '8px',
-          }}
-        >
-          Level of Detail
-        </div>
-        <div style={{ display: 'flex', gap: '6px' }}>
-          {(Object.values(LOD_LEVELS) as LodConfig[]).map((lod) => {
-            const isSelected = selectedLod === lod.name;
-            return (
-              <button
-                key={lod.name}
-                onClick={() => setSelectedLod(lod.name)}
-                style={{
-                  flex: 1,
-                  padding: '10px 8px',
-                  borderRadius: '8px',
-                  border: `2px solid ${isSelected ? (darkMode ? '#4db8e0' : '#2289b5') : darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
-                  backgroundColor: isSelected
-                    ? darkMode
-                      ? 'rgba(42,159,212,0.15)'
-                      : 'rgba(42,159,212,0.08)'
-                    : darkMode
-                      ? 'rgba(255,255,255,0.03)'
-                      : 'white',
-                  cursor: 'pointer',
-                  textAlign: 'center',
-                  transition: 'all 0.15s',
-                }}
-              >
-                <div style={{ fontSize: '13px', fontWeight: 600, color: darkMode ? '#e2e8f0' : '#1e293b' }}>
-                  {lod.label}
-                </div>
-                <div style={{ fontSize: '11px', color: hintColor }}>
-                  {lod.wordCountMin}&ndash;{lod.wordCountMax} words
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Card count range (optional) */}
-      <div style={{ marginBottom: '20px' }}>
-        <div
-          style={{
-            fontSize: '12px',
-            fontWeight: 700,
-            textTransform: 'uppercase',
-            letterSpacing: '0.05em',
-            color: labelColor,
-            marginBottom: '8px',
-          }}
-        >
-          Card Count Range{' '}
-          <span style={{ fontWeight: 400, textTransform: 'none', fontSize: '11px', opacity: 0.7 }}>(optional)</span>
-        </div>
-        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: '11px', color: hintColor, display: 'block', marginBottom: '3px' }}>Min</label>
-            <input
-              type="number"
-              min={5}
-              max={50}
-              value={cardMin}
-              onChange={(e) => {
-                const v = e.target.value.replace(/[^0-9]/g, '');
-                const n = parseInt(v, 10);
-                if (v === '' || (n >= 1 && n <= 50)) setCardMin(v);
-              }}
-              placeholder="5"
-              className="focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50"
-              style={{
-                width: '100%',
-                padding: '7px 10px',
-                borderRadius: '6px',
-                border: `1px solid ${inputBorder}`,
-                backgroundColor: inputBg,
-                color: inputColor,
-                fontSize: '13px',
-                boxSizing: 'border-box',
-                textAlign: 'center',
-              }}
-            />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', color: labelColor }}>
+            Level of Detail & Card Count
           </div>
-          <div style={{ color: hintColor, fontSize: '13px', paddingTop: '16px' }}>to</div>
-          <div style={{ flex: 1 }}>
-            <label style={{ fontSize: '11px', color: hintColor, display: 'block', marginBottom: '3px' }}>Max</label>
-            <input
-              type="number"
-              min={5}
-              max={50}
-              value={cardMax}
-              onChange={(e) => {
-                const v = e.target.value.replace(/[^0-9]/g, '');
-                const n = parseInt(v, 10);
-                if (v === '' || (n >= 1 && n <= 50)) setCardMax(v);
-              }}
-              placeholder="50"
-              className="focus:outline-none focus:ring-2 focus:ring-zinc-400/50 dark:focus:ring-zinc-500/50"
-              style={{
-                width: '100%',
-                padding: '7px 10px',
-                borderRadius: '6px',
-                border: `1px solid ${inputBorder}`,
-                backgroundColor: inputBg,
-                color: inputColor,
-                fontSize: '13px',
-                boxSizing: 'border-box',
-                textAlign: 'center',
-              }}
-            />
-          </div>
-          {onSuggestCardCount && selectedLod && propBriefing?.objective?.trim() && (
+          {onSuggestCardCount && propBriefing?.objective?.trim() && (
             <button
               onClick={async () => {
-                if (!selectedLod || !propBriefing) return;
-                const result = await onSuggestCardCount(propBriefing, selectedLod);
+                if (!propBriefing) return;
+                const result = await onSuggestCardCount(propBriefing);
                 if (result) {
-                  setCardMin(String(result.min));
-                  setCardMax(String(result.max));
+                  setLodRanges({
+                    executive: { min: String(result.executive.min), max: String(result.executive.max) },
+                    standard: { min: String(result.standard.min), max: String(result.standard.max) },
+                    detailed: { min: String(result.detailed.min), max: String(result.detailed.max) },
+                  });
                 }
               }}
               disabled={isSuggesting}
               style={{
                 fontSize: '10px',
                 fontWeight: 600,
-                padding: '7px 12px',
-                borderRadius: '6px',
+                padding: '4px 10px',
+                borderRadius: '4px',
                 border: `1px solid ${darkMode ? '#3f3f46' : '#d4d4d8'}`,
                 backgroundColor: darkMode ? '#27272a' : '#f4f4f5',
                 color: darkMode ? '#a1a1aa' : '#52525b',
                 cursor: isSuggesting ? 'wait' : 'pointer',
                 opacity: isSuggesting ? 0.6 : 1,
                 whiteSpace: 'nowrap',
-                marginTop: '16px',
               }}
             >
               {isSuggesting ? 'Analyzing...' : 'Let AI suggest'}
             </button>
           )}
         </div>
-        {cardMin && parseInt(cardMin, 10) < 5 && (
-          <div style={{ fontSize: '11px', color: darkMode ? '#f87171' : '#dc2626', marginTop: '4px' }}>
-            Minimum is 5 cards.
+        <div style={{ borderRadius: '8px', border: `1px solid ${darkMode ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`, overflow: 'hidden' }}>
+          {/* Header row */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 70px 65px', padding: '6px 12px', backgroundColor: darkMode ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderBottom: `1px solid ${darkMode ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}` }}>
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: hintColor }}>LOD</div>
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: hintColor, textAlign: 'center' }}>Min</div>
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: hintColor, textAlign: 'center' }}>Max</div>
+            <div style={{ fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', color: hintColor, textAlign: 'center' }}>Words</div>
           </div>
-        )}
-        {cardMax && parseInt(cardMax, 10) > 50 && (
-          <div style={{ fontSize: '11px', color: darkMode ? '#f87171' : '#dc2626', marginTop: '4px' }}>
-            Maximum is 50 cards.
-          </div>
-        )}
-        {cardMin && cardMax && parseInt(cardMin, 10) > parseInt(cardMax, 10) && (
-          <div style={{ fontSize: '11px', color: darkMode ? '#f87171' : '#dc2626', marginTop: '4px' }}>
-            Min cannot exceed max.
-          </div>
-        )}
+          {/* LOD rows */}
+          {(Object.values(LOD_LEVELS) as LodConfig[]).map((lod, idx, arr) => {
+            const isSelected = selectedLod === lod.name;
+            const range = lodRanges[lod.name];
+            return (
+              <div
+                key={lod.name}
+                onClick={() => setSelectedLod(lod.name)}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '1fr 70px 70px 65px',
+                  padding: '8px 12px',
+                  cursor: 'pointer',
+                  backgroundColor: isSelected ? (darkMode ? 'rgba(42,159,212,0.15)' : 'rgba(42,159,212,0.08)') : 'transparent',
+                  borderBottom: idx < arr.length - 1 ? `1px solid ${darkMode ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)'}` : 'none',
+                  borderLeft: isSelected ? `3px solid ${darkMode ? '#4db8e0' : '#2289b5'}` : '3px solid transparent',
+                  transition: 'all 0.15s',
+                  alignItems: 'center',
+                }}
+              >
+                <div style={{ fontSize: '13px', fontWeight: 600, color: darkMode ? '#e2e8f0' : '#1e293b' }}>{lod.label}</div>
+                <div style={{ textAlign: 'center' }}>
+                  <input
+                    type="number" min={3} max={18} value={range.min}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, '');
+                      const n = parseInt(v, 10);
+                      if (v === '' || (n >= 1 && n <= 50)) setLodRanges((prev) => ({ ...prev, [lod.name]: { ...prev[lod.name], min: v } }));
+                    }}
+                    placeholder="-"
+                    className="focus:outline-none focus:ring-1 focus:ring-[#2a9fd4]"
+                    style={{ width: '50px', padding: '4px 6px', borderRadius: '4px', border: `1px solid ${inputBorder}`, backgroundColor: inputBg, color: inputColor, fontSize: '12px', textAlign: 'center', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ textAlign: 'center' }}>
+                  <input
+                    type="number" min={3} max={18} value={range.max}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => {
+                      const v = e.target.value.replace(/[^0-9]/g, '');
+                      const n = parseInt(v, 10);
+                      if (v === '' || (n >= 1 && n <= 50)) setLodRanges((prev) => ({ ...prev, [lod.name]: { ...prev[lod.name], max: v } }));
+                    }}
+                    placeholder="-"
+                    className="focus:outline-none focus:ring-1 focus:ring-[#2a9fd4]"
+                    style={{ width: '50px', padding: '4px 6px', borderRadius: '4px', border: `1px solid ${inputBorder}`, backgroundColor: inputBg, color: inputColor, fontSize: '12px', textAlign: 'center', boxSizing: 'border-box' }}
+                  />
+                </div>
+                <div style={{ fontSize: '11px', color: hintColor, textAlign: 'center' }}>{lod.wordCountMin}&ndash;{lod.wordCountMax}</div>
+              </div>
+            );
+          })}
+        </div>
         <div style={{ fontSize: '10px', color: hintColor, fontStyle: 'italic', marginTop: '6px' }}>
-          Range: 5-50. Leave blank to let the AI decide.
+          Click a row to select LOD. Card count is optional — leave blank to let the AI decide.
         </div>
       </div>
 
