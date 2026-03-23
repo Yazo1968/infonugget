@@ -367,7 +367,7 @@ export function useSmartDeck(
       const domainFirstLine = selectedNugget.domain?.split('\n').find(l => l.trim().startsWith('Domain:'))?.replace(/^-?\s*Domain:\s*/i, '').trim() || '';
       const domainRole = domainFirstLine ? ` in the domain of ${domainFirstLine}` : '';
 
-      const prompt = `You are a top tier expert${domainRole}. Your task is to recommend the optimal number of content cards for a presentation deck across three levels of detail, with the judgment of a seasoned consultant — tight, boardroom-ready, and never padded.
+      const prompt = `You are a top tier expert${domainRole}. Exercise your best expert judgment as the overarching factor in every recommendation. The analytical steps below are guides, not formulas — your domain expertise and professional instinct should override mechanical calculation whenever they conflict. A great deck is one where every card earns its place. Recommend the optimal number of content cards across three levels of detail.
 
 ANALYTICAL PROCESS (execute silently before outputting JSON):
 
