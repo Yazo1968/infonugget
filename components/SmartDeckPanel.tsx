@@ -267,7 +267,7 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
                         flexShrink: 0,
                       }}
                     >
-                      {isCover ? 'COVER' : 'CLOSING'}
+                      {isCover ? 'TITLE' : 'TAKEAWAY'}
                     </span>
                   )}
 
@@ -932,14 +932,14 @@ const SmartDeckPanel: React.FC<SmartDeckPanelProps> = ({
               {
                 checked: includeCover,
                 onChange: setIncludeCover,
-                label: 'Cover card',
-                hint: 'Title slide with deck overview',
+                label: 'Title card',
+                hint: 'Title slide with subtitle and tagline',
               },
               {
                 checked: includeClosing,
                 onChange: setIncludeClosing,
-                label: 'Closing card',
-                hint: 'Takeaway or conclusion slide',
+                label: 'Takeaway card',
+                hint: 'Key takeaways and conclusions',
               },
             ] as const
           ).map((opt) => (

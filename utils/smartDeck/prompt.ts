@@ -9,12 +9,13 @@ export interface SmartDeckPromptConfig {
   includeCover: boolean;
   includeClosing: boolean;
   documentNames: string[];
+  domain?: string;
 }
 
 // ── Word count specs per card type ──
 
-const COVER_SPEC = '15–25 words total. Format: # Title\\n## Subtitle\\nOne-line tagline.';
-const CLOSING_SPEC = '40–60 words total. Format: # Title\\n- Bullet takeaway 1\\n- Bullet takeaway 2\\n- ... (3–5 key takeaways)';
+const TITLE_SPEC = '15–25 words total. Format: # Title\\n## Subtitle\\nOne-line tagline.';
+const TAKEAWAY_SPEC = '40–60 words total. Format: # Title\\n- Bullet takeaway 1\\n- Bullet takeaway 2\\n- ... (3–5 key takeaways)';
 
 // ── Prohibited characters (matches content generation rules) ──
 
@@ -31,14 +32,22 @@ const PROHIBITED_CHARS = `PROHIBITED CHARACTERS — never use any of these:
  * This goes into `userText` of the chatMessageApi call.
  */
 export function buildSmartDeckPrompt(config: SmartDeckPromptConfig): string {
-  const { briefing, lod, includeCover, includeClosing, documentNames } = config;
+  const { briefing, lod, includeCover, includeClosing, documentNames, domain } = config;
   const lodConfig = LOD_LEVELS[lod];
 
   const sections: string[] = [];
 
-  // 1. Role
+  // 1. Role + domain expertise (extract only the "Domain:" line from the multi-line domain string)
+  let domainLabel = '';
+  if (domain?.trim()) {
+    const domainMatch = domain.match(/^-?\s*Domain:\s*(.+)/im);
+    domainLabel = domainMatch ? domainMatch[1].trim() : domain.split('\n')[0].replace(/^-?\s*/, '').trim();
+  }
+  const domainClause = domainLabel
+    ? `a top tier expert in the domain of ${domainLabel}`
+    : 'a top tier subject-matter expert';
   sections.push(
-    'You are a presentation content writer. Your task is to create a complete card deck from the provided source documents.',
+    `You are ${domainClause}. Read the documents and assess the content, the logic, the relations and the hierarchy of the content in terms of significance. It is important for you to distinguish between primary significant content, secondary or detailing content and supportive content. Your task is to create content cards that collectively are considered best capture of the content following the requirements and parameters set below while maintaining focus on significance, hierarchy, logic and coherence of the content.`,
   );
 
   // 2. Briefing
@@ -87,8 +96,8 @@ export function buildSmartDeckPrompt(config: SmartDeckPromptConfig): string {
       'Decide the exact number first, then produce exactly that many.',
     );
   }
-  if (includeCover) countParts.push('Additionally, generate a cover card (card number 0) BEFORE the content cards. The cover card does NOT count toward the content card count.');
-  if (includeClosing) countParts.push('Additionally, generate a closing card as the LAST card AFTER all content cards. The closing card does NOT count toward the content card count.');
+  if (includeCover) countParts.push('Additionally, generate a title card (card number 0) BEFORE the content cards. The title card does NOT count toward the content card count.');
+  if (includeClosing) countParts.push('Additionally, generate a takeaway card as the LAST card AFTER all content cards. The takeaway card does NOT count toward the content card count.');
   sections.push(`CARD COUNT:\n${countParts.join('\n')}`);
 
   // 6. Card format specs
@@ -102,10 +111,10 @@ export function buildSmartDeckPrompt(config: SmartDeckPromptConfig): string {
     '- Make implicit relationships between data points explicit.',
   ];
   if (includeCover) {
-    formatLines.push(`\nCOVER CARD (number 0): ${COVER_SPEC}`);
+    formatLines.push(`\nTITLE CARD (number 0): ${TITLE_SPEC}`);
   }
   if (includeClosing) {
-    formatLines.push(`\nCLOSING CARD (last card): ${CLOSING_SPEC}`);
+    formatLines.push(`\nTAKEAWAY CARD (last card): ${TAKEAWAY_SPEC}`);
   }
   sections.push(formatLines.join('\n'));
 
@@ -119,8 +128,8 @@ Respond with a JSON array only — no explanation, no markdown fences, no surrou
 Each element must have this exact shape:
 { "number": <int>, "title": "<string>", "content": "<markdown string>", "wordCount": <int> }
 
-Numbering:${includeCover ? '\n- Cover card: number 0' : ''}
-- Content cards: numbered sequentially starting from ${includeCover ? '1' : '1'}${includeClosing ? '\n- Closing card: the highest number (after all content cards)' : ''}
+Numbering:${includeCover ? '\n- Title card: number 0' : ''}
+- Content cards: numbered sequentially starting from ${includeCover ? '1' : '1'}${includeClosing ? '\n- Takeaway card: the highest number (after all content cards)' : ''}
 
 The "content" field must contain the full card markdown starting with # heading.
 The "wordCount" field must be the actual word count of the content.`,

@@ -174,6 +174,7 @@ export function useSmartDeck(
           includeCover: config.includeCover,
           includeClosing: config.includeClosing,
           documentNames: docsWithFiles.map((d) => d.name),
+          domain: selectedNugget.domain,
         });
 
         log.info(`Generating presentation: ${config.lod}, cover=${config.includeCover}, closing=${config.includeClosing}`);

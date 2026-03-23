@@ -22,8 +22,8 @@ import { createLogger } from '../utils/logger';
 
 const log = createLogger('CardGen');
 
-// Layout directives are always generated for non-cover cards (multi-agent pipeline).
-// Cached in card.layoutDirectivesMap[level] — regenerated on-the-fly if missing.
+// Layout directives are always generated fresh for non-cover cards (multi-agent pipeline).
+// Each image generation produces unique directives — no caching between runs.
 
 /** Parse Claude's response — strips any residual XML tags if present (backward compat). */
 function parseContentResponse(raw: string): string {
@@ -340,11 +340,10 @@ export function useCardGeneration(
           structure: d.structure,
         }));
 
-        // Read cached layout directives — generate on-the-fly if missing
-        let layoutDirectives: string | undefined =
-          card.layoutDirectivesMap?.[currentLevel] || card.layoutDirectivesMap?.[settings.levelOfDetail] || undefined;
+        // Always generate fresh layout directives for each image generation
+        let layoutDirectives: string | undefined;
 
-        if (!layoutDirectives && !isCoverLevel(currentLevel as DetailLevel)) {
+        if (!isCoverLevel(currentLevel as DetailLevel)) {
           try {
             log.info(`Generating layout directives on-the-fly for "${card.text}" [${currentLevel}]`);
             const directivesPrompt = `Analyze the following card content and produce layout directives for an infographic illustration.
@@ -354,20 +353,26 @@ ${contentToMap}
 </card_content>
 
 Return ONLY a <layout_directives> block containing maximum 4 directives, one per line, each under 15 words.
-Describe spatial arrangement and visual relationships between content elements.
-Use only these relationship types: hierarchy, flow/sequence, comparison/contrast, grouping, cause-effect.
-Format each as: [elements] -> [visual treatment]
+
+CRITICAL RULES:
+- Describe ABSTRACT spatial patterns only — never reference specific content, names, terms, or data from the card.
+- Directives guide how the text renderer arranges content — they must NOT introduce visual elements, icons, illustrations, or imagery.
+- Use generic structural labels (e.g., "heading", "list items", "quoted text", "subsections") not actual content words.
+
+Relationship types: hierarchy, flow/sequence, comparison/contrast, grouping, cause-effect.
+Format each as: [structural element] -> [spatial arrangement]
 
 Example:
 <layout_directives>
-Revenue vs Cost -> opposing columns with contrasting colors
-Timeline phases -> horizontal flow with connecting arrows
-Key metrics -> prominent central placement with radiating details
+Main heading and subtext -> prominent top placement with clear separation
+Grouped list items -> side-by-side bordered panels
+Sequential steps -> horizontal flow with connectors
+Contrasting concepts -> split columns with visual divider
 </layout_directives>`;
 
             const geminiResponse = await callGeminiProxy(
               GEMINI_FLASH_MODEL,
-              [{ parts: [{ text: 'You are a visual layout analyst. Produce brief, actionable layout directives for infographic design.\n\n' + directivesPrompt }] }],
+              [{ parts: [{ text: 'You are a visual layout analyst. Produce abstract spatial layout directives for infographic design. Never reference specific content — only describe structural patterns.\n\n' + directivesPrompt }] }],
               { thinkingConfig: { thinkingLevel: 'Minimal' } },
               signal,
             );
@@ -385,11 +390,6 @@ Key metrics -> prominent central placement with radiating details
             const directives = directivesMatch ? directivesMatch[1].trim() : directivesRaw.trim();
             if (directives) {
               layoutDirectives = directives;
-              // Store on card for future regenerations
-              updateNuggetCard(card.id, (c) => ({
-                ...c,
-                layoutDirectivesMap: { ...(c.layoutDirectivesMap || {}), [currentLevel]: directives },
-              }));
               log.info(`Layout directives generated: ${directives}`);
             }
           } catch (err: any) {

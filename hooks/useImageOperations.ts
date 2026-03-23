@@ -278,7 +278,12 @@ export function useImageOperations({
           } else if (remaining.length === 0) {
             delete newActiveMap[level];
           }
-          return { ...c, albumMap: newAlbumMap, activeImageMap: newActiveMap };
+          // Clean up lastPromptMap when last image at this level is deleted
+          const newPromptMap = { ...(c.lastPromptMap || {}) };
+          if (remaining.length === 0) {
+            delete newPromptMap[level];
+          }
+          return { ...c, albumMap: newAlbumMap, activeImageMap: newActiveMap, lastPromptMap: newPromptMap };
         }),
         lastModifiedAt: Date.now(),
       }));
