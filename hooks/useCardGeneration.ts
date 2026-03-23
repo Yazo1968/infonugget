@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useNuggetContext } from '../context/NuggetContext';
 import { useProjectContext } from '../context/ProjectContext';
 import { useSelectionContext } from '../context/SelectionContext';
@@ -7,8 +7,7 @@ import { useAbortController } from './useAbortController';
 import { Card, DetailLevel, StylingOptions, AlbumImage, ReferenceImage, isCoverLevel } from '../types';
 import { CLAUDE_MODEL, CARD_TOKEN_LIMITS, COVER_TOKEN_LIMIT } from '../utils/constants';
 import { flattenCards, findCard, cleanCardTitle } from '../utils/cardUtils';
-import { callClaude, callGeminiProxy, uploadToFilesAPI } from '../utils/ai';
-import { GEMINI_FLASH_MODEL } from '../utils/constants';
+import { callClaude, uploadToFilesAPI } from '../utils/ai';
 import { base64ToBlob } from '../utils/fileProcessing';
 import { RecordUsageFn } from './useTokenUsage';
 import { extractBase64, extractMime } from '../utils/modificationEngine';
@@ -19,11 +18,62 @@ import { resolveEnabledDocs } from '../utils/documentResolution';
 import { generateCardApi } from '../utils/api';
 import { useToast } from '../components/ToastNotification';
 import { createLogger } from '../utils/logger';
+import { marked } from 'marked';
+import { toPng } from 'html-to-image';
+import { sanitizeHtml } from '../utils/sanitize';
 
 const log = createLogger('CardGen');
 
-// Layout directives are always generated fresh for non-cover cards (multi-agent pipeline).
-// Each image generation produces unique directives — no caching between runs.
+/**
+ * Render markdown content as HTML, mount in a hidden container, screenshot it,
+ * and return the base64 data (without the data URL prefix).
+ */
+const SCREENSHOT_CSS = `
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  h1 { font-size: 22px; font-weight: 700; margin: 0 0 12px 0; color: #111; }
+  h2 { font-size: 18px; font-weight: 700; margin: 16px 0 8px 0; color: #222; }
+  h3 { font-size: 15px; font-weight: 600; margin: 12px 0 6px 0; color: #333; }
+  p { margin: 0 0 10px 0; }
+  ul { margin: 0 0 10px 0; padding-left: 24px; list-style-type: disc; }
+  ol { margin: 0 0 10px 0; padding-left: 24px; list-style-type: decimal; }
+  li { margin: 0 0 4px 0; display: list-item; }
+  blockquote { margin: 10px 0; padding: 8px 16px; border-left: 3px solid #2a9fd4; background: #f0f7fb; color: #333; font-style: italic; }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
+  th { background: #f1f5f9; font-weight: 700; text-align: left; padding: 8px 12px; border: 1px solid #d1d5db; color: #111; }
+  td { padding: 6px 12px; border: 1px solid #d1d5db; vertical-align: top; color: #333; }
+  tr:nth-child(even) td { background: #f9fafb; }
+  strong { font-weight: 700; }
+  em { font-style: italic; }
+  code { background: #f1f5f9; padding: 1px 4px; border-radius: 3px; font-size: 13px; }
+`;
+
+/** Split paragraphs at every sentence boundary for screenshot readability. */
+function splitSentences(html: string): string {
+  return html.replace(/<p>([\s\S]*?)<\/p>/gi, (_match, content) => {
+    const sentences = content.split(/(?<=\.)\s+/).filter((s: string) => s.trim());
+    if (sentences.length <= 1) return `<p>${content}</p>`;
+    return sentences.map((s: string) => `<p>${s.trim()}</p>`).join('\n');
+  });
+}
+
+async function screenshotContent(markdownContent: string): Promise<string> {
+  const rawHtml = sanitizeHtml(marked.parse(markdownContent, { async: false }) as string);
+  const html = splitSentences(rawHtml);
+  const container = document.createElement('div');
+  container.style.cssText = 'position:fixed;left:0;top:0;width:800px;padding:32px;background:#fff;color:#222;font-family:system-ui,-apple-system,sans-serif;font-size:14px;line-height:1.6;z-index:-1;opacity:0;pointer-events:none;';
+  container.innerHTML = `<style>${SCREENSHOT_CSS}</style>${html}`;
+  document.body.appendChild(container);
+  // Let the browser layout the content
+  await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+  // Set opacity to 1 just for capture (html-to-image reads computed styles)
+  container.style.opacity = '1';
+  try {
+    const dataUrl = await toPng(container, { pixelRatio: 1, cacheBust: true, skipFonts: true });
+    return dataUrl;
+  } finally {
+    document.body.removeChild(container);
+  }
+}
 
 /** Parse Claude's response — strips any residual XML tags if present (backward compat). */
 function parseContentResponse(raw: string): string {
@@ -52,6 +102,34 @@ export function useCardGeneration(
   const [genStatusMap, setGenStatusMap] = useState<Record<string, string>>({});
   const [activeLogicTab, setActiveLogicTab] = useState<DetailLevel>('Standard');
   const [manifestCards, setManifestCards] = useState<Card[] | null>(null);
+  const [lastScreenshot, setLastScreenshot] = useState<string | null>(null);
+  const lastScreenshotRef = useRef<string | null>(null);
+
+  // Keep ref in sync with state so async generateCard can read latest value
+  useEffect(() => { lastScreenshotRef.current = lastScreenshot; }, [lastScreenshot]);
+
+  /**
+   * Standalone screenshot capture — call before generating to preview what Gemini will see.
+   * Takes a screenshot of the active card's content and stores it in state.
+   */
+  const captureScreenshot = useCallback(async (card: Card): Promise<string | null> => {
+    const currentLevel = card.detailLevel || activeLogicTab;
+    const contentToMap = card.synthesisMap?.[currentLevel];
+    if (!contentToMap) {
+      log.warn('No content to screenshot');
+      return null;
+    }
+    try {
+      log.info(`Capturing content screenshot for "${card.text}" [${currentLevel}]`);
+      const screenshot = await screenshotContent(contentToMap);
+      log.info(`Content screenshot captured: ${Math.round(screenshot.length / 1024)}KB`);
+      setLastScreenshot(screenshot);
+      return screenshot;
+    } catch (err: any) {
+      log.error('Screenshot capture failed:', err.message);
+      return null;
+    }
+  }, [activeLogicTab]);
 
   // Store a ref to generateCard so the retry closure can call it
   const generateCardRef = useRef<(card: Card) => Promise<void>>(undefined);
@@ -340,68 +418,26 @@ export function useCardGeneration(
           structure: d.structure,
         }));
 
-        // Always generate fresh layout directives for each image generation
-        let layoutDirectives: string | undefined;
-
-        if (!isCoverLevel(currentLevel as DetailLevel)) {
+        // Capture fresh content screenshot for non-cover cards
+        let contentScreenshot: string | undefined;
+        let screenshotMimeType: string | undefined;
+        if (!isCoverLevel(currentLevel as DetailLevel) && contentToMap) {
           try {
-            log.info(`Generating layout directives on-the-fly for "${card.text}" [${currentLevel}]`);
-            const directivesPrompt = `Analyze the following card content and produce layout directives for an infographic illustration.
-
-<card_content>
-${contentToMap}
-</card_content>
-
-Return ONLY a <layout_directives> block containing maximum 4 directives, one per line, each under 15 words.
-
-CRITICAL RULES:
-- Describe ABSTRACT spatial patterns only — never reference specific content, names, terms, or data from the card.
-- Directives guide how the text renderer arranges content — they must NOT introduce visual elements, icons, illustrations, or imagery.
-- Use generic structural labels (e.g., "heading", "list items", "quoted text", "subsections") not actual content words.
-
-Relationship types: hierarchy, flow/sequence, comparison/contrast, grouping, cause-effect.
-Format each as: [structural element] -> [spatial arrangement]
-
-Example:
-<layout_directives>
-Main heading and subtext -> prominent top placement with clear separation
-Grouped list items -> side-by-side bordered panels
-Sequential steps -> horizontal flow with connectors
-Contrasting concepts -> split columns with visual divider
-</layout_directives>`;
-
-            const geminiResponse = await callGeminiProxy(
-              GEMINI_FLASH_MODEL,
-              [{ parts: [{ text: 'You are a visual layout analyst. Produce abstract spatial layout directives for infographic design. Never reference specific content — only describe structural patterns.\n\n' + directivesPrompt }] }],
-              { thinkingConfig: { thinkingLevel: 'Minimal' } },
-              signal,
-            );
-            const directivesRaw = geminiResponse.text || '';
-            const dirUsage = geminiResponse.usageMetadata;
-
-            recordUsage?.({
-              provider: 'gemini',
-              model: GEMINI_FLASH_MODEL,
-              inputTokens: dirUsage?.promptTokenCount ?? 0,
-              outputTokens: dirUsage?.candidatesTokenCount ?? 0,
-            });
-
-            const directivesMatch = directivesRaw.match(/<layout_directives>([\s\S]*?)<\/layout_directives>/);
-            const directives = directivesMatch ? directivesMatch[1].trim() : directivesRaw.trim();
-            if (directives) {
-              layoutDirectives = directives;
-              log.info(`Layout directives generated: ${directives}`);
-            }
+            log.info(`Capturing content screenshot for "${card.text}" [${currentLevel}]`);
+            const dataUrl = await screenshotContent(contentToMap);
+            const rawBase64 = dataUrl.replace(/^data:image\/[a-z]+;base64,/, '');
+            contentScreenshot = rawBase64;
+            screenshotMimeType = dataUrl.startsWith('data:image/jpeg') ? 'image/jpeg' : 'image/png';
+            // Also update state/ref so the preview button can show it
+            setLastScreenshot(dataUrl);
+            log.info(`Content screenshot captured: ${Math.round(rawBase64.length / 1024)}KB (${screenshotMimeType})`);
           } catch (err: any) {
-            // Non-fatal — fall back to generic instructions
-            if (isAbortError(err)) throw err;
-            log.warn('On-the-fly directive generation failed, using generic fallback:', err.message);
+            log.warn('Screenshot capture failed, proceeding without:', err.message);
           }
         }
 
         // Call the server-side generate-card Edge Function
         // Pipeline: synthesis (if needed) → image gen → storage upload → DB persist
-        // Planner is skipped for standard cards — Gemini handles visualization directly.
         const response = await generateCardApi({
           nuggetId: selectedNugget!.id,
           cardId: card.id,
@@ -413,7 +449,8 @@ Contrasting concepts -> split columns with visual divider
           documents,
           referenceImage: refImagePayload,
           skipSynthesis: true, // Content already synthesized
-          layoutDirectives,
+          screenshotBase64: contentScreenshot,
+          screenshotMimeType,
         }, signal);
 
         // Update local state with the server response (album model)
@@ -577,5 +614,7 @@ Contrasting concepts -> split columns with visual divider
     handleGenerateAll,
     executeBatchCardGeneration,
     handleImageModified,
+    lastScreenshot,
+    captureScreenshot,
   };
 }

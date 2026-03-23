@@ -115,6 +115,8 @@ const App: React.FC = () => {
     handleGenerateAll: _handleGenerateAll,
     executeBatchCardGeneration,
     handleImageModified: _handleImageModified,
+    lastScreenshot,
+    captureScreenshot,
   } = useCardGeneration(menuDraftOptionsRef.current, referenceImage, useReferenceImage, recordUsage);
 
   // ── Styling sync (card auto-select, logic tab ↔ detail level, nugget ↔ toolbar) ──
@@ -1017,6 +1019,8 @@ const App: React.FC = () => {
                             albumActionPending={albumActionPending}
                             onUsage={recordUsage}
                             onOpenStyleStudio={() => setShowStyleStudio(true)}
+                            lastScreenshot={lastScreenshot}
+                            onCaptureScreenshot={captureScreenshot}
                           />
                         ) : undefined
                       }

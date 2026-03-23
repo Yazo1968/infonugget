@@ -43,6 +43,8 @@ interface AssetsPanelProps {
   albumActionPending?: string | null;
   onUsage?: (entry: { provider: 'gemini'; model: string; inputTokens: number; outputTokens: number }) => void;
   onOpenStyleStudio?: () => void;
+  lastScreenshot?: string | null;
+  onCaptureScreenshot?: (card: Card) => Promise<string | null>;
 }
 
 const AssetsPanel: React.FC<AssetsPanelProps> = ({
@@ -73,6 +75,8 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   albumActionPending,
   onUsage,
   onOpenStyleStudio,
+  lastScreenshot,
+  onCaptureScreenshot,
 }) => {
   const { darkMode } = useThemeContext();
   const { activeCard } = useSelectionContext();
@@ -83,6 +87,14 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
   const cardLevel: DetailLevel = activeCard?.detailLevel || activeLogicTab;
   const _colorRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const [showPrompt, setShowPrompt] = useState(false);
+  const [showScreenshot, setShowScreenshot] = useState(false);
+  const [screenshotData, setScreenshotData] = useState<string | null>(null);
+
+  // Clear screenshot preview when switching cards
+  useEffect(() => {
+    setScreenshotData(null);
+    setShowScreenshot(false);
+  }, [activeCard?.id]);
   const [showReference, setShowReference] = useState(false);
   const [openMenu, setOpenMenu] = useState<
     | 'style'
@@ -122,13 +134,15 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 
   const isGenerating = !!activeCard?.isGeneratingMap?.[cardLevel];
   const album = activeCard?.albumMap?.[cardLevel] || [];
-  const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !isGenerating && cardLabMode !== 'inpaint';
+  const showAlbumStrip = album.length >= 1 && !showReference && !showPrompt && !showScreenshot && !isGenerating && cardLabMode !== 'inpaint';
 
   // Show the actual prompt sent to Gemini — only available after image generation
   const effectivePrompt = useMemo(() => {
     if (!activeCard) return null;
     return activeCard.lastPromptMap?.[cardLevel] || null;
   }, [activeCard, cardLevel]);
+
+  // Content screenshot — local state set directly from captureScreenshot return value
 
   const imageContainerRef = useRef<HTMLDivElement>(null);
 
@@ -419,7 +433,7 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
 
                   {/* Toggle image / prompt view (dev mode only) */}
                   <button
-                    onClick={() => setShowPrompt((prev) => !prev)}
+                    onClick={() => { setShowPrompt((prev) => !prev); setShowScreenshot(false); }}
                     title={showPrompt ? 'Show generated image' : 'Show generation prompt'}
                     aria-label={showPrompt ? 'Show generated image' : 'Show generation prompt'}
                     className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showPrompt ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
@@ -436,6 +450,43 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
                     >
                       <polyline points="16 18 22 12 16 6" />
                       <polyline points="8 6 2 12 8 18" />
+                    </svg>
+                  </button>
+
+                  {/* Capture & show content screenshot (dev mode only) */}
+                  <button
+                    onClick={async () => {
+                      if (showScreenshot) {
+                        setShowScreenshot(false);
+                      } else {
+                        // Capture fresh screenshot then show it
+                        if (activeCard && onCaptureScreenshot) {
+                          const result = await onCaptureScreenshot(activeCard);
+                          if (result) {
+                            setScreenshotData(result);
+                            setShowScreenshot(true);
+                            setShowPrompt(false);
+                          }
+                        }
+                      }
+                    }}
+                    title={showScreenshot ? 'Show generated image' : 'Capture & show content screenshot'}
+                    aria-label={showScreenshot ? 'Show generated image' : 'Capture & show content screenshot'}
+                    className={`w-7 h-7 rounded-full flex items-center justify-center active:scale-95 transition-all duration-200 ${showScreenshot ? 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200' : 'text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'}`}
+                  >
+                    <svg
+                      width="16"
+                      height="16"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <rect x="3" y="3" width="18" height="18" rx="2" />
+                      <circle cx="8.5" cy="8.5" r="1.5" />
+                      <polyline points="21 15 16 10 5 21" />
                     </svg>
                   </button>
                 </>
@@ -565,6 +616,17 @@ const AssetsPanel: React.FC<AssetsPanelProps> = ({
         ) : (
           <div className="w-full h-full flex flex-col items-center justify-center">
             <PanelRequirements level="assets" hasImage={hasImage} />
+          </div>
+        )}
+
+        {/* Screenshot overlay — rendered on top of everything */}
+        {showScreenshot && screenshotData && (
+          <div className="absolute inset-0 z-20 bg-white dark:bg-zinc-900 flex items-center justify-center p-4">
+            <img
+              src={screenshotData}
+              alt="Content screenshot sent to Gemini"
+              style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+            />
           </div>
         )}
 

@@ -70,6 +70,9 @@ export interface GenerateCardRequest {
   referenceImage?: { base64: string; mimeType: string } | null;
   skipSynthesis?: boolean;
   layoutDirectives?: string;
+  /** Rendered content screenshot (replaces directives + text content in prompt) */
+  screenshotBase64?: string;
+  screenshotMimeType?: string;
 }
 
 export interface GenerateCardResponse {

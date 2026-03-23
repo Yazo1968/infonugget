@@ -419,6 +419,32 @@ function buildVisualizerPrompt(cardTitle: string, contentToMap: string, settings
   return assembleRendererPrompt(cardTitle, contentToMap, settings, undefined, domain, layoutDirectives);
 }
 
+/**
+ * Build a screenshot-based prompt — the content is in the screenshot image,
+ * not as text. Only style, theme, and title specs are in the prompt text.
+ */
+function buildScreenshotPrompt(settings: StylingOptions, domain?: string, aspectRatio?: string): string {
+  const styleBlock = buildStyleBlock(settings);
+  const spec = getTitleSpec(aspectRatio || settings.aspectRatio);
+  const themeBlock = domain ? `\n<theme_context>\n${domain.trim()}\n</theme_context>` : "";
+
+  // Extract first line of domain for role priming (e.g. "Domain: Middle East regulatory compliance...")
+  const domainFirstLine = domain?.split('\n').find(l => l.trim().startsWith('Domain:'))?.replace(/^-?\s*Domain:\s*/i, '').trim() || '';
+  const domainRole = domainFirstLine ? ` in the domain of ${domainFirstLine}` : '';
+
+  return `You are an expert graphic designer and illustrator${domainRole}. Transform all the content in the attached image (including sections, headings, text, tables, bullet points, etc.) into a professionally designed infographic slide. Do not edit, change, add or remove from the content. Use the exact parameters below.
+
+<visual_style>
+${styleBlock}
+</visual_style>${themeBlock}
+
+<image_title_specs>
+- Reserved height: the first ${spec.reservedHeight} of the image height
+- Font size: ${spec.fontSize} of image canvas width bold
+- Position: ${spec.x} from left, ${spec.y} from top of the image canvas
+</image_title_specs>`;
+}
+
 function buildCoverVisualizerPrompt(cardTitle: string, coverContent: string, settings: StylingOptions, coverType?: string): string {
   const styleBlock = buildStyleBlock(settings);
   const contentBlock = prepareCoverContentBlock(coverContent);
@@ -478,7 +504,8 @@ Deno.serve(async (req: Request) => {
       documents, // Array of { fileId, name, sourceType, structure?, content? }
       referenceImage, // { base64, mimeType } or null
       skipSynthesis, // boolean — skip phase 1 if synthesis already exists
-      layoutDirectives, // string — content-specific layout directives from Claude (multi-agent pipeline)
+      layoutDirectives, // string — content-specific layout directives (legacy, unused when screenshot provided)
+      screenshotBase64, // string — rendered content screenshot (new: replaces directives + text content in prompt)
     } = body;
 
     if (!nuggetId || !cardId || !cardTitle || !detailLevel || !settings) {
@@ -578,15 +605,24 @@ Deno.serve(async (req: Request) => {
     // ══════════════════════════════════════════════════════════════
     // DirectContent (snapshot) cards use the standard visualizer — they contain
     // full extracted content, not cover-slide titles/taglines.
-    const isCoverImage = (detailLevel === "TitleCard" || detailLevel === "TakeawayCard");
+    const isCoverImage = (detailLevel === "TitleCard" || detailLevel === "TakeawayCard") && detailLevel !== "DirectContent";
+    const useScreenshot = !isCoverImage && screenshotBase64;
+
     const imagePrompt = isCoverImage
       ? buildCoverVisualizerPrompt(cardTitle, synthesisContent, settings, detailLevel)
-      : buildVisualizerPrompt(cardTitle, synthesisContent, settings, domain, layoutDirectives);
+      : useScreenshot
+        ? buildScreenshotPrompt(settings, domain, settings.aspectRatio)
+        : buildVisualizerPrompt(cardTitle, synthesisContent, settings, domain, layoutDirectives);
 
     const parts: any[] = [];
     // Add reference image if provided
     if (referenceImage?.base64) {
       parts.push({ inlineData: { data: referenceImage.base64, mimeType: referenceImage.mimeType || "image/png" } });
+    }
+    // Add content screenshot if provided (non-cover cards)
+    if (useScreenshot) {
+      const screenshotMime = body.screenshotMimeType || "image/png";
+      parts.push({ inlineData: { data: screenshotBase64, mimeType: screenshotMime } });
     }
     parts.push({ text: imagePrompt });
 
