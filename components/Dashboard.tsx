@@ -290,6 +290,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   key={project.id}
                   onClick={() => { if (!isRenaming && menuOpenId !== project.id) onOpenProject(project.id); }}
                   className={`db-card ${rv(delayClass)}`}
+                  style={menuOpenId === project.id ? { zIndex: 50 } : undefined}
                 >
                   {/* Top row: icon + title + kebab */}
                   <div className="flex items-start gap-3 mb-3" style={{ position: 'relative', zIndex: 1 }}>
@@ -375,7 +376,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   </div>
 
                   {/* Stats row */}
-                  <div className="db-card-stats" style={{ position: 'relative', zIndex: 1 }}>
+                  <div className="db-card-stats">
                     <span className="db-card-stat">{stats.nuggetCount} nugget{stats.nuggetCount !== 1 ? 's' : ''}</span>
                     <span className="db-card-divider" />
                     <span className="db-card-stat">{stats.docCount} doc{stats.docCount !== 1 ? 's' : ''}</span>

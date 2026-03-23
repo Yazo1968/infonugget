@@ -140,7 +140,6 @@
   cursor: pointer;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
   position: relative;
-  overflow: hidden;
 }
 .db-card::before {
   content: '';
@@ -149,6 +148,8 @@
   background: linear-gradient(135deg, rgba(120,170,230,0.03) 0%, transparent 60%);
   opacity: 0;
   transition: opacity 0.3s;
+  border-radius: inherit;
+  pointer-events: none;
 }
 .db-card:hover {
   border-color: var(--db-border-h);
@@ -358,7 +359,7 @@
   border: 1px solid var(--db-border-h);
   background: var(--db-bg-warm);
   padding: 4px 0;
-  z-index: 20;
+  z-index: 50;
 }
 .db-light .db-dropdown {
   background: #fff;
