@@ -829,7 +829,10 @@ function SourcesLogSection({
                           <div key={idx}>
                             <div className="flex items-center gap-2">
                               <span className="shrink-0 text-zinc-400 dark:text-zinc-500">{getChangeIcon(change.type)}</span>
-                              <span className={`text-[10px] truncate ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{getChangeDescription(change)}</span>
+                              <span className={`text-[10px] truncate flex-1 min-w-0 ${darkMode ? 'text-zinc-400' : 'text-zinc-600'}`}>{getChangeDescription(change)}</span>
+                              {change.timestamp && (
+                                <span className={`shrink-0 text-[9px] tabular-nums ${darkMode ? 'text-zinc-600' : 'text-zinc-400'}`}>{formatLogTimestamp(change.timestamp)}</span>
+                              )}
                             </div>
                             {change.magnitude && (
                               <div className="ml-[18px] mt-0.5 mb-1 grid grid-cols-3 gap-x-4 gap-y-0.5 text-[9px]">

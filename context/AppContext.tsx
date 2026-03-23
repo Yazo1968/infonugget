@@ -117,6 +117,7 @@ export function createSourcesLogCheckpoint(
       docName: e.docName,
       oldName: e.oldName,
       magnitude: e.magnitude,
+      timestamp: e.timestamp,
     })),
   };
 

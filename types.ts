@@ -385,6 +385,8 @@ export interface SourcesLogChange {
   docName: string;
   oldName?: string;
   magnitude?: DocChangeMagnitude;
+  /** When the actual document change occurred (may differ from checkpoint timestamp) */
+  timestamp?: number;
 }
 
 /** A checkpoint entry in the Sources Log — aggregates raw changes at a trigger point */
