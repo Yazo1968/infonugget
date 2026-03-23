@@ -594,7 +594,7 @@ export class SupabaseBackend implements StorageBackend {
   async deleteNuggetHeadings(nuggetId: string): Promise<void> {
     const { error } = await supabase
       .from('nuggets')
-      .update({ cards: null })
+      .update({ cards: [] })
       .eq('id', nuggetId)
       .eq('user_id', this.userId);
     if (error) {
@@ -633,30 +633,6 @@ export class SupabaseBackend implements StorageBackend {
       storagePath = mainPath;
     }
 
-    // Upload history images to storage
-    const historyEntries: Array<{ imageUrl: string; timestamp: number; label: string }> = [];
-    for (let i = 0; i < image.imageHistory.length; i++) {
-      const version = image.imageHistory[i];
-      const histPath = this.cardImagePath(image.fileId, image.headingId, image.level, `hist-${i}`);
-      if (version.imageUrl.startsWith('data:') || version.imageUrl.startsWith('blob:')) {
-        const urlToUpload = version.imageUrl.startsWith('blob:')
-          ? await this.blobUrlToDataUrl(version.imageUrl)
-          : version.imageUrl;
-        await this.uploadImage(histPath, urlToUpload);
-        historyEntries.push({
-          imageUrl: histPath,
-          timestamp: version.timestamp,
-          label: version.label,
-        });
-      } else {
-        historyEntries.push({
-          imageUrl: version.imageUrl,
-          timestamp: version.timestamp,
-          label: version.label,
-        });
-      }
-    }
-
     // Upsert the card_images metadata row
     const { error } = await supabase
       .from('card_images')
@@ -666,7 +642,6 @@ export class SupabaseBackend implements StorageBackend {
         card_id: image.headingId,
         detail_level: image.level,
         storage_path: storagePath,
-        image_history: historyEntries,
       }, { onConflict: 'nugget_id,card_id,detail_level' });
     if (error) {
       log.error('saveNuggetImage failed:', error);
@@ -719,23 +694,14 @@ export class SupabaseBackend implements StorageBackend {
     // Fetch all image rows for this nugget to clean up storage
     const { data: rows } = await supabase
       .from('card_images')
-      .select('storage_path, image_history')
+      .select('storage_path')
       .eq('nugget_id', nuggetId)
       .eq('user_id', this.userId);
 
     if (rows && rows.length > 0) {
-      const pathsToRemove: string[] = [];
-      for (const row of rows) {
-        if (row.storage_path) pathsToRemove.push(row.storage_path);
-        if (row.image_history) {
-          for (const entry of row.image_history as Array<{ imageUrl: string }>) {
-            // Only remove paths that look like storage paths (not full URLs)
-            if (entry.imageUrl && !entry.imageUrl.startsWith('http')) {
-              pathsToRemove.push(entry.imageUrl);
-            }
-          }
-        }
-      }
+      const pathsToRemove = rows
+        .map(row => row.storage_path)
+        .filter((p): p is string => !!p);
       if (pathsToRemove.length > 0) {
         await supabase.storage.from('card-images').remove(pathsToRemove);
       }
@@ -756,26 +722,15 @@ export class SupabaseBackend implements StorageBackend {
     // Clean up storage file
     const { data: row } = await supabase
       .from('card_images')
-      .select('storage_path, image_history')
+      .select('storage_path')
       .eq('nugget_id', fileId)
       .eq('card_id', headingId)
       .eq('detail_level', level)
       .eq('user_id', this.userId)
       .single();
 
-    if (row) {
-      const pathsToRemove: string[] = [];
-      if (row.storage_path) pathsToRemove.push(row.storage_path);
-      if (row.image_history) {
-        for (const entry of row.image_history as Array<{ imageUrl: string }>) {
-          if (entry.imageUrl && !entry.imageUrl.startsWith('http')) {
-            pathsToRemove.push(entry.imageUrl);
-          }
-        }
-      }
-      if (pathsToRemove.length > 0) {
-        await supabase.storage.from('card-images').remove(pathsToRemove);
-      }
+    if (row?.storage_path) {
+      await supabase.storage.from('card-images').remove([row.storage_path]);
     }
 
     const { error } = await supabase
