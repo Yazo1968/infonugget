@@ -39,6 +39,7 @@ export function useDocumentEditing({
   const isUndoRedoing = useRef(false);
   const lastSnapshotRef = useRef<string>('');
   const snapshotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const headingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Snapshot helpers for custom undo/redo ──
   const pushUndo = useCallback(() => {
@@ -93,6 +94,11 @@ export function useDocumentEditing({
           selected: prevMap.get(el.id) ?? false,
         });
       });
+      // Skip update if headings haven't changed (avoids unnecessary re-renders)
+      if (prev.length === parsed.length &&
+          prev.every((h, i) => h.id === parsed[i].id && h.text === parsed[i].text && h.level === parsed[i].level)) {
+        return prev;
+      }
       return parsed;
     });
   }, [editorRef]);
@@ -147,6 +153,11 @@ export function useDocumentEditing({
           selected: prevMap.get(el.id) ?? false,
         });
       });
+      // Skip update if headings haven't changed (avoids unnecessary re-renders)
+      if (prev.length === parsed.length &&
+          prev.every((h, i) => h.id === parsed[i].id && h.text === parsed[i].text && h.level === parsed[i].level)) {
+        return prev;
+      }
       return parsed;
     });
   }, [editorRef]);
@@ -187,7 +198,11 @@ export function useDocumentEditing({
     const editor = editorRef.current;
     const observer = new MutationObserver(() => {
       if (!suppressDirtyRef.current) setIsDirty(true);
-      parseHeadings();
+      // Debounce heading parse — sidebar doesn't need instant updates during typing
+      if (headingTimerRef.current) clearTimeout(headingTimerRef.current);
+      headingTimerRef.current = setTimeout(() => {
+        parseHeadings();
+      }, 300);
       // Debounced undo snapshot — captures state after typing pauses (500ms)
       if (!isUndoRedoing.current && !suppressDirtyRef.current) {
         if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
@@ -202,6 +217,7 @@ export function useDocumentEditing({
       observer.disconnect();
       editorObserverRef.current = null;
       if (snapshotTimerRef.current) clearTimeout(snapshotTimerRef.current);
+      if (headingTimerRef.current) clearTimeout(headingTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
