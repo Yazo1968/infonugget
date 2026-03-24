@@ -672,6 +672,78 @@ serve(async (req) => {
       });
     }
 
+    // ── DocViz analyse ──
+    if (action === 'docviz_analyse') {
+      if (documents.length === 0) throw new Error('No documents provided');
+
+      const systemPrompt = body.systemPrompt || 'You are a document visual intelligence analyst with deep expertise in data visualization and information design.';
+      const userPrompt = body.userText || '';
+
+      // Build user content blocks — file API docs + user prompt
+      const userContent: any[] = [];
+      for (const d of fileApiDocs) {
+        userContent.push({
+          type: 'document',
+          source: { type: 'file', file_id: d.fileId },
+          title: d.name || 'Document',
+          cache_control: { type: 'ephemeral' },
+        });
+      }
+      for (const d of inlineDocs) {
+        userContent.push({
+          type: 'text',
+          text: `--- ${d.name} ---\n${d.content}`,
+          cache_control: { type: 'ephemeral' },
+        });
+      }
+      userContent.push({ type: 'text', text: userPrompt });
+
+      const anthropicBody: any = {
+        model: CLAUDE_MODEL,
+        max_tokens: body.maxTokens || 16000,
+        system: [{ type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } }],
+        messages: [{ role: 'user', content: userContent }],
+      };
+
+      if (body.thinking) {
+        anthropicBody.thinking = { type: 'enabled', budget_tokens: body.thinking.budgetTokens || 10000 };
+      }
+
+      const anthropicRes = await fetch(ANTHROPIC_API_URL, {
+        method: 'POST',
+        headers: {
+          'x-api-key': ANTHROPIC_API_KEY,
+          'content-type': 'application/json',
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'prompt-caching-2024-07-31,pdfs-2024-09-25,files-api-2025-04-14',
+        },
+        body: JSON.stringify(anthropicBody),
+      });
+
+      if (!anthropicRes.ok) {
+        const errText = await anthropicRes.text();
+        throw new Error(`Anthropic API error ${anthropicRes.status}: ${errText}`);
+      }
+
+      const anthropicData = await anthropicRes.json();
+      const textBlocks = (anthropicData.content || []).filter((b: any) => b.type === 'text');
+      const responseText = textBlocks.map((b: any) => b.text).join('\n') || '';
+      const usage = anthropicData.usage || {};
+
+      return new Response(JSON.stringify({
+        success: true,
+        responseText,
+        usage: {
+          inputTokens: usage.input_tokens ?? 0,
+          outputTokens: usage.output_tokens ?? 0,
+          cacheReadTokens: usage.cache_read_input_tokens ?? 0,
+          cacheWriteTokens: usage.cache_creation_input_tokens ?? 0,
+        },
+      }), {
+        headers: { 'Content-Type': 'application/json', ...corsHeaders },
+      });
+    }
+
     throw new Error(`Unknown action: ${action}`);
   } catch (err: any) {
     console.error('chat-message error:', err.message || err);

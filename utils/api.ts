@@ -181,7 +181,7 @@ export interface ChatMessageHistoryEntry {
 }
 
 export interface ChatMessageRequest {
-  action: 'send_message' | 'initiate_chat' | 'compact';
+  action: 'send_message' | 'initiate_chat' | 'compact' | 'docviz_analyse';
   userText?: string;
   isCardRequest?: boolean;
   detailLevel?: DetailLevel;
@@ -189,6 +189,12 @@ export interface ChatMessageRequest {
   domain?: string;
   qualityReport?: QualityReport | DQAFReport;
   documents: ChatMessageDocument[];
+  /** Custom system prompt (used by docviz_analyse) */
+  systemPrompt?: string;
+  /** Max tokens override */
+  maxTokens?: number;
+  /** Extended thinking config */
+  thinking?: { budgetTokens: number };
 }
 
 export interface ChatMessageResponse {

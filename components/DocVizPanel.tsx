@@ -34,7 +34,21 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
     minWidth: 300,
     anchorRef: tabBarRef,
   });
-  const { proposals, status, error, selectedDocId, setSelectedDocId, analyse, abort, reset, persistedResult, generatingRows, generateGraphic, deleteGraphic } = useDocViz();
+  const { proposals, status, error, selectedDocId, setSelectedDocId, analyse, abort, reset, persistedResult, generatingRows, generateGraphic, deleteGraphic, deleteSectionProposals, deleteProposal, renameProposal } = useDocViz();
+
+  // Active section — which section's proposals are shown on the right
+  const [activeSectionTitle, setActiveSectionTitle] = useState<string | null>(null);
+  // Generate dropdown menu
+  const [showGenerateMenu, setShowGenerateMenu] = useState(false);
+  // Section kebab menu
+  const [sectionMenuTitle, setSectionMenuTitle] = useState<string | null>(null);
+  // Proposal row kebab menu (proposal index)
+  const [rowMenuIndex, setRowMenuIndex] = useState<number | null>(null);
+  // Dismiss inline error
+  const [dismissedError, setDismissedError] = useState<string | null>(null);
+  // Rename state
+  const [renamingIndex, setRenamingIndex] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
 
   // Refs for capturing screenshots of data sections
   const dataRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -45,12 +59,15 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
   const [expandedRows, setExpandedRows] = useState<Record<number, boolean>>({});
   // Track selected rows (checkboxes)
   const [selectedRows, setSelectedRows] = useState<Record<number, boolean>>({});
+  // Active proposal index — explicitly set by clicking a row
+  const [activeProposalIndex, setActiveProposalIndex] = useState<number | null>(null);
   const [prevProposalCount, setPrevProposalCount] = useState(0);
   if (proposals.length !== prevProposalCount) {
     setPrevProposalCount(proposals.length);
     setSelectedTypes({});
     setExpandedRows({});
     setSelectedRows({});
+    setActiveProposalIndex(null);
   }
 
   const allSelected = proposals.length > 0 && proposals.every((_, i) => selectedRows[i]);
@@ -72,6 +89,7 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
 
   const toggleRow = (idx: number) => {
     setExpandedRows((prev) => ({ ...prev, [idx]: !prev[idx] }));
+    setActiveProposalIndex(idx);
   };
 
   /** Capture a screenshot of a proposal's data section */
@@ -178,9 +196,56 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
     [availableDocs, selectedDocId],
   );
 
-  const handleAnalyse = () => {
-    if (selectedDoc) analyse(selectedDoc);
+  // Extract top-level headings from selected document's bookmarks
+  const topHeadings = useMemo(() => {
+    if (!selectedDoc?.bookmarks?.length) return [];
+    // Get level-1 headings (or the minimum level present)
+    const minLevel = Math.min(...selectedDoc.bookmarks.map((b) => b.level));
+    return selectedDoc.bookmarks.filter((b) => b.level === minLevel);
+  }, [selectedDoc]);
+
+  const handleAnalyse = (sections?: string[]) => {
+    if (selectedDoc) analyse(selectedDoc, sections);
   };
+
+  // Download section proposals as JSON
+  const handleDownloadSectionProposals = (sectionTitle: string) => {
+    const sectionProposals = proposals.filter((p) => p.section_ref === sectionTitle);
+    if (sectionProposals.length === 0) return;
+    const blob = new Blob([JSON.stringify(sectionProposals, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `docviz-${sectionTitle.replace(/[^a-zA-Z0-9-_ ]/g, '')}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setSectionMenuTitle(null);
+  };
+
+
+  const handleGenerateActive = async () => {
+    if (activeProposalIndex == null) return;
+    const p = proposals[activeProposalIndex];
+    const activeType = selectedTypes[activeProposalIndex] ?? p.visual_type;
+    try {
+      const screenshot = await captureDataScreenshot(activeProposalIndex);
+      await generateGraphic(activeProposalIndex, activeType, menuDraftOptions, screenshot);
+    } catch (err) {
+      log.error(`Screenshot capture failed for active proposal ${activeProposalIndex}:`, err);
+    }
+  };
+
+  // Proposals filtered by active section
+  const filteredProposals = useMemo(() => {
+    if (!activeSectionTitle) return proposals;
+    return proposals.filter((p) => p.section_ref === activeSectionTitle);
+  }, [proposals, activeSectionTitle]);
+
+  // Which sections have been analyzed (have proposals)
+  const analyzedSections = useMemo(() => {
+    const refs = new Set(proposals.map((p) => p.section_ref));
+    return refs;
+  }, [proposals]);
 
   // ── Visual type badge color ──
   const typeBadgeColor = darkMode ? 'bg-blue-900/50 text-blue-300 border-blue-700/50' : 'bg-blue-50 text-blue-700 border-blue-200';
@@ -231,7 +296,7 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
           </p>
           <select
             value={selectedDocId ?? ''}
-            onChange={(e) => setSelectedDocId(e.target.value || null)}
+            onChange={(e) => { setSelectedDocId(e.target.value || null); setActiveSectionTitle(null); }}
             className={`w-full max-w-xs px-3 py-2 rounded-lg text-[12px] border ${selectBorder} ${selectBg} ${textPrimary} focus:outline-none focus:ring-1 focus:ring-blue-500`}
           >
             <option value="">Choose a document...</option>
@@ -241,13 +306,6 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
               </option>
             ))}
           </select>
-          <button
-            onClick={handleAnalyse}
-            disabled={!selectedDoc || !selectedDoc.fileId}
-            className="px-5 py-1.5 rounded-full text-[11px] font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors"
-          >
-            {selectedDoc && !selectedDoc.fileId ? 'Uploading...' : 'Analyse'}
-          </button>
         </>
       )}
     </div>
@@ -305,7 +363,7 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
       <div className={`shrink-0 flex items-center justify-between px-4 py-2 border-b ${cellBorder}`}>
         <div className="flex items-center gap-2">
           <span className={`text-[12px] font-medium ${textPrimary}`}>
-            {proposals.length} visual{proposals.length !== 1 ? 's' : ''} proposed
+            {filteredProposals.length} visual{filteredProposals.length !== 1 ? 's' : ''}{activeSectionTitle ? ` for "${activeSectionTitle}"` : ' proposed'}
           </span>
           <span className={`text-[11px] ${textSecondary}`}>
             from {persistedResult?.documentName ?? selectedDoc?.name}
@@ -345,20 +403,22 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
                 />
               </div>
               <div className="w-6 shrink-0" />
-              <div className={`w-[30%] shrink-0 px-2.5 py-2 text-[10px] font-medium uppercase tracking-wider ${textSecondary} border-r ${cellBorder}`}>Section</div>
               <div className={`flex-1 px-2.5 py-2 text-[10px] font-medium uppercase tracking-wider ${textSecondary} border-r ${cellBorder}`}>Visual</div>
               <div className={`flex-1 px-2.5 py-2 text-[10px] font-medium uppercase tracking-wider ${textSecondary} border-r ${cellBorder}`}>Type</div>
-              <div className="w-[90px] shrink-0" />
+              <div className="w-[40px] shrink-0" />
             </div>
 
             {/* Table rows */}
-            {proposals.map((p, i) => {
+            {filteredProposals.map((p, fi) => {
+              // Map back to original index in full proposals array
+              const i = proposals.indexOf(p);
               const hasAlts = p.alternative_types && p.alternative_types.length > 0;
               const activeType = selectedTypes[i] ?? p.visual_type;
               const isExpanded = !!expandedRows[i];
+              const isActiveRow = activeProposalIndex === i;
 
               return (
-                <div key={i} className={`border-l border-r border-b ${cellBorder} ${i === proposals.length - 1 ? 'rounded-b-lg' : ''}`}>
+                <div key={i} className={`border-l border-r border-b ${cellBorder} ${fi === filteredProposals.length - 1 ? 'rounded-b-lg' : ''} ${isActiveRow ? 'ring-1 ring-blue-400 dark:ring-blue-600' : ''}`}>
                   {/* Compact row — clickable */}
                   <div
                     className={`flex items-center cursor-pointer select-none ${hoverBg} transition-colors`}
@@ -385,13 +445,23 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
                         <path d="M3.5 2L6.5 5L3.5 8" />
                       </svg>
                     </div>
-                    {/* Section */}
-                    <div className={`w-[30%] shrink-0 px-2.5 py-2.5 text-[11px] ${textPrimary} border-r ${cellBorder}`}>
-                      {p.section_ref}
-                    </div>
                     {/* Title */}
-                    <div className={`flex-1 px-2.5 py-2.5 text-[11px] font-medium ${textPrimary} leading-snug border-r ${cellBorder}`}>
-                      {p.visual_title}
+                    <div className={`flex-1 px-2.5 py-2.5 text-[11px] font-medium ${textPrimary} leading-snug border-r ${cellBorder}`} onClick={(e) => { if (renamingIndex === i) e.stopPropagation(); }}>
+                      {renamingIndex === i ? (
+                        <input
+                          autoFocus
+                          value={renameValue}
+                          onChange={(e) => setRenameValue(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') { renameProposal(i, renameValue); setRenamingIndex(null); }
+                            if (e.key === 'Escape') setRenamingIndex(null);
+                          }}
+                          onBlur={() => { renameProposal(i, renameValue); setRenamingIndex(null); }}
+                          className={`w-full text-[11px] px-1.5 py-0.5 rounded border border-blue-400 outline-none bg-transparent ${textPrimary}`}
+                        />
+                      ) : (
+                        p.visual_title
+                      )}
                     </div>
                     {/* Type — dropdown or badge */}
                     <div className={`flex-1 px-2.5 py-2.5 border-r ${cellBorder}`} onClick={(e) => e.stopPropagation()}>
@@ -412,15 +482,40 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
                         </span>
                       )}
                     </div>
-                    {/* Generate button */}
-                    <div className="w-[90px] shrink-0 px-2 py-2.5 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                    {/* Row kebab menu */}
+                    <div className="w-[40px] shrink-0 flex items-center justify-center relative" onClick={(e) => e.stopPropagation()}>
                       <button
-                        onClick={() => handleGenerate(p, i)}
-                        disabled={!!generatingRows[i]}
-                        className="px-2.5 py-1 rounded-full text-[10px] font-medium border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none"
+                        onClick={() => setRowMenuIndex(rowMenuIndex === i ? null : i)}
+                        className={`w-6 h-6 flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors ${textSecondary}`}
                       >
-                        {generatingRows[i] ? 'Generating...' : p.imageUrl ? 'Regenerate' : 'Generate'}
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
                       </button>
+                      {rowMenuIndex === i && (
+                        <>
+                          <div className="fixed inset-0 z-[129]" onClick={() => setRowMenuIndex(null)} />
+                          <div className={`absolute right-0 top-full mt-1 z-[130] min-w-[140px] rounded-lg border shadow-lg ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
+                            <button
+                              onClick={() => { setRowMenuIndex(null); handleGenerate(p, i); }}
+                              disabled={!!generatingRows[i]}
+                              className={`w-full text-left px-3 py-2 text-[11px] rounded-t-lg transition-colors disabled:opacity-40 ${darkMode ? 'hover:bg-zinc-700 text-zinc-200' : 'hover:bg-zinc-50 text-zinc-700'}`}
+                            >
+                              {generatingRows[i] ? 'Generating...' : p.imageUrl ? 'Regenerate' : 'Generate'}
+                            </button>
+                            <button
+                              onClick={() => { setRowMenuIndex(null); setRenamingIndex(i); setRenameValue(p.visual_title); }}
+                              className={`w-full text-left px-3 py-2 text-[11px] border-t ${cellBorder} transition-colors ${darkMode ? 'hover:bg-zinc-700 text-zinc-200' : 'hover:bg-zinc-50 text-zinc-700'}`}
+                            >
+                              Rename
+                            </button>
+                            <button
+                              onClick={() => { setRowMenuIndex(null); deleteProposal(i); }}
+                              className={`w-full text-left px-3 py-2 text-[11px] border-t ${cellBorder} rounded-b-lg transition-colors text-red-500 ${darkMode ? 'hover:bg-red-900/20' : 'hover:bg-red-50'}`}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </div>
                   </div>
 
@@ -532,55 +627,228 @@ const DocVizPanel: React.FC<DocVizPanelProps> = ({ isOpen, tabBarRef, documents,
         ...overlayStyle,
       }}
     >
-      {/* Section header */}
-      <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
-        <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(26,54,96)' : 'rgb(195,218,245)' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
-            <path d="M3 3v18h18" />
-            <path d="M7 16l4-8 4 5 5-6" />
-          </svg>
-        </div>
-        <span className="text-[13px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">DocViz</span>
-      </div>
-
-      {/* Style toolbar */}
-      <div className="shrink-0 px-5 h-[40px] flex items-center justify-center gap-2 border-b border-zinc-200 dark:border-zinc-700">
-        <StyleToolbar
-          menuDraftOptions={menuDraftOptions}
-          setMenuDraftOptions={setMenuDraftOptions}
-          onOpenStyleStudio={onOpenStyleStudio}
-        />
-        {status === 'done' && proposals.length > 0 && (
-          <>
-            <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
-            <button
-              onClick={handleGenerateSelected}
-              disabled={!someSelected || isAnyGenerating}
-              className="px-3 py-1 rounded-full text-[10px] font-medium border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none"
-            >
-              {isAnyGenerating ? 'Generating...' : `Generate Selected (${Object.values(selectedRows).filter(Boolean).length})`}
-            </button>
-            {hasAnyImages && (
-              <>
-                <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
-                <button
-                  onClick={handleExportDocx}
-                  disabled={exporting}
-                  className="px-3 py-1 rounded-full text-[10px] font-medium border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none"
-                >
-                  {exporting ? 'Exporting...' : 'Export DOCX'}
-                </button>
-              </>
-            )}
-          </>
-        )}
-      </div>
-
       {/* Content area */}
-      {status === 'analysing' && renderAnalysing()}
-      {status === 'error' && renderError()}
-      {status === 'done' && renderDone()}
-      {status === 'idle' && renderIdle()}
+      {!selectedDoc ? (
+        renderIdle()
+      ) : (
+        <div className="flex-1 flex min-h-0 overflow-hidden">
+          {/* Left column: sections list */}
+          <div className={`shrink-0 w-[300px] flex flex-col border-r ${cellBorder} overflow-hidden`}>
+            {/* Section header — Document Sections */}
+            <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+              <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(26,54,96)' : 'rgb(195,218,245)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                  <path d="M4 6h16" /><path d="M4 12h16" /><path d="M4 18h10" />
+                </svg>
+              </div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Sections</span>
+            </div>
+
+            {/* Document selector */}
+            <div className={`shrink-0 px-3 py-2 ${miniHeaderBg} border-b ${cellBorder}`}>
+              <select
+                value={selectedDocId ?? ''}
+                onChange={(e) => { setSelectedDocId(e.target.value || null); setActiveSectionTitle(null); }}
+                className={`w-full text-[11px] bg-transparent ${textPrimary} border-none outline-none cursor-pointer`}
+              >
+                <option value="">Choose a document...</option>
+                {availableDocs.map((doc) => (
+                  <option key={doc.id} value={doc.id}>
+                    {doc.sourceType === 'native-pdf' ? 'PDF: ' : 'MD: '}{doc.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Section list */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {topHeadings.length > 0 ? (
+                topHeadings.map((h) => {
+                  const isActive = activeSectionTitle === h.title;
+                  const isAnalyzed = analyzedSections.has(h.title);
+                  const proposalCount = proposals.filter((p) => p.section_ref === h.title).length;
+
+                  return (
+                    <div
+                      key={h.id}
+                      className={`relative flex items-center border-b ${cellBorder} transition-colors cursor-pointer ${
+                        isActive
+                          ? 'bg-blue-50 dark:bg-blue-950/30'
+                          : hoverBg
+                      }`}
+                      onClick={() => setActiveSectionTitle(h.title)}
+                    >
+                      <div className="flex-1 px-3 py-2 min-w-0">
+                        <span className={`text-[11px] leading-tight ${
+                          isActive ? 'text-blue-700 dark:text-blue-300 font-medium' : textPrimary
+                        }`}>
+                          {h.title}
+                        </span>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          {h.wordCount ? <span className={`text-[9px] ${hintColor}`}>{h.wordCount}w</span> : null}
+                          {isAnalyzed && (
+                            <span className="text-[9px] text-green-600 dark:text-green-400">{proposalCount} visual{proposalCount !== 1 ? 's' : ''}</span>
+                          )}
+                          {!isAnalyzed && (
+                            <span className={`text-[9px] ${hintColor}`}>not analysed</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Kebab menu — only on active + analyzed sections */}
+                      {isActive && isAnalyzed && (
+                        <div className="shrink-0 pr-2 relative">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); setSectionMenuTitle(sectionMenuTitle === h.title ? null : h.title); }}
+                            className={`w-6 h-6 flex items-center justify-center rounded hover:bg-zinc-200 dark:hover:bg-zinc-700 transition-colors ${textSecondary}`}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="12" cy="19" r="2" /></svg>
+                          </button>
+                          {sectionMenuTitle === h.title && (
+                            <>
+                              <div className="fixed inset-0 z-[129]" onClick={() => setSectionMenuTitle(null)} />
+                              <div className={`absolute right-0 top-full mt-1 z-[130] min-w-[140px] rounded-lg border shadow-lg ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); handleDownloadSectionProposals(h.title); }}
+                                  className={`w-full text-left px-3 py-2 text-[11px] rounded-t-lg transition-colors ${darkMode ? 'hover:bg-zinc-700 text-zinc-200' : 'hover:bg-zinc-50 text-zinc-700'}`}
+                                >
+                                  Download
+                                </button>
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); deleteSectionProposals(h.title); setSectionMenuTitle(null); }}
+                                  className={`w-full text-left px-3 py-2 text-[11px] border-t ${cellBorder} rounded-b-lg transition-colors text-red-500 ${darkMode ? 'hover:bg-red-900/20' : 'hover:bg-red-50'}`}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className={`px-3 py-4 text-[11px] ${hintColor} text-center italic`}>
+                  No sections found in this document.
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right column: proposals for active section */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            {/* Section header — Visual Analysis */}
+            <div className="shrink-0 h-[36px] flex items-center gap-2 border-b border-zinc-200 dark:border-zinc-600 bg-white dark:bg-zinc-900">
+              <div className="h-full w-[36px] shrink-0 flex items-center justify-center" style={{ backgroundColor: darkMode ? 'rgb(26,54,96)' : 'rgb(195,218,245)' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-zinc-500 dark:text-zinc-400">
+                  <path d="M3 3v18h18" /><path d="M7 16l4-8 4 5 5-6" />
+                </svg>
+              </div>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-800 dark:text-zinc-200">Visual Analysis</span>
+            </div>
+
+            {/* Toolbar row */}
+            <div className="shrink-0 px-3 h-[40px] flex items-center justify-center gap-2 border-b border-zinc-200 dark:border-zinc-700">
+              <StyleToolbar
+                menuDraftOptions={menuDraftOptions}
+                setMenuDraftOptions={setMenuDraftOptions}
+                onOpenStyleStudio={onOpenStyleStudio}
+              />
+              {status === 'done' && filteredProposals.length > 0 && (
+                <>
+                  <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
+                  {/* Generate dropdown */}
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowGenerateMenu((p) => !p)}
+                      disabled={isAnyGenerating}
+                      className="flex items-center gap-1 px-3 py-1 rounded-full text-[10px] font-medium border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none"
+                    >
+                      {isAnyGenerating ? 'Generating...' : 'Generate'}
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
+                    </button>
+                    {showGenerateMenu && (
+                      <>
+                        <div className="fixed inset-0 z-[129]" onClick={() => setShowGenerateMenu(false)} />
+                        <div className={`absolute right-0 top-full mt-1 z-[130] min-w-[180px] rounded-lg border shadow-lg ${darkMode ? 'bg-zinc-800 border-zinc-700' : 'bg-white border-zinc-200'}`}>
+                          <button
+                            onClick={() => { setShowGenerateMenu(false); handleGenerateActive(); }}
+                            disabled={activeProposalIndex == null}
+                            className={`w-full text-left px-3 py-2 text-[11px] ${darkMode ? 'hover:bg-zinc-700 text-zinc-200' : 'hover:bg-zinc-50 text-zinc-700'} disabled:opacity-40 disabled:pointer-events-none rounded-t-lg transition-colors`}
+                          >
+                            Generate Active
+                            {activeProposalIndex != null && (
+                              <span className={`ml-1 text-[9px] ${hintColor}`}>(1)</span>
+                            )}
+                          </button>
+                          <button
+                            onClick={() => { setShowGenerateMenu(false); handleGenerateSelected(); }}
+                            disabled={!someSelected}
+                            className={`w-full text-left px-3 py-2 text-[11px] border-t ${cellBorder} ${darkMode ? 'hover:bg-zinc-700 text-zinc-200' : 'hover:bg-zinc-50 text-zinc-700'} disabled:opacity-40 disabled:pointer-events-none rounded-b-lg transition-colors`}
+                          >
+                            Generate Selected
+                            <span className={`ml-1 text-[9px] ${hintColor}`}>({Object.values(selectedRows).filter(Boolean).length})</span>
+                          </button>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                  {hasAnyImages && (
+                    <>
+                      <div className="w-px h-3.5 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
+                      <button
+                        onClick={handleExportDocx}
+                        disabled={exporting}
+                        className="px-3 py-1 rounded-full text-[10px] font-medium border border-zinc-300 dark:border-zinc-600 text-zinc-600 dark:text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 hover:text-zinc-800 dark:hover:text-zinc-200 transition-colors whitespace-nowrap disabled:opacity-40 disabled:pointer-events-none"
+                      >
+                        {exporting ? 'Exporting...' : 'Export DOCX'}
+                      </button>
+                    </>
+                  )}
+                </>
+              )}
+            </div>
+
+            {/* Inline error banner (shown above results when error occurs but proposals exist) */}
+            {error && status === 'done' && dismissedError !== error && (
+              <div className="shrink-0 mx-4 mt-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 flex items-center gap-2">
+                <span className="text-[11px] text-red-600 dark:text-red-400 flex-1">{error}</span>
+                <button onClick={() => setDismissedError(error)} className="text-[10px] text-red-400 hover:text-red-600 dark:hover:text-red-300">Dismiss</button>
+              </div>
+            )}
+
+            {/* Right column content */}
+            {status === 'analysing' && renderAnalysing()}
+            {status === 'error' && renderError()}
+            {!activeSectionTitle && status !== 'analysing' && status !== 'error' && (
+              <div className={`flex-1 flex flex-col items-center justify-center px-8 gap-3`}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className={textSecondary}>
+                  <path d="M3 3v18h18" /><path d="M7 16l4-8 4 5 5-6" />
+                </svg>
+                <p className={`text-[12px] ${textSecondary} text-center`}>
+                  Select a section from the left to analyse.
+                </p>
+              </div>
+            )}
+            {activeSectionTitle && status !== 'analysing' && status !== 'error' && filteredProposals.length === 0 && (
+              <div className={`flex-1 flex flex-col items-center justify-center px-8 gap-4`}>
+                <p className={`text-[12px] ${textSecondary} text-center`}>
+                  "{activeSectionTitle}" has not been analysed yet.
+                </p>
+                <button
+                  onClick={() => handleAnalyse([activeSectionTitle])}
+                  disabled={!selectedDoc?.fileId}
+                  className="px-6 py-2 rounded-full text-[12px] font-medium bg-zinc-900 dark:bg-zinc-100 text-white dark:text-zinc-900 hover:bg-zinc-700 dark:hover:bg-zinc-300 disabled:opacity-40 disabled:pointer-events-none transition-colors"
+                >
+                  Analyse Section
+                </button>
+              </div>
+            )}
+            {activeSectionTitle && filteredProposals.length > 0 && renderDone()}
+          </div>
+        </div>
+      )}
     </div>,
     document.body,
   );
