@@ -51,7 +51,7 @@ Two AI call patterns coexist. **`utils/api.ts`** defines pipeline wrappers; **`u
 |---|---|---|---|
 | `generate-card` | `generateCardApi()` | Multi-agent card pipeline: synthesis → image → storage | `supabase/functions/generate-card/` |
 | `generate-graphics` | `generateGraphicsApi()` | DocViz graphic generation: screenshot + prompt → Gemini image | `supabase/functions/generate-graphics/` |
-| `chat-message` | `chatMessageApi()` | Chat + card content generation via Claude | Remote only |
+| `chat-message` | `chatMessageApi()` | Chat + card content + SmartDeck + DocViz analysis via Claude | `supabase/functions/chat-message/` |
 | `manage-images` | `manageImagesApi()` | Image CRUD (delete, restore, history) | Remote only |
 | `document-quality` | `documentQualityApi()` | DQAF v2: 3-stage quality assessment | `supabase/functions/document-quality/` |
 | `claude-proxy` | `callClaude()` | Anthropic Messages API | Remote only (legacy) |
@@ -76,37 +76,47 @@ Three content generation paths exist, all feeding into the same image generation
 **Path 3 — SmartDeck** (`hooks/useSmartDeck.ts` → `chatMessageApi`):
 - Full deck generated in one prompt via `chat-message` Edge Function
 - Prompt built by `utils/smartDeck/prompt.ts` with LOD config from `utils/deckShared/constants.ts`
-- No layout directives at synthesis time (generated on-the-fly at image gen)
+- Domain-expert role priming: "You are a top tier expert in the domain of {domain first line}"
+- Content significance analysis: primary vs secondary vs supportive content
+- "Let AI suggest" button: one API call returns recommended card count ranges for all 3 LODs
+- LOD selector: unified table (LOD | Min | Max) with AI suggestions, user-editable
+- Title card / Takeaway card toggles (renamed from Cover/Closing)
 
 **Image generation** (all paths converge in `generateCard` within `useCardGeneration.ts`):
-1. Generates layout directives on-the-fly via Gemini Flash (`callGeminiProxy`) for all paths
-2. Passes `layoutDirectives` to `generateCardApi()` → `generate-card` Edge Function
-3. EF injects directives as instruction #5 in Gemini's XML-structured prompt
-4. Layout directives are always generated for non-cover cards; cached in `card.layoutDirectivesMap[level]`
+1. Content rendered as HTML via `marked.parse()`, screenshotted via `html-to-image` (`screenshotContent()`)
+2. Screenshot + simplified prompt sent to `generateCardApi()` → `generate-card` Edge Function
+3. EF sends screenshot as inline image to Gemini alongside style/theme/title spec prompt
+4. Layout directives removed — Gemini reads content structure from screenshot directly
+5. Cover cards (TitleCard/TakeawayCard) skip screenshot, use text-based prompt
+6. Screenshot preview available in toolbar (dev mode only)
+
+**Screenshot rendering** (`screenshotContent` in `useCardGeneration.ts`):
+- Markdown → HTML via `marked.parse()` with `sanitize-html`
+- Rendered in hidden off-screen div (`position:fixed; left:-9999px`) with inline CSS
+- Proper table borders, heading sizes, list styles, blockquote styling
+- Long paragraphs auto-split at sentence boundaries (>100 words) for better Gemini parsing
+- `html-to-image` font embedding skipped (CSP-safe, uses system fonts)
+- Max dimensions: 1200px width, 2x pixel ratio for clarity
 
 **Gemini prompt structure** (XML-tagged sections in `generate-card` EF):
-- `<visual_style>` — role priming, style identity, palette, typography, canvas
+- Opening instruction: "Transform all content in the attached image into a professionally designed infographic slide"
+- `<visual_style>` — style identity, technique, composition, mood, palette, typography, canvas
 - `<theme_context>` — domain, content nature, visualization paradigm, visual vocabulary
-- `<instructions>` — 5 numbered rules (instruction #5 = layout directives or generic fallback)
-- `<image_title>` — title spec with reserved height, font, size (% of canvas width), position; values injected from `TITLE_SPEC_TABLE` keyed by aspect ratio. Title is separated from body content to improve rendering consistency. Cover cards (TitleCard/TakeawayCard) skip this block. Bullet-point format (not sentence).
-- `<exact_text_content>` — body content only (no title); markdown stripped of `#`, `##`, `**`
+- `<image_title_specs>` — reserved height, font size, position (no title text — Gemini reads from screenshot)
+- Screenshot image attached as `inlineData` part
+- Cover cards use text-based `<image_title>` block with title text instead of screenshot
 
 **Title spec table** (`TITLE_SPEC_TABLE` in `generate-card` EF):
 - Maps aspect ratio → `{ reservedHeight, fontSize, x, y }` (all percentages)
 - Landscape (16:9): 10% reserved, 3.2% font. Portrait (9:16): 6% reserved, 4.2% font.
 - Font name + color injected from style settings (`fonts.primary`, `palette.text`)
 
-**Content preparation** (`prepareContentBlock` in `generate-card` EF):
-- Strips all markdown heading syntax (`#`, `##`, `###`) — Gemini renders `#` literally
-- Strips bold markers (`**`) — Gemini renders `**` literally
-- Title NOT included in content block (moved to `<image_title>` spec)
-
 ### Word Count & Token Limits (Aligned Across All Paths)
 
 | Level | Word count | Token limit (Sources) | Token limit (Chat: content) | Chat: + suggestions headroom |
 |---|---|---|---|---|
-| Executive | 50-70 | 95 | 95 | 95 + 120 = 215 |
-| Standard | 120-150 | 203 | 203 | 203 + 120 = 323 |
+| Executive | 60-80 | 108 | 108 | 108 + 120 = 228 |
+| Standard | 120-170 | 230 | 230 | 230 + 120 = 350 |
 | Detailed | 250-300 | 405 | 405 | 405 + 120 = 525 |
 | TitleCard | 15-25 | 150 | 150 | 150 + 120 = 270 |
 | TakeawayCard | 40-60 | 350 | 350 | 350 + 120 = 470 |
@@ -134,11 +144,23 @@ Each card has an **album** per detail level — a collection of generated/modifi
 
 `components/DocVizPanel.tsx` + `hooks/useDocViz.ts` — AI-powered document visual analysis and chart/diagram generation.
 
-**Analysis pipeline**:
-1. User selects a single document within the current nugget (separate from active documents in other panels)
-2. Claude (via `claude-proxy` with extended thinking) analyses the document and proposes visuals with structured data
-3. Proposals displayed in an expandable table: Section | Visual | Type (dropdown with alternatives) | Generate button
-4. Analysis prompt: `utils/docviz/prompt.ts` — two-step reasoning (extract data first, then evaluate visual types)
+**Two-column layout**:
+- **Left column** (300px): "Sections" header, document selector dropdown, scrollable list of H1 headings from document bookmarks. Click section to activate. Active + analyzed sections show kebab menu (Download JSON, Delete). Word count and analysis status per section.
+- **Right column** (flex): "Visual Analysis" header, style toolbar, proposals table for the active section. Centered "Analyse Section" button when section not yet analyzed.
+
+**Analysis pipeline** (section-scoped):
+1. User selects document → left column shows H1 sections from bookmarks
+2. User clicks a section → right column shows "Analyse Section" button (if not analyzed)
+3. Claude (via `chat-message` EF with `docviz_analyse` action, extended thinking) analyses **only the selected section**
+4. Section focus instruction prepended to prompt: "Focus your analysis ONLY on the following section(s)..."
+5. Proposals displayed in expandable table: Visual | Type (dropdown with alternatives) | kebab menu
+6. Section results merge with existing proposals (replace by `section_ref`, append new)
+7. Analysis prompt: `utils/docviz/prompt.ts` — two-step reasoning (extract data first, then evaluate visual types)
+
+**Proposal management**:
+- Row kebab menu: Generate/Regenerate, Rename (inline edit), Delete
+- Generate dropdown in toolbar: Generate Active (single expanded row), Generate Selected (checked rows)
+- Inline error banner preserves existing proposals on analysis failure
 
 **Image generation pipeline** (screenshot-based):
 1. User clicks Generate → `html-to-image` captures the data section (subtitle + table) as a PNG screenshot
@@ -156,7 +178,7 @@ Each card has an **album** per detail level — a collection of generated/modifi
 
 **Shared with Cards & Assets**: `StyleToolbar` component — same Style Studio, style selector, aspect ratio, resolution. Same `stylingOptions` on the nugget. Different prompt and generation pipeline.
 
-**Persistence**: `docVizResult` stored as JSONB on the nugget record (same pattern as Chat messages). Survives refresh, logout, redeployment. Image URLs stored per proposal.
+**Persistence**: `docVizResult` stored as JSONB on the nugget record (same pattern as Chat messages). Survives refresh, logout, redeployment. Image URLs stored per proposal. Section-scoped results merge incrementally.
 
 **DOCX Export**: `utils/exportDocViz.ts` — exports document markdown with generated images inserted at matching section locations. Section matching via `section_ref` (exact → contains → fuzzy). PDF documents converted to markdown on-the-fly via `convertPdfBase64ToMarkdown()`. Numbered figure captions, headers, footers, page numbers.
 
@@ -334,11 +356,12 @@ Do NOT independently take screenshots from the preview server. If a screenshot i
 ## Known Tech Debt
 
 - Backend API migration incomplete (synthesis still client-side via legacy `claude-proxy` for Sources path)
-- `chat-message` EF deployed remotely only — no local source file
 - Legacy `cardUrlMap`/`imageHistoryMap` types kept as deprecated for backward compat
 - `resolveOrderedDocs()` doesn't check `enabled` flag
 - Annotation workbench modifications create local album entries (no server-side storage upload yet)
 - Hardcoded token cost rates in `useTokenUsage`
+- DocViz analysis sends full document via Files API even for section-scoped analysis (planned: extract section text client-side)
+- Screenshot-based image generation may produce blank images for very complex content (Gemini intermittent failures)
 
 ## Data Integrity Rules
 
