@@ -506,6 +506,7 @@ Deno.serve(async (req: Request) => {
       skipSynthesis, // boolean — skip phase 1 if synthesis already exists
       layoutDirectives, // string — content-specific layout directives (legacy, unused when screenshot provided)
       screenshotBase64, // string — rendered content screenshot (new: replaces directives + text content in prompt)
+      retrievedChunks, // Array of { text, documentId, documentName, chunkIndex, relevanceScore? } — pre-retrieved from Gemini File Search
     } = body;
 
     if (!nuggetId || !cardId || !cardTitle || !detailLevel || !settings) {
@@ -563,19 +564,32 @@ Deno.serve(async (req: Request) => {
 
       const systemRole = buildExpertPriming(domain) || "You are a content synthesis expert.";
 
-      // Build messages with file references
+      // Build messages: chunks (preferred) or Files API document blocks (fallback)
       const userContentParts: any[] = [];
-      if (documents) {
-        for (const doc of documents) {
-          if (doc.fileId) {
-            userContentParts.push({ type: "document", source: { type: "file", file_id: doc.fileId } });
+      if (retrievedChunks && Array.isArray(retrievedChunks) && retrievedChunks.length > 0) {
+        // Chunk-based context: inline text from pre-retrieved chunks
+        const chunkContext = retrievedChunks.map((c: any) =>
+          `--- Chunk from "${c.documentName}" ---\n${c.text}\n--- End Chunk ---`
+        ).join("\n\n");
+        const contextPreamble = "The following are relevant excerpts from the source documents.\n\n";
+        const promptText = sectionFocusBlock
+          ? sectionFocusBlock + "\n\n" + contextPreamble + chunkContext + "\n\n" + contentPrompt
+          : contextPreamble + chunkContext + "\n\n" + contentPrompt;
+        userContentParts.push({ type: "text", text: promptText });
+      } else {
+        // Legacy: Files API document blocks
+        if (documents) {
+          for (const doc of documents) {
+            if (doc.fileId) {
+              userContentParts.push({ type: "document", source: { type: "file", file_id: doc.fileId } });
+            }
           }
         }
-      }
-      if (sectionFocusBlock) {
-        userContentParts.push({ type: "text", text: sectionFocusBlock + "\n\n" + contentPrompt });
-      } else {
-        userContentParts.push({ type: "text", text: contentPrompt });
+        if (sectionFocusBlock) {
+          userContentParts.push({ type: "text", text: sectionFocusBlock + "\n\n" + contentPrompt });
+        } else {
+          userContentParts.push({ type: "text", text: contentPrompt });
+        }
       }
 
       const claudeBody = {

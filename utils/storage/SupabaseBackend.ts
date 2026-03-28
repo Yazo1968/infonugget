@@ -306,7 +306,7 @@ export class SupabaseBackend implements StorageBackend {
         .select('pdf_storage_path')
         .eq('nugget_id', doc.nuggetId)
         .eq('id', doc.docId)
-        .single();
+        .maybeSingle();
 
       if (existing?.pdf_storage_path) {
         // PDF already in storage — reuse existing path, skip upload
@@ -345,6 +345,8 @@ export class SupabaseBackend implements StorageBackend {
       version: doc.version ?? null,
       last_enabled_at: doc.lastEnabledAt ?? null,
       last_disabled_at: doc.lastDisabledAt ?? null,
+      gemini_document_name: doc.geminiDocumentName ?? null,
+      gemini_import_status: doc.geminiImportStatus ?? null,
       enabled: true, // default enabled
     };
 
@@ -405,6 +407,8 @@ export class SupabaseBackend implements StorageBackend {
         version: row.version ?? undefined,
         lastEnabledAt: row.last_enabled_at ?? undefined,
         lastDisabledAt: row.last_disabled_at ?? undefined,
+        geminiDocumentName: row.gemini_document_name ?? undefined,
+        geminiImportStatus: row.gemini_import_status ?? undefined,
       });
     }
     return docs;
@@ -417,7 +421,7 @@ export class SupabaseBackend implements StorageBackend {
       .select('pdf_storage_path')
       .eq('nugget_id', nuggetId)
       .eq('id', docId)
-      .single();
+      .maybeSingle();
     if (row?.pdf_storage_path) {
       await supabase.storage.from('pdfs').remove([row.pdf_storage_path]);
     }
@@ -489,6 +493,7 @@ export class SupabaseBackend implements StorageBackend {
         nugget_last_closed_at: nugget.lastClosedAt ?? null,
         folders: nugget.folders ?? null,
         docviz_result: nugget.docVizResult ?? null,
+        gemini_store_name: nugget.geminiStoreName ?? null,
         created_at: nugget.createdAt,
         last_modified_at: nugget.lastModifiedAt,
       }, { onConflict: 'id' });
@@ -526,6 +531,7 @@ export class SupabaseBackend implements StorageBackend {
       briefing: row.briefing ?? undefined,
       briefingSuggestions: row.briefing_suggestions ?? undefined,
       lastClosedAt: row.nugget_last_closed_at ?? undefined,
+      geminiStoreName: row.gemini_store_name ?? undefined,
       folders: row.folders ?? undefined,
       docVizResult: row.docviz_result ?? undefined,
       createdAt: row.created_at,

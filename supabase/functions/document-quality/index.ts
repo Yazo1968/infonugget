@@ -562,7 +562,42 @@ function computeFlagsSummary(documents: any[], crossDocFindings: any[], perDocum
 // SHARED HELPERS
 // ════════════════════════════════════════════════════════════════
 
-function buildDocBlocks(documents: any[]) {
+function buildDocBlocks(documents: any[], retrievedChunks?: any[]) {
+  // When pre-retrieved chunks are provided, use them as inline context instead of Files API
+  if (retrievedChunks && Array.isArray(retrievedChunks) && retrievedChunks.length > 0) {
+    const inlineDocSections: string[] = [];
+
+    // Group chunks by document
+    const chunksByDoc = new Map<string, string[]>();
+    for (const chunk of retrievedChunks) {
+      const key = chunk.documentName || chunk.documentId || 'Unknown';
+      if (!chunksByDoc.has(key)) chunksByDoc.set(key, []);
+      chunksByDoc.get(key)!.push(chunk.text);
+    }
+
+    // Build inline sections from chunks, matching document IDs for labeling
+    for (const d of documents) {
+      const docChunks = chunksByDoc.get(d.name) || [];
+      if (docChunks.length > 0) {
+        const chunkedContent = docChunks.join('\n\n');
+        inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\nThe following are relevant excerpts from this document.\n\n${chunkedContent}\n--- End Document ---`);
+      } else if (d.content) {
+        // Fallback to inline content for documents without chunks
+        const MAX_CHARS = 50000;
+        const excerpt = d.content.length > MAX_CHARS
+          ? d.content.slice(0, MAX_CHARS) + '\n\n[... document truncated for analysis ...]'
+          : d.content;
+        inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n${excerpt}\n--- End Document ---`);
+      } else {
+        inlineDocSections.push(`--- Document: ${d.name} (ID: ${d.id}) ---\n[No content available]\n--- End Document ---`);
+      }
+    }
+
+    // No Files API docs needed when using chunks
+    return { fileApiDocs: [] as Array<{ fileId: string; name: string }>, inlineDocSections };
+  }
+
+  // Legacy path: Files API + inline content
   const fileApiDocs: Array<{ fileId: string; name: string }> = [];
   const inlineDocSections: string[] = [];
 
@@ -819,7 +854,7 @@ Deno.serve(async (req) => {
 
     // ── Parse Request ──
     const body = await req.json();
-    const { documents, engagementPurpose, nuggetId, stage, call1Data: providedCall1Data } = body;
+    const { documents, engagementPurpose, nuggetId, stage, call1Data: providedCall1Data, retrievedChunks } = body;
 
     if (!documents || !Array.isArray(documents) || documents.length === 0) {
       throw new Error('At least one document is required');
@@ -841,7 +876,7 @@ Deno.serve(async (req) => {
         .then(({ error: e }) => { if (e) console.warn('last_api_call_at update failed:', e); });
     }
 
-    const { fileApiDocs, inlineDocSections } = buildDocBlocks(documents);
+    const { fileApiDocs, inlineDocSections } = buildDocBlocks(documents, retrievedChunks);
 
     // ── Stage routing ──
     // 'call1' — per-document analysis only (returns call1Data for the client to pass back)

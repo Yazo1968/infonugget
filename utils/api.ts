@@ -6,7 +6,7 @@
 
 import { supabase } from './supabase';
 import { createLogger } from './logger';
-import { StylingOptions, DetailLevel, UploadedFile, QualityReport, DQAFReport, BookmarkNode, AlbumImage } from '../types';
+import { StylingOptions, DetailLevel, UploadedFile, QualityReport, DQAFReport, BookmarkNode, AlbumImage, RetrievedChunk } from '../types';
 
 const log = createLogger('API');
 
@@ -73,6 +73,8 @@ export interface GenerateCardRequest {
   /** Rendered content screenshot (replaces directives + text content in prompt) */
   screenshotBase64?: string;
   screenshotMimeType?: string;
+  /** Pre-retrieved chunks from Gemini File Search (replaces Files API document blocks when provided) */
+  retrievedChunks?: RetrievedChunk[];
 }
 
 export interface GenerateCardResponse {
@@ -195,6 +197,8 @@ export interface ChatMessageRequest {
   maxTokens?: number;
   /** Extended thinking config */
   thinking?: { budgetTokens: number };
+  /** Pre-retrieved chunks from Gemini File Search (replaces Files API document blocks when provided) */
+  retrievedChunks?: RetrievedChunk[];
 }
 
 export interface ChatMessageResponse {
@@ -257,6 +261,8 @@ export interface DocumentQualityRequest {
   stage?: 'call1' | 'call2';
   /** Call 1 results — required when stage is 'call2'. */
   call1Data?: Record<string, unknown>;
+  /** Pre-retrieved chunks from Gemini File Search (replaces Files API document blocks when provided) */
+  retrievedChunks?: RetrievedChunk[];
 }
 
 interface DQAFUsage {
@@ -345,6 +351,182 @@ export async function generateGraphicsApi(
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
     throw new Error(body.error || `generate-graphics failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+// ─────────────────────────────────────────────────────────────────
+// manage-stores API (Gemini File Search Store lifecycle)
+// ─────────────────────────────────────────────────────────────────
+
+const MANAGE_STORES_URL = `${SUPABASE_URL}/functions/v1/manage-stores`;
+
+export type ManageStoresAction = 'create-store' | 'delete-store' | 'upload-document' | 'remove-document' | 'list-documents';
+
+export interface ManageStoresRequest {
+  action: ManageStoresAction;
+  nuggetId?: string;
+  displayName?: string;
+  storeName?: string;
+  fileBase64?: string;
+  fileName?: string;
+  mimeType?: string;
+  metadata?: {
+    nugget_id?: string;
+    document_name?: string;
+    source_type?: string;
+  };
+  chunkingConfig?: {
+    maxTokensPerChunk?: number;
+    maxOverlapTokens?: number;
+  };
+  pollTimeoutMs?: number;
+  documentName?: string;
+}
+
+export interface CreateStoreResponse {
+  success: boolean;
+  storeName: string;
+  displayName: string;
+}
+
+export interface UploadDocumentResponse {
+  success: boolean;
+  documentName: string | null;
+  metadata: Record<string, string> | null;
+}
+
+export interface ListDocumentsResponse {
+  success: boolean;
+  documents: Array<{ name: string; displayName?: string }>;
+}
+
+export interface ManageStoresGenericResponse {
+  success: boolean;
+  [key: string]: unknown;
+}
+
+async function manageStoresApi<T = ManageStoresGenericResponse>(
+  request: ManageStoresRequest,
+  signal?: AbortSignal,
+): Promise<T> {
+  const token = await getAuthToken();
+  const res = await fetch(MANAGE_STORES_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `manage-stores failed: ${res.status}`);
+  }
+
+  return res.json();
+}
+
+/** Create a Gemini File Search Store for a nugget. */
+export function createStoreApi(
+  nuggetId: string,
+  displayName?: string,
+  signal?: AbortSignal,
+): Promise<CreateStoreResponse> {
+  return manageStoresApi<CreateStoreResponse>(
+    { action: 'create-store', nuggetId, displayName },
+    signal,
+  );
+}
+
+/** Delete a Gemini File Search Store (force-deletes all documents). */
+export function deleteStoreApi(
+  storeName: string,
+  signal?: AbortSignal,
+): Promise<ManageStoresGenericResponse> {
+  return manageStoresApi(
+    { action: 'delete-store', storeName },
+    signal,
+  );
+}
+
+/** Upload a document to a Gemini File Search Store with metadata tagging. */
+export function uploadDocumentToStoreApi(
+  storeName: string,
+  fileBase64: string,
+  fileName: string,
+  mimeType: string,
+  metadata?: { nugget_id?: string; document_name?: string; source_type?: string },
+  chunkingConfig?: { maxTokensPerChunk?: number; maxOverlapTokens?: number },
+  pollTimeoutMs?: number,
+  signal?: AbortSignal,
+): Promise<UploadDocumentResponse> {
+  return manageStoresApi<UploadDocumentResponse>(
+    { action: 'upload-document', storeName, fileBase64, fileName, mimeType, metadata, chunkingConfig, pollTimeoutMs },
+    signal,
+  );
+}
+
+/** Remove a document from a Gemini File Search Store. */
+export function removeDocumentFromStoreApi(
+  storeName: string,
+  documentName: string,
+  signal?: AbortSignal,
+): Promise<ManageStoresGenericResponse> {
+  return manageStoresApi(
+    { action: 'remove-document', storeName, documentName },
+    signal,
+  );
+}
+
+/** List all documents in a Gemini File Search Store. */
+export function listStoreDocumentsApi(
+  storeName: string,
+  signal?: AbortSignal,
+): Promise<ListDocumentsResponse> {
+  return manageStoresApi<ListDocumentsResponse>(
+    { action: 'list-documents', storeName },
+    signal,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────
+// retrieve-chunks API (Gemini File Search retrieval)
+// ─────────────────────────────────────────────────────────────────
+
+const RETRIEVE_CHUNKS_URL = `${SUPABASE_URL}/functions/v1/retrieve-chunks`;
+
+export interface RetrieveChunksRequest {
+  storeName: string;
+  queryText: string;
+  metadataFilter?: string;
+  maxChunks?: number;
+}
+
+export interface RetrieveChunksResponse {
+  chunks: RetrievedChunk[];
+  responseText?: string;
+}
+
+/**
+ * Call the retrieve-chunks Edge Function.
+ * Queries a Gemini File Search Store and returns grounded chunks.
+ */
+export async function retrieveChunksApi(
+  request: RetrieveChunksRequest,
+  signal?: AbortSignal,
+): Promise<RetrieveChunksResponse> {
+  const token = await getAuthToken();
+  const res = await fetch(RETRIEVE_CHUNKS_URL, {
+    method: 'POST',
+    headers: authHeaders(token),
+    body: JSON.stringify(request),
+    signal,
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+    throw new Error(body.error || `retrieve-chunks failed: ${res.status}`);
   }
 
   return res.json();

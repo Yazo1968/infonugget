@@ -184,9 +184,14 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
       const content = ensureH1(raw, card.text);
       // Skip if neither card nor content changed
       if (activeCardId === prevCardIdRef.current && content === prevContentRef.current) return;
-      prevCardIdRef.current = activeCardId;
-      prevContentRef.current = content;
-      editorHandleRef.current?.resetContent(content);
+      // Only update tracking refs when the editor is mounted — if the panel is closed
+      // (editor unmounted), resetContent would be a no-op but prevContentRef would advance,
+      // causing the effect to skip the update when the panel reopens.
+      if (editorHandleRef.current) {
+        prevCardIdRef.current = activeCardId;
+        prevContentRef.current = content;
+        editorHandleRef.current.resetContent(content);
+      }
     }, [activeCardId, cards, detailLevel]);
 
     // ── Sidebar resize state ──
@@ -253,16 +258,18 @@ const CardsPanel = forwardRef<PanelEditorHandle, CardsPanelProps>(
 
     const activeCard = activeCardId ? findCard(cards, activeCardId) ?? null : null;
 
-    // Stable document for the editor — only set on first mount, subsequent
-    // card switches use resetContent imperatively so the editor never re-renders.
+    // Stable document for the editor — always kept in sync with the active card's
+    // current content so that when the panel opens (editor mounts), it gets the
+    // latest content. Subsequent updates while the editor is mounted use
+    // resetContent imperatively via the content sync effect above.
     const initialDocRef = useRef<UploadedFile | null>(null);
-    if (activeCard && !initialDocRef.current) {
+    if (activeCard) {
       const level = effectiveLevel(activeCard, detailLevel);
       const raw = activeCard.synthesisMap?.[level] || '';
       initialDocRef.current = { id: activeCard.id, name: activeCard.text, content: ensureH1(raw, activeCard.text) } as UploadedFile;
+    } else {
+      initialDocRef.current = null;
     }
-    // Reset when no card is selected so next card gets a fresh initial
-    if (!activeCard) initialDocRef.current = null;
 
     // Unsaved-changes gating: if editor is dirty, show dialog before running action
     const gatedAction = useCallback((action: () => void) => {

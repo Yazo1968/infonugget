@@ -126,6 +126,8 @@ export interface StoredNugget {
   briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
+  /** Gemini File Search store name for this nugget's document corpus. */
+  geminiStoreName?: string;
   /** Persisted DocViz analysis result */
   docVizResult?: import('../../types').DocVizResult;
   /** CardFolder metadata for nuggets that contain card folders. */
@@ -181,6 +183,10 @@ export interface StoredNuggetDocument {
   bookmarks?: Array<{ id: string; title: string; page: number; level: number; children: any[]; wordCount?: number }>;
   /** How the bookmark tree was obtained (native-pdf only). */
   bookmarkSource?: 'pdf_bookmarks' | 'ai_generated' | 'manual';
+  /** Gemini File Search document resource name (e.g. corpora/xxx/documents/yyy). */
+  geminiDocumentName?: string;
+  /** Import status for Gemini File Search: set once upload is initiated. */
+  geminiImportStatus?: 'pending' | 'importing' | 'ready' | 'error';
 }
 
 export interface StoredProject {

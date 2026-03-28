@@ -16,6 +16,7 @@ import {
 } from '../types';
 import { findCard, flattenCards, mapCardById, mapCards } from '../utils/cardUtils';
 import { cleanupNuggetExternalFiles } from '../utils/deletionCleanup';
+import { createStoreForNugget, deleteStoreForNugget, removeDocumentFromStore, importDocumentToStore, deleteStoresForNuggets } from '../utils/fileSearchStore';
 import { ThemeContext, useThemeContext } from './ThemeContext';
 import { NuggetContext, useNuggetContext } from './NuggetContext';
 import { ProjectContext, useProjectContext } from './ProjectContext';
@@ -415,6 +416,14 @@ export const AppProvider: React.FC<{
   // Nugget helpers
   const addNugget = useCallback((nugget: Nugget) => {
     setNuggets((prev) => [...prev, nugget]);
+    // Fire-and-forget: create a Gemini File Search Store for the new nugget
+    createStoreForNugget(nugget.id).then((storeName) => {
+      if (storeName) {
+        setNuggets((prev) =>
+          prev.map((n) => (n.id === nugget.id ? { ...n, geminiStoreName: storeName } : n)),
+        );
+      }
+    });
   }, []);
 
   const deleteNugget = useCallback(
@@ -422,7 +431,9 @@ export const AppProvider: React.FC<{
       // Storage-first: clean up external files before removing from state
       const nugget = nuggets.find((n) => n.id === nuggetId);
       if (nugget) {
-        await cleanupNuggetExternalFiles(nugget);
+        // Clean up Gemini File Search Store (best-effort, parallel with Files API cleanup)
+        const storeCleanup = deleteStoreForNugget(nuggetId, nugget.geminiStoreName);
+        await Promise.allSettled([cleanupNuggetExternalFiles(nugget), storeCleanup]);
       }
       // Then remove from state
       setNuggets((prev) => prev.filter((n) => n.id !== nuggetId));
@@ -568,6 +579,12 @@ export const AppProvider: React.FC<{
   const removeNuggetDocument = useCallback(
     (docId: string) => {
       if (!selectedNuggetId) return;
+      // Fire-and-forget: remove from Gemini File Search Store
+      const nugget = nuggets.find((n) => n.id === selectedNuggetId);
+      const doc = nugget?.documents.find((d) => d.id === docId);
+      if (nugget?.geminiStoreName && doc?.geminiDocumentName) {
+        removeDocumentFromStore(nugget.id, nugget.geminiStoreName, doc.geminiDocumentName);
+      }
       setNuggets((prev) =>
         prev.map((n) => {
           if (n.id !== selectedNuggetId) return n;
@@ -625,6 +642,39 @@ export const AppProvider: React.FC<{
       const nugget = nuggets.find((n) => n.id === selectedNuggetId);
       const doc = nugget?.documents.find((d) => d.id === docId);
       const wasEnabled = doc?.enabled !== false;
+
+      // Fire-and-forget: sync with Gemini File Search Store
+      if (nugget?.geminiStoreName && doc) {
+        if (wasEnabled && doc.geminiDocumentName) {
+          // Disabling — remove from store
+          removeDocumentFromStore(nugget.id, nugget.geminiStoreName, doc.geminiDocumentName);
+        } else if (!wasEnabled) {
+          // Re-enabling — re-import to store
+          const fileBase64 = doc.sourceType === 'native-pdf' && doc.pdfBase64
+            ? doc.pdfBase64
+            : doc.content ? btoa(unescape(encodeURIComponent(doc.content))) : undefined;
+          const mimeType = doc.sourceType === 'native-pdf' ? 'application/pdf' : 'text/plain';
+          if (fileBase64) {
+            importDocumentToStore(
+              nugget.id, nugget.geminiStoreName, doc.name,
+              fileBase64, mimeType,
+            ).then((geminiDocName) => {
+              if (geminiDocName) {
+                setNuggets((prev) =>
+                  prev.map((n) =>
+                    n.id !== nugget.id ? n : {
+                      ...n,
+                      documents: n.documents.map((d) =>
+                        d.id === docId ? { ...d, geminiDocumentName: geminiDocName, geminiImportStatus: 'ready' as const } : d,
+                      ),
+                    },
+                  ),
+                );
+              }
+            });
+          }
+        }
+      }
 
       setNuggets((prev) =>
         prev.map((n) => {
@@ -747,7 +797,10 @@ export const AppProvider: React.FC<{
         const nuggetsToDel = project.nuggetIds
           .map((nid) => nuggets.find((n) => n.id === nid))
           .filter((n): n is Nugget => !!n);
-        await Promise.allSettled(nuggetsToDel.map((n) => cleanupNuggetExternalFiles(n)));
+        await Promise.allSettled([
+          ...nuggetsToDel.map((n) => cleanupNuggetExternalFiles(n)),
+          deleteStoresForNuggets(nuggetsToDel),
+        ]);
         // Remove all nuggets from state in a single batch
         const nuggetIdSet = new Set(project.nuggetIds);
         setNuggets((prev) => prev.filter((n) => !nuggetIdSet.has(n.id)));

@@ -82,6 +82,21 @@ export interface BookmarkNode {
 /** How the bookmark tree was obtained. */
 export type BookmarkSource = 'pdf_bookmarks' | 'ai_generated' | 'manual';
 
+// ── Retrieved chunk (from Gemini File Search retrieval) ──
+
+export interface RetrievedChunk {
+  /** The text content of the retrieved chunk */
+  text: string;
+  /** ID of the source document this chunk belongs to */
+  documentId: string;
+  /** Display name of the source document */
+  documentName: string;
+  /** Sequential index of this chunk within the document */
+  chunkIndex: number;
+  /** Relevance score from the retrieval system (0-1) */
+  relevanceScore?: number;
+}
+
 // ── Album image (first-class image item in a card's album) ──
 
 export interface AlbumImage {
@@ -218,6 +233,10 @@ export interface UploadedFile {
   lastEnabledAt?: number;
   /** Timestamp when chat was last disabled for this document (epoch ms). */
   lastDisabledAt?: number;
+  /** Gemini File Search document resource name (e.g. corpora/xxx/documents/yyy). */
+  geminiDocumentName?: string;
+  /** Import status for Gemini File Search: set once upload is initiated. */
+  geminiImportStatus?: 'pending' | 'importing' | 'ready' | 'error';
 }
 
 export interface PendingFileUpload {
@@ -711,6 +730,8 @@ export interface Nugget {
   briefingSuggestions?: BriefingSuggestions;
   /** ISO timestamp of when this nugget was last navigated away from (for Files API cleanup). */
   lastClosedAt?: string;
+  /** Gemini File Search store name for this nugget's document corpus. */
+  geminiStoreName?: string;
   /** Persisted DocViz analysis result */
   docVizResult?: DocVizResult;
   createdAt: number;

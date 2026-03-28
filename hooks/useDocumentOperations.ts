@@ -12,6 +12,8 @@ import {
   uploadToFilesAPI,
   deleteFromFilesAPI,
 } from '../utils/ai';
+import { retrieveChunksApi } from '../utils/api';
+import type { RetrievedChunk } from '../types';
 import {
   createPlaceholderDocument,
   processFileToDocument,
@@ -26,6 +28,7 @@ import { resolveEnabledDocs } from '../utils/documentResolution';
 import { useToast } from '../components/ToastNotification';
 import { RecordUsageFn } from './useTokenUsage';
 import { createLogger } from '../utils/logger';
+import { importDocumentToStore } from '../utils/fileSearchStore';
 
 const log = createLogger('DocOps');
 
@@ -181,71 +184,99 @@ export function useDocumentOperations({
         // which will use a verbatim extraction prompt
       }
 
-      // AI synthesis requires docs on Files API — auto-upload any that are missing fileId
-      let resolvedDocs = docsWithFileId;
-      if (resolvedDocs.length === 0) {
-        const uploadable = enabledDocs.filter((d) => d.content || d.pdfBase64);
-        if (uploadable.length === 0) {
-          addToast({
-            type: 'error',
-            message: 'No uploadable documents found',
-            detail: 'Documents must have content before AI synthesis can work.',
-            duration: 8000,
-          });
-          setGeneratingSourceIds((prev) => {
-            const next = new Set(prev);
-            next.delete(_editorCardId);
-            return next;
-          });
-          return;
-        }
+      // Build section focus early — needed for both chunk retrieval query and prompt
+      const sectionFocus = buildSectionFocus(cardTitle, enabledDocs);
 
-        addToast({ type: 'info', message: 'Uploading documents to Files API...', duration: 4000 });
-        for (const doc of uploadable) {
-          try {
-            let newFileId: string | undefined;
-            if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
-              newFileId = await uploadToFilesAPI(
-                base64ToBlob(doc.pdfBase64, 'application/pdf'),
-                doc.name,
-                'application/pdf',
-              );
-            } else if (doc.content) {
-              newFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
-            }
-            if (newFileId) {
-              updateNuggetDocument(doc.id, { ...doc, fileId: newFileId });
-              // Update local reference for the current generation call
-              (doc as any).fileId = newFileId;
-            }
-          } catch (err: any) {
-            log.warn(`Auto-upload failed for "${doc.name}":`, err);
-            addToast({
-              type: 'error',
-              message: `Files API upload failed for "${doc.name}"`,
-              detail: err.message || 'Check Edge Function secrets and network connection.',
-              duration: 8000,
-            });
+      // ── Chunk retrieval (preferred) or Files API fallback ──
+      let retrievedChunks: RetrievedChunk[] | null = null;
+
+      if (selectedNugget.geminiStoreName) {
+        // Prefer chunk-based retrieval via Gemini File Search
+        try {
+          const queryText = sectionFocus
+            ? `${cardTitle}\n${sectionFocus}`
+            : cardTitle;
+          const result = await retrieveChunksApi({
+            storeName: selectedNugget.geminiStoreName,
+            queryText,
+          });
+          if (result.chunks.length > 0) {
+            retrievedChunks = result.chunks;
+            log.info(`Retrieved ${result.chunks.length} chunks for "${cardTitle}"`);
+          } else {
+            log.warn(`Chunk retrieval returned 0 chunks for "${cardTitle}" — falling back to Files API`);
           }
-        }
-
-        // Re-check after upload attempts
-        resolvedDocs = enabledDocs.filter((d) => d.fileId);
-        if (resolvedDocs.length === 0) {
-          setGeneratingSourceIds((prev) => {
-            const next = new Set(prev);
-            next.delete(_editorCardId);
-            return next;
-          });
-          return;
+        } catch (err: any) {
+          log.warn('Chunk retrieval failed, falling back to Files API:', err.message);
         }
       }
 
-      // Build unified section focus + content prompt
+      // Legacy fallback: Files API document blocks
+      let resolvedDocs = docsWithFileId;
+      if (!retrievedChunks) {
+        if (resolvedDocs.length === 0) {
+          const uploadable = enabledDocs.filter((d) => d.content || d.pdfBase64);
+          if (uploadable.length === 0) {
+            addToast({
+              type: 'error',
+              message: 'No uploadable documents found',
+              detail: 'Documents must have content before AI synthesis can work.',
+              duration: 8000,
+            });
+            setGeneratingSourceIds((prev) => {
+              const next = new Set(prev);
+              next.delete(_editorCardId);
+              return next;
+            });
+            return;
+          }
+
+          addToast({ type: 'info', message: 'Uploading documents to Files API...', duration: 4000 });
+          for (const doc of uploadable) {
+            try {
+              let newFileId: string | undefined;
+              if (doc.sourceType === 'native-pdf' && doc.pdfBase64) {
+                newFileId = await uploadToFilesAPI(
+                  base64ToBlob(doc.pdfBase64, 'application/pdf'),
+                  doc.name,
+                  'application/pdf',
+                );
+              } else if (doc.content) {
+                newFileId = await uploadToFilesAPI(doc.content, doc.name, 'text/plain');
+              }
+              if (newFileId) {
+                updateNuggetDocument(doc.id, { ...doc, fileId: newFileId });
+                // Update local reference for the current generation call
+                (doc as any).fileId = newFileId;
+              }
+            } catch (err: any) {
+              log.warn(`Auto-upload failed for "${doc.name}":`, err);
+              addToast({
+                type: 'error',
+                message: `Files API upload failed for "${doc.name}"`,
+                detail: err.message || 'Check Edge Function secrets and network connection.',
+                duration: 8000,
+              });
+            }
+          }
+
+          // Re-check after upload attempts
+          resolvedDocs = enabledDocs.filter((d) => d.fileId);
+          if (resolvedDocs.length === 0) {
+            setGeneratingSourceIds((prev) => {
+              const next = new Set(prev);
+              next.delete(_editorCardId);
+              return next;
+            });
+            return;
+          }
+        }
+      }
+
+      // Build unified content prompt (sectionFocus already computed above)
       const isSnapshot = detailLevel === 'DirectContent';
       const isCover = !isSnapshot && isCoverLevel(detailLevel);
       const nuggetDomain = selectedNugget?.domain;
-      const sectionFocus = buildSectionFocus(cardTitle, enabledDocs);
 
       let finalPrompt: string;
       let systemRole: string;
@@ -283,16 +314,28 @@ export function useDocumentOperations({
       try {
         const systemBlocks: Array<{ text: string; cache: boolean }> = [{ text: systemRole, cache: false }];
 
-        // Build user message with document blocks + section focus + content prompt
-        const docBlocks = resolvedDocs.map((d) => ({
-          type: 'document' as const,
-          source: { type: 'file' as const, file_id: d.fileId! },
-          title: d.name,
-        }));
+        // Build user message: chunks (preferred) or Files API document blocks (fallback)
+        let userContent: any[];
+        if (retrievedChunks) {
+          // Chunk-based context: inline text from retrieved chunks
+          const chunkContext = retrievedChunks.map((c) =>
+            `--- Chunk from "${c.documentName}" ---\n${c.text}\n--- End Chunk ---`
+          ).join('\n\n');
+          const contextPreamble = 'The following are relevant excerpts from the source documents. Synthesize content based on these excerpts.\n\n';
+          userContent = [{ type: 'text' as const, text: contextPreamble + chunkContext + '\n\n' + finalPrompt }];
+        } else {
+          // Legacy: Files API document blocks
+          const docBlocks = resolvedDocs.map((d) => ({
+            type: 'document' as const,
+            source: { type: 'file' as const, file_id: d.fileId! },
+            title: d.name,
+          }));
+          userContent = [...docBlocks, { type: 'text' as const, text: finalPrompt }];
+        }
         const messages: Array<{ role: 'user' | 'assistant'; content: any }> = [
           {
             role: 'user' as const,
-            content: [...docBlocks, { type: 'text' as const, text: finalPrompt }],
+            content: userContent,
           },
         ];
 
@@ -601,6 +644,21 @@ export function useDocumentOperations({
             }
           }
           updateNuggetDocument(placeholder.id, { ...processed, name: uniqueName, fileId });
+          // Fire-and-forget: import to Gemini File Search Store
+          if (selectedNugget?.geminiStoreName && processed.content) {
+            importDocumentToStore(
+              selectedNugget.id, selectedNugget.geminiStoreName,
+              uniqueName, btoa(unescape(encodeURIComponent(processed.content))), 'text/plain',
+            ).then((geminiDocName) => {
+              if (geminiDocName) {
+                updateNuggetDocument(placeholder.id, {
+                  ...processed, name: uniqueName, fileId,
+                  geminiDocumentName: geminiDocName,
+                  geminiImportStatus: 'ready' as const,
+                });
+              }
+            });
+          }
         })
         .catch((err) => {
           updateNuggetDocument(placeholder.id, { ...placeholder, status: 'error' as const });
@@ -612,7 +670,7 @@ export function useDocumentOperations({
           });
         });
     },
-    [updateNuggetDocument, addToast],
+    [selectedNugget, updateNuggetDocument, addToast],
   );
 
   // ── Upload documents ──
@@ -708,7 +766,7 @@ export function useDocumentOperations({
               ? flattenBookmarks(bookmarks)
               : [];
 
-            updateNuggetDocument(placeholder.id, {
+            const pdfDoc: UploadedFile = {
               id: placeholder.id,
               name: uniqueName,
               size: file.size,
@@ -726,7 +784,23 @@ export function useDocumentOperations({
               version: 1,
               sourceOrigin: { type: 'uploaded' as const, timestamp: Date.now() },
               fileId: pdfFileId,
-            });
+            };
+            updateNuggetDocument(placeholder.id, pdfDoc);
+            // Fire-and-forget: import to Gemini File Search Store
+            if (selectedNugget?.geminiStoreName && processedBase64) {
+              importDocumentToStore(
+                selectedNugget.id, selectedNugget.geminiStoreName,
+                uniqueName, processedBase64, 'application/pdf',
+              ).then((geminiDocName) => {
+                if (geminiDocName) {
+                  updateNuggetDocument(placeholder.id, {
+                    ...pdfDoc,
+                    geminiDocumentName: geminiDocName,
+                    geminiImportStatus: 'ready' as const,
+                  });
+                }
+              });
+            }
           }
         }
       }
