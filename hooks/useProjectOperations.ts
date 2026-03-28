@@ -6,12 +6,14 @@ import { Nugget, Project, UploadedFile, CardItem, isCardFolder, PendingFileUploa
 import { getUniqueName } from '../utils/naming';
 import { uploadToFilesAPI } from '../utils/ai';
 import { processFileToDocument, fileToBase64, base64ToBlob } from '../utils/fileProcessing';
-import { flattenBookmarks } from '../utils/pdfBookmarks';
+import { flattenBookmarks, headingsToBookmarks } from '../utils/pdfBookmarks';
 import type { PdfProcessorResult } from '../components/PdfProcessorModal';
 import { useToast } from '../components/ToastNotification';
 import { generateDomain } from '../utils/domainGeneration';
 import { RecordUsageFn } from './useTokenUsage';
 import { createLogger } from '../utils/logger';
+import { importDocumentToStore } from '../utils/fileSearchStore';
+import { chatMessageApi } from '../utils/api';
 
 const log = createLogger('ProjectOps');
 
@@ -143,9 +145,12 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
           })();
         }
 
-        // Process native-PDF files sequentially — each opens PdfProcessorModal for Gemini analysis
+        // Process native-PDF files sequentially
         if (pdfPending.length > 0) {
           (async () => {
+            // Read geminiStoreName from the freshly created nugget
+            const storeName = nugget.geminiStoreName;
+
             for (const pf of pdfPending) {
               try {
                 const pdfBase64 = await fileToBase64(pf.file);
@@ -160,10 +165,95 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
                   ),
                 }));
 
-                // Open PdfProcessorModal via ref bridge
+                // ── Fast path: File Search Store exists → upload, import, query for headings ──
+                if (storeName) {
+                  log.info(`Fast path: uploading "${pf.file.name}" to File Search Store`);
+                  addToast({ type: 'info', message: `Importing "${pf.file.name}" to File Search...`, duration: 8000 });
+
+                  // 1. Upload to Files API (legacy fallback, best-effort)
+                  let pdfFileId: string | undefined;
+                  try {
+                    pdfFileId = await uploadToFilesAPI(base64ToBlob(pdfBase64, 'application/pdf'), pf.file.name, 'application/pdf');
+                  } catch { /* best-effort */ }
+
+                  // 2. Import to File Search Store
+                  let geminiDocName: string | undefined;
+                  try {
+                    geminiDocName = await importDocumentToStore(
+                      nugget.id, storeName, pf.file.name, pdfBase64, 'application/pdf',
+                    );
+                    log.info(`File Search import done for "${pf.file.name}": ${geminiDocName}`);
+                  } catch (err) {
+                    log.warn(`File Search import failed for "${pf.file.name}":`, err);
+                  }
+
+                  // 3. Wait for Gemini to index, then query for headings via File Search
+                  let bookmarks: import('../types').BookmarkNode[] = [];
+                  let structure: import('../types').Heading[] = [];
+                  if (geminiDocName && storeName) {
+                    addToast({ type: 'info', message: `Extracting headings for "${pf.file.name}"...`, duration: 8000 });
+                    try {
+                      const response = await chatMessageApi({
+                        action: 'send_message',
+                        userText: 'List the detailed table of contents of this document including all main sections, sub-sections, and sub-sub-sections. Reply ONLY with a markdown table with columns: Level (H1/H2/H3), Title, Page. No other text before or after the table.',
+                        documents: [{ name: pf.file.name, content: '' }],
+                        geminiStoreName: storeName,
+                        maxTokens: 8000,
+                      });
+                      const text = response.responseText || '';
+                      log.info(`TOC extraction response (${text.length} chars)`);
+                      // Parse markdown table rows: | H1 | Title | 3 |
+                      const rows = text.split('\n').filter((line) => line.includes('|') && !line.includes('---') && !line.toLowerCase().includes('level'));
+                      for (const row of rows) {
+                        const cells = row.split('|').map((c) => c.trim()).filter(Boolean);
+                        if (cells.length >= 2) {
+                          const levelStr = cells[0].replace(/\*\*/g, '');
+                          const title = cells[1].replace(/\*\*/g, '').trim();
+                          const page = parseInt(cells[2], 10) || 0;
+                          const level = levelStr === 'H1' ? 1 : levelStr === 'H2' ? 2 : levelStr === 'H3' ? 3 : 1;
+                          if (title.length > 1 && title.length < 200) {
+                            structure.push({
+                              level, text: title,
+                              id: `h-${structure.length}-${Math.random().toString(36).substr(2, 4)}`,
+                              selected: false, page,
+                            });
+                          }
+                        }
+                      }
+                      if (structure.length > 0) {
+                        bookmarks = headingsToBookmarks(structure);
+                        log.info(`Extracted ${structure.length} headings for "${pf.file.name}"`);
+                      } else {
+                        log.warn(`No headings parsed from TOC response for "${pf.file.name}"`);
+                      }
+                    } catch (err) {
+                      log.warn(`TOC extraction failed for "${pf.file.name}":`, err);
+                    }
+                  }
+
+                  // 4. Commit final document
+                  updateNugget(nugget.id, (n) => ({
+                    ...n,
+                    documents: n.documents.map((d) =>
+                      d.id === pf.placeholderId
+                        ? {
+                            ...d, pdfBase64, bookmarks, bookmarkSource: 'ai_generated' as const,
+                            structure, status: 'ready' as const, progress: 100,
+                            createdAt: Date.now(), originalName: pf.file.name, version: 1,
+                            sourceOrigin: { type: 'uploaded' as const, timestamp: Date.now() },
+                            fileId: pdfFileId, geminiDocumentName: geminiDocName,
+                            geminiImportStatus: geminiDocName ? 'ready' as const : 'error' as const,
+                          }
+                        : d,
+                    ),
+                    lastModifiedAt: Date.now(),
+                  }));
+                  continue;
+                }
+
+                // ── Legacy path: no File Search Store → open PdfProcessorModal ──
                 const askPdfProcessor = askPdfProcessorRef?.current;
                 if (!askPdfProcessor) {
-                  // Fallback: store directly without bookmarks (ref not wired yet — shouldn't happen)
                   let pdfFileId: string | undefined;
                   try {
                     pdfFileId = await uploadToFilesAPI(base64ToBlob(pdfBase64, 'application/pdf'), pf.file.name, 'application/pdf');
@@ -276,7 +366,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         if (readyDocs.length > 0 && !nugget.domain) {
           (async () => {
             try {
-              const domain = await generateDomain(readyDocs, recordUsage);
+              const domain = await generateDomain(readyDocs, recordUsage, nugget.geminiStoreName);
               updateNugget(nugget.id, (n) => ({ ...n, domain, lastModifiedAt: Date.now() }));
               addToast({
                 type: 'info',
@@ -519,7 +609,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
       }
       setIsRegeneratingDomain(true);
       try {
-        const domain = await generateDomain(readyDocs, recordUsage);
+        const domain = await generateDomain(readyDocs, recordUsage, nugget.geminiStoreName);
         updateNugget(nuggetId, (n) => ({ ...n, domain, domainReviewNeeded: false, lastModifiedAt: Date.now() }));
         addToast({ type: 'success', message: 'Domain regenerated successfully.', duration: 4000 });
       } catch (err) {
@@ -575,7 +665,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
 
     (async () => {
       try {
-        const domain = await generateDomain(allReadyDocs, recordUsage);
+        const domain = await generateDomain(allReadyDocs, recordUsage, nugget.geminiStoreName);
         updateNugget(nuggetId, (n) => ({ ...n, domain, lastModifiedAt: Date.now() }));
         addToast({
           type: 'info',

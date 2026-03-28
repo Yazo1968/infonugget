@@ -22,6 +22,7 @@ export function useBriefingSuggestions(recordUsage?: RecordUsageFn) {
       domain: string | undefined,
       documents: UploadedFile[],
       totalWordCount: number,
+      geminiStoreName?: string,
     ): Promise<BriefingSuggestions> => {
       const controller = createAbort();
       try {
@@ -67,11 +68,13 @@ export function useBriefingSuggestions(recordUsage?: RecordUsageFn) {
 
         const response = await chatMessageApi(
           {
-            action: 'send_message',
+            action: geminiStoreName ? 'docviz_analyse' : 'send_message',
             userText: prompt,
+            systemPrompt: geminiStoreName ? 'You are a presentation strategist. Analyze the documents and suggest briefing options. Output ONLY the markdown tables as requested — no other commentary.' : undefined,
             documents: chatDocs,
             domain,
-            conversationHistory: [],
+            conversationHistory: geminiStoreName ? undefined : [],
+            geminiStoreName,
           },
           controller.signal,
         );

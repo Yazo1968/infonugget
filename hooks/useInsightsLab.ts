@@ -163,6 +163,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
           domain: selectedNugget.domain,
           qualityReport: selectedNugget.dqafReport ?? selectedNugget.qualityReport,
           documents: resolvedDocs,
+          geminiStoreName: selectedNugget.geminiStoreName,
         }, controller.signal);
 
         // Handle budget exceeded (server returns a friendly message)
@@ -424,6 +425,7 @@ export function useInsightsLab(recordUsage?: RecordUsageFn) {
         action: 'initiate_chat',
         domain: selectedNugget.domain,
         documents: resolvedDocs,
+        geminiStoreName: selectedNugget.geminiStoreName,
       }, controller.signal);
 
       recordUsage?.({

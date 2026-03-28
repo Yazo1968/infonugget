@@ -187,6 +187,8 @@ export function useSmartDeck(
           documents: apiDocs,
           domain: selectedNugget.domain,
           conversationHistory: [],
+          geminiStoreName: selectedNugget.geminiStoreName,
+          maxTokens: 16000,
         }, abortController.signal);
 
         // Record token usage

@@ -79,6 +79,7 @@ export function useDocViz(): UseDocVizReturn {
         documents: [{ name: doc.name, fileId: doc.fileId }],
         maxTokens: 16000,
         thinking: { budgetTokens: 10000 },
+        geminiStoreName: selectedNugget?.geminiStoreName,
       }, controller.signal);
 
       const text = response.responseText;

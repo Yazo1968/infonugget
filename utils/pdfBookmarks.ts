@@ -179,8 +179,15 @@ export async function writeBookmarksToPdf(pdfBase64: string, bookmarks: Bookmark
   const { PDFDocument, PDFName, PDFString, PDFArray, PDFRef, PDFNumber } = await import('pdf-lib');
 
   const pdfBytes = base64ToUint8Array(pdfBase64);
-  const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
-  const pages = pdfDoc.getPages();
+  let pdfDoc;
+  let pages;
+  try {
+    pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+    pages = pdfDoc.getPages();
+  } catch {
+    // Non-standard PDF structure — cannot bake bookmarks
+    return pdfBase64;
+  }
   const context = pdfDoc.context;
 
   // Helper: get page ref for a 1-based page number

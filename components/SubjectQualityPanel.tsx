@@ -68,7 +68,8 @@ export interface SubjectQualityPanelProps {
   briefDiscardRef?: React.MutableRefObject<(() => void) | null>;
   documents: UploadedFile[];
   subject?: string;
-  onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number) => Promise<BriefingSuggestions>;
+  geminiStoreName?: string;
+  onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number, geminiStoreName?: string) => Promise<BriefingSuggestions>;
   onAbortSuggestions?: () => void;
   // Assessment
   dqafReport: DQAFReport | undefined;
@@ -229,7 +230,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
     onDeleteLogEntry, onDeleteAllLogEntries, onRenameLogEntry, onCreateLogEntry,
     // Brief
     briefing, briefingSuggestions, briefReviewNeeded, onBriefingChange, onSuggestionsChange, onDismissBriefReview, onBriefDirtyChange, briefSaveRef, briefDiscardRef, documents, subject,
-    onGenerateSuggestions, onAbortSuggestions,
+    onGenerateSuggestions, onAbortSuggestions, geminiStoreName,
     // Assessment
     dqafReport, effectiveStatus, isChecking, checkError,
     onRunCheck, onAbortCheck, onFixDocuments,
@@ -379,6 +380,7 @@ const SubjectQualityPanel: React.FC<SubjectQualityPanelProps> = (props) => {
               onDirtyChange={handleBriefDirtyChange}
               documents={documents}
               subject={subject}
+              geminiStoreName={geminiStoreName}
               onGenerateSuggestions={onGenerateSuggestions}
               onAbortSuggestions={onAbortSuggestions}
               isOpen={isOpen}
@@ -903,7 +905,8 @@ interface BriefTabProps {
   onDirtyChange: (dirty: boolean) => void;
   documents: UploadedFile[];
   subject?: string;
-  onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number) => Promise<BriefingSuggestions>;
+  geminiStoreName?: string;
+  onGenerateSuggestions?: (subject: string | undefined, documents: UploadedFile[], totalWordCount: number, geminiStoreName?: string) => Promise<BriefingSuggestions>;
   onAbortSuggestions?: () => void;
   isOpen: boolean;
 }
@@ -917,7 +920,7 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
   domainReviewNeeded, onSaveDomain, onRegenerateDomain, onDismissDomainReview,
   // Brief
   briefing, briefingSuggestions, briefReviewNeeded, onBriefingChange, onSuggestionsChange, onDismissBriefReview, onDirtyChange, documents, subject,
-  onGenerateSuggestions, onAbortSuggestions, isOpen,
+  onGenerateSuggestions, onAbortSuggestions, geminiStoreName, isOpen,
 }, ref) {
   // Domain ref for combined dirty gating
   const domainRef = useRef<DomainSectionHandle>(null);
@@ -1005,7 +1008,7 @@ const BriefTab = forwardRef<BriefTabHandle, BriefTabProps>(function BriefTab({
     setIsSuggesting(true);
     setSuggestError(null);
     try {
-      const result = await onGenerateSuggestions(subject, selectedDocs, totalWordCount);
+      const result = await onGenerateSuggestions(subject, selectedDocs, totalWordCount, geminiStoreName);
       setLocalSuggestions(result);
       // Auto-select the first suggestion for each field
       const fields: (keyof typeof BRIEFING_LIMITS)[] = ['objective', 'audience', 'type', 'focus', 'tone'];

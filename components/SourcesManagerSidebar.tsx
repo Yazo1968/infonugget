@@ -145,6 +145,15 @@ const SourcesManagerSidebar: React.FC<SourcesManagerSidebarProps> = ({
                     {isPdf ? 'PDF' : 'MD'}
                   </span>
 
+                  {/* Gemini File Search status */}
+                  {doc.geminiImportStatus === 'importing' || (isPdf && !doc.geminiImportStatus && doc.status === 'processing') ? (
+                    <span className="shrink-0 w-3 h-3 rounded-full border-2 border-t-transparent border-blue-400 animate-spin" title="Indexing in Gemini File Search..." />
+                  ) : doc.geminiImportStatus === 'ready' ? (
+                    <span className="shrink-0 w-2.5 h-2.5 rounded-full bg-emerald-500" title="Indexed in Gemini File Search" />
+                  ) : doc.geminiImportStatus === 'error' ? (
+                    <span className="shrink-0 w-2.5 h-2.5 rounded-full bg-red-500" title="File Search indexing failed" />
+                  ) : null}
+
                   {/* Name or rename input */}
                   {isRenaming ? (
                     <input

@@ -12,7 +12,7 @@ import {
   uploadToFilesAPI,
   deleteFromFilesAPI,
 } from '../utils/ai';
-import { retrieveChunksApi } from '../utils/api';
+import { retrieveChunksApi, chatMessageApi } from '../utils/api';
 import type { RetrievedChunk } from '../types';
 import {
   createPlaceholderDocument,
@@ -124,6 +124,11 @@ export function useDocumentOperations({
   const { selectedNugget, nuggets, updateNugget, addNugget, addNuggetDocument, updateNuggetDocument, removeNuggetDocument } = useNuggetContext();
   const { projects, addNuggetToProject } = useProjectContext();
   const { setActiveCardId } = useSelectionContext();
+
+  // Ref to track latest nuggets — avoids stale closure when reading geminiStoreName
+  // after addNugget completes but before re-render propagates to selectedNugget.
+  const nuggetsRef = useRef(nuggets);
+  nuggetsRef.current = nuggets;
 
   const { addToast } = useToast();
 
@@ -768,7 +773,14 @@ export function useDocumentOperations({
         if (choice === 'markdown') {
           // User chose "Convert to Markdown"
           commitMarkdownDoc(file, placeholder, uniqueName);
-        } else if (selectedNugget?.geminiStoreName) {
+        }
+        // Read geminiStoreName from ref to avoid stale closure after addNugget
+        const latestNugget = nuggetsRef.current.find((n) => n.id === selectedNugget?.id);
+        const geminiStoreName = latestNugget?.geminiStoreName || selectedNugget?.geminiStoreName;
+
+        log.info(`PDF choice: ${choice}, geminiStoreName: ${geminiStoreName || 'NONE'}, selectedNugget.id: ${selectedNugget?.id}`);
+
+        if (choice !== 'markdown' && geminiStoreName) {
           // ── Fast path: File Search import (bypasses Gemini Flash heading extraction) ──
           // Commit PDF immediately as 'processing' so it shows in the Sources panel
           const pdfBase64 = await fileToBase64(file);
@@ -786,6 +798,7 @@ export function useDocumentOperations({
             structure: [],
             status: 'processing' as const,
             progress: 50,
+            geminiImportStatus: 'importing' as const,
             createdAt: Date.now(),
             originalName: file.name,
             version: 1,
@@ -795,6 +808,8 @@ export function useDocumentOperations({
 
           // Async pipeline: Files API upload + File Search import + heading extraction
           (async () => {
+            try {
+            addToast({ type: 'info', message: `Processing "${uniqueName}"...`, duration: 5000 });
             // 1. Upload to Files API (legacy fallback — non-blocking)
             let pdfFileId: string | undefined;
             try {
@@ -808,53 +823,55 @@ export function useDocumentOperations({
             }
 
             // 2. Import to File Search Store
+            addToast({ type: 'info', message: `Importing "${uniqueName}" to File Search...`, duration: 5000 });
             let geminiDocName: string | undefined;
             try {
               geminiDocName = await importDocumentToStore(
-                selectedNugget.id, selectedNugget.geminiStoreName!,
+                selectedNugget!.id, geminiStoreName!,
                 uniqueName, pdfBase64, 'application/pdf',
               );
             } catch (err) {
               log.warn('File Search import failed:', err);
             }
 
-            // 3. Extract headings via lightweight retrieval query
-            let bookmarks: BookmarkNode[] = [];
-            let structure: Heading[] = [];
-            if (geminiDocName && selectedNugget.geminiStoreName) {
-              try {
-                const headingQuery = 'List all section headings and their hierarchy in this document. For each heading, provide the heading level (1 for top-level, 2 for sub-section, etc.), and the exact heading text. Format as a JSON array: [{"level": 1, "title": "..."}, {"level": 2, "title": "..."}, ...]';
-                const result = await retrieveChunksApi({
-                  storeName: selectedNugget.geminiStoreName,
-                  queryText: headingQuery,
-                  maxChunks: 50,
-                });
-                // Parse headings from the responseText (Gemini's natural language answer)
-                const responseText = result.responseText || '';
-                const parsed = parseHeadingsFromResponse(responseText);
-                if (parsed.length > 0) {
-                  structure = parsed;
-                  bookmarks = headingsToBookmarks(parsed);
-                  log.info(`Extracted ${parsed.length} headings via File Search for "${uniqueName}"`);
-                } else {
-                  log.warn(`No headings parsed from File Search response for "${uniqueName}"`);
-                }
-              } catch (err) {
-                log.warn('Heading extraction via File Search failed:', err);
-              }
+            // Update status immediately after import — don't wait for heading extraction
+            if (geminiDocName) {
+              updateNugget(selectedNugget!.id, (n) => ({
+                ...n,
+                documents: n.documents.map((d) =>
+                  d.id === placeholder.id ? { ...d, geminiDocumentName: geminiDocName, geminiImportStatus: 'ready' as const } : d,
+                ),
+                lastModifiedAt: Date.now(),
+              }));
+              addToast({ type: 'success', message: `"${uniqueName}" indexed and ready`, duration: 4000 });
             }
 
-            // 4. Final update with all results
-            updateNuggetDocument(placeholder.id, {
-              ...pdfDoc,
-              fileId: pdfFileId,
-              bookmarks,
-              structure,
-              geminiDocumentName: geminiDocName,
-              geminiImportStatus: geminiDocName ? 'ready' as const : undefined,
-              status: 'ready' as const,
-              progress: 100,
-            });
+            // 3. TOC extraction will be triggered manually by the user — not automatic
+
+            // 4. Final update — set document as ready with file ID
+            updateNugget(selectedNugget!.id, (n) => ({
+              ...n,
+              documents: n.documents.map((d) =>
+                d.id === placeholder.id
+                  ? {
+                      ...pdfDoc,
+                      fileId: pdfFileId,
+                      status: 'ready' as const,
+                      progress: 100,
+                    }
+                  : d,
+              ),
+              lastModifiedAt: Date.now(),
+            }));
+            } catch (pipelineErr: any) {
+              log.error('PDF pipeline IIFE crashed:', pipelineErr);
+              addToast({ type: 'error', message: `PDF processing failed: ${pipelineErr.message || 'Unknown error'}`, duration: 10000 });
+              updateNugget(selectedNugget!.id, (n) => ({
+                ...n,
+                documents: n.documents.map((d) => d.id === placeholder.id ? { ...pdfDoc, status: 'error' as const, progress: 0, geminiImportStatus: 'error' as const } : d),
+                lastModifiedAt: Date.now(),
+              }));
+            }
           })();
         } else {
           // ── Fallback: no File Search Store — use legacy Gemini Flash path via PdfProcessorModal ──

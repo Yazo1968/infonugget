@@ -72,6 +72,8 @@ export async function importDocumentToStore(
       documentName,
       mimeType,
       { nugget_id: nuggetId, document_name: documentName },
+      undefined, // chunkingConfig
+      300_000,   // pollTimeoutMs: 5 minutes for large PDFs
     );
     log.info(`Document "${documentName}" imported to store for nugget ${nuggetId}`);
     return res.documentName ?? undefined;

@@ -199,6 +199,10 @@ export interface ChatMessageRequest {
   thinking?: { budgetTokens: number };
   /** Pre-retrieved chunks from Gemini File Search (replaces Files API document blocks when provided) */
   retrievedChunks?: RetrievedChunk[];
+  /** Gemini File Search Store name — EF retrieves chunks internally when provided */
+  geminiStoreName?: string;
+  /** JSON schema for structured output from Gemini (used with File Search) */
+  responseJsonSchema?: Record<string, unknown>;
 }
 
 export interface ChatMessageResponse {

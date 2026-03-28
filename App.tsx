@@ -806,6 +806,7 @@ const App: React.FC = () => {
                       briefDiscardRef={briefDiscardRef}
                       documents={nuggetDocs}
                       subject={selectedNugget.domain}
+                      geminiStoreName={selectedNugget.geminiStoreName}
                       onGenerateSuggestions={generateBriefingSuggestions}
                       onAbortSuggestions={abortBriefingSuggestions}
                       dqafReport={dqafReport}

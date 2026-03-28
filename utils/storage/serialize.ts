@@ -391,6 +391,7 @@ export function serializeNugget(n: Nugget): StoredNugget {
     briefingSuggestions: n.briefingSuggestions,
     lastClosedAt: n.lastClosedAt,
     docVizResult: n.docVizResult,
+    geminiStoreName: n.geminiStoreName,
     createdAt: n.createdAt,
     lastModifiedAt: n.lastModifiedAt,
   };
@@ -448,6 +449,7 @@ export function deserializeNugget(sn: StoredNugget, cards: CardItem[], documents
     briefingSuggestions: sn.briefingSuggestions,
     lastClosedAt: sn.lastClosedAt,
     docVizResult: sn.docVizResult,
+    geminiStoreName: sn.geminiStoreName,
     createdAt: sn.createdAt,
     lastModifiedAt: sn.lastModifiedAt,
   };
@@ -485,6 +487,8 @@ export function serializeNuggetDocument(nuggetId: string, doc: UploadedFile): St
   if (doc.lastDisabledAt) stored.lastDisabledAt = doc.lastDisabledAt;
   if (doc.bookmarks) stored.bookmarks = doc.bookmarks;
   if (doc.bookmarkSource) stored.bookmarkSource = doc.bookmarkSource;
+  if (doc.geminiDocumentName) stored.geminiDocumentName = doc.geminiDocumentName;
+  if (doc.geminiImportStatus) stored.geminiImportStatus = doc.geminiImportStatus;
 
   return stored;
 }
@@ -516,6 +520,8 @@ export function deserializeNuggetDocument(stored: StoredNuggetDocument): Uploade
   if (stored.version) doc.version = stored.version;
   if (stored.lastEnabledAt) doc.lastEnabledAt = stored.lastEnabledAt;
   if (stored.lastDisabledAt) doc.lastDisabledAt = stored.lastDisabledAt;
+  if (stored.geminiDocumentName) doc.geminiDocumentName = stored.geminiDocumentName;
+  if (stored.geminiImportStatus) doc.geminiImportStatus = stored.geminiImportStatus as any;
 
   // Restore bookmarks, or migrate from flat structure if absent
   if (stored.bookmarks) {

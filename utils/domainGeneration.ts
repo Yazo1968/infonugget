@@ -1,6 +1,7 @@
 import { UploadedFile, Heading } from '../types';
 import { CLAUDE_MODEL } from './constants';
 import { callClaude } from './ai';
+import { chatMessageApi } from './api';
 import { RecordUsageFn } from '../hooks/useTokenUsage';
 
 // ── Domain Generation ──
@@ -122,11 +123,33 @@ ${docSummaries}`;
  * Returns structured 4-line domain profile (domain, content nature,
  * visualization paradigm, visual vocabulary).
  */
-export async function generateDomain(docs: UploadedFile[], recordUsage?: RecordUsageFn): Promise<string> {
-  const summaries = docs.map(extractDocumentSummary).join('\n\n---\n\n');
-  const { system, prompt } = buildDomainPrompt(summaries);
+export async function generateDomain(docs: UploadedFile[], recordUsage?: RecordUsageFn, geminiStoreName?: string): Promise<string> {
+  const { system, prompt: domainPrompt } = buildDomainPrompt(
+    docs.map(extractDocumentSummary).join('\n\n---\n\n'),
+  );
 
-  const { text, usage } = await callClaude(prompt, {
+  // Gemini File Search path — Gemini reads documents directly from the store
+  if (geminiStoreName) {
+    const response = await chatMessageApi({
+      action: 'docviz_analyse',
+      userText: domainPrompt,
+      systemPrompt: system,
+      documents: docs.map((d) => ({ name: d.name, content: '' })),
+      geminiStoreName,
+    });
+    recordUsage?.({
+      provider: 'gemini',
+      model: 'gemini-2.5-flash',
+      inputTokens: response.usage.inputTokens,
+      outputTokens: response.usage.outputTokens,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+    });
+    return response.responseText.trim().replace(/^["']|["']$/g, '');
+  }
+
+  // Legacy Claude path
+  const { text, usage } = await callClaude(domainPrompt, {
     system,
     maxTokens: 300,
   });
@@ -140,6 +163,5 @@ export async function generateDomain(docs: UploadedFile[], recordUsage?: RecordU
     cacheWriteTokens: usage.cache_creation_input_tokens,
   });
 
-  // Clean up: remove surrounding quotes if present, trim whitespace
   return text.trim().replace(/^["']|["']$/g, '');
 }
