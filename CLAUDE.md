@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 InfoNugget v6.1 — full-stack React app for AI-powered content card generation. Users organize work into Projects > Nuggets > Documents, then use AI to synthesize content cards with generated imagery.
 
 - **Stack**: React 19 + TypeScript 5.8 + Vite 6 + Tailwind CSS 4 + Supabase (auth, DB, storage, edge functions) + Vercel (hosting)
-- **AI Models**: Claude Sonnet 4.6 (content synthesis, chat, quality) + Gemini 3.1 Flash Image (`gemini-3.1-flash-image-preview`, image generation) + Gemini 2.5 Flash (PDF conversion/heading extraction)
+- **AI Models**: Gemini 2.5 Flash (primary: Chat, SmartDeck, DocViz, domain, briefing via File Search RAG) + Claude Sonnet 4.6 (legacy fallback, content synthesis for Sources path) + Gemini 3.1 Flash Image (`gemini-3.1-flash-image-preview`, image generation)
+- **Document RAG**: Gemini File Search — documents uploaded to per-nugget File Search Stores, Gemini queries them natively. No chunk extraction needed. See `docs/gemini-file-search-next-steps.md` for architecture and status.
 - **Auth**: Supabase Auth — email/password + Google OAuth (login required)
 - **Persistence**: Supabase PostgreSQL + Storage (production), IndexedDB fallback (legacy)
 - **State**: React Context (5 focused contexts under `context/` + composition hook `useAppContext`), no Redux/Zustand
@@ -51,11 +52,13 @@ Two AI call patterns coexist. **`utils/api.ts`** defines pipeline wrappers; **`u
 |---|---|---|---|
 | `generate-card` | `generateCardApi()` | Multi-agent card pipeline: synthesis → image → storage | `supabase/functions/generate-card/` |
 | `generate-graphics` | `generateGraphicsApi()` | DocViz graphic generation: screenshot + prompt → Gemini image | `supabase/functions/generate-graphics/` |
-| `chat-message` | `chatMessageApi()` | Chat + card content generation via Claude | Remote only |
+| `chat-message` | `chatMessageApi()` | Gemini File Search RAG (primary) + Claude fallback. v22. | Remote only |
+| `manage-stores` | `createStoreApi()`, `uploadDocumentToStoreApi()`, etc. | File Search Store CRUD + 3-step upload (Files API → ACTIVE → import). v7. | `supabase/functions/manage-stores/` |
+| `retrieve-chunks` | `retrieveChunksApi()` | Chunk retrieval via Gemini (may be deprecated — chat-message handles internally) | `supabase/functions/retrieve-chunks/` |
 | `manage-images` | `manageImagesApi()` | Image CRUD (delete, restore, history) | Remote only |
 | `document-quality` | `documentQualityApi()` | DQAF v2: 3-stage quality assessment | `supabase/functions/document-quality/` |
 | `claude-proxy` | `callClaude()` | Anthropic Messages API | Remote only (legacy) |
-| `claude-files-proxy` | `uploadToFilesAPI()` | Anthropic Files API | Remote only (legacy) |
+| `claude-files-proxy` | `uploadToFilesAPI()` | Anthropic Files API | Remote only (legacy — being phased out) |
 | `gemini-proxy` | `callGeminiProxy()` | Google Gemini SDK (key rotation) | Remote only (legacy) |
 
 All calls: auth token from `supabase.auth.getSession()`, JWT expiry checked with 30s buffer, auto-refresh.
