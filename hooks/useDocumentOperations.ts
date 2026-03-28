@@ -35,6 +35,73 @@ const log = createLogger('DocOps');
 // Layout directives are generated at image generation time via Gemini Flash (useCardGeneration.ts).
 // Claude only synthesizes content — no directive generation in synthesis prompts.
 
+/**
+ * Parse headings from a Gemini File Search retrieval response.
+ * Attempts JSON extraction first, then falls back to line-by-line heuristic parsing.
+ */
+function parseHeadingsFromResponse(responseText: string): Heading[] {
+  if (!responseText.trim()) return [];
+
+  // Try JSON extraction first (Gemini may return a JSON array)
+  try {
+    const cleaned = responseText
+      .replace(/```(?:json)?\s*/g, '')
+      .replace(/```\s*/g, '')
+      .trim();
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
+    if (arrayMatch) {
+      const parsed = JSON.parse(arrayMatch[0]) as Array<{ level: number; title: string; page?: number }>;
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed[0].title) {
+        return parsed.map((entry, i) => ({
+          level: entry.level || 1,
+          text: entry.title,
+          id: `h-${i}-${Math.random().toString(36).substr(2, 4)}`,
+          selected: false,
+          page: typeof entry.page === 'number' ? entry.page : 0,
+        }));
+      }
+    }
+  } catch {
+    // JSON parse failed — fall through to heuristic
+  }
+
+  // Heuristic: parse numbered/bulleted lines with heading-like patterns
+  const headings: Heading[] = [];
+  const lines = responseText.split('\n').map((l) => l.trim()).filter(Boolean);
+  for (const line of lines) {
+    // Match patterns like "1. Introduction", "- Chapter 1: Overview", "## Methods"
+    const bulletMatch = line.match(/^(?:[-*•]|\d+[.)]\s*)\s*(.+)/);
+    const mdMatch = line.match(/^(#{1,6})\s+(.+)/);
+
+    let title: string | null = null;
+    let level = 1;
+
+    if (mdMatch) {
+      level = mdMatch[1].length;
+      title = mdMatch[2].trim();
+    } else if (bulletMatch) {
+      title = bulletMatch[1].trim();
+      // Infer level from indentation of original line
+      const indent = line.length - line.trimStart().length;
+      level = indent >= 4 ? 2 : 1;
+    }
+
+    if (title && title.length > 2 && title.length < 200) {
+      // Strip trailing punctuation that doesn't belong in a heading
+      title = title.replace(/[:]\s*$/, '').trim();
+      headings.push({
+        level,
+        text: title,
+        id: `h-${headings.length}-${Math.random().toString(36).substr(2, 4)}`,
+        selected: false,
+        page: 0,
+      });
+    }
+  }
+
+  return headings;
+}
+
 export interface UseDocumentOperationsParams {
   recordUsage: RecordUsageFn;
   onDomainGenPending: (nuggetId: string, docIds: string[]) => void;
@@ -703,9 +770,96 @@ export function useDocumentOperations({
         if (choice === 'markdown') {
           // User chose "Convert to Markdown"
           commitMarkdownDoc(file, placeholder, uniqueName);
+        } else if (selectedNugget?.geminiStoreName) {
+          // ── Fast path: File Search import (bypasses Gemini Flash heading extraction) ──
+          // Commit PDF immediately as 'processing' so it shows in the Sources panel
+          const pdfBase64 = await fileToBase64(file);
+
+          const pdfDoc: UploadedFile = {
+            id: placeholder.id,
+            name: uniqueName,
+            size: file.size,
+            type: file.type,
+            lastModified: file.lastModified,
+            sourceType: 'native-pdf' as const,
+            pdfBase64,
+            bookmarks: [],
+            bookmarkSource: 'ai_generated' as const,
+            structure: [],
+            status: 'processing' as const,
+            progress: 50,
+            createdAt: Date.now(),
+            originalName: file.name,
+            version: 1,
+            sourceOrigin: { type: 'uploaded' as const, timestamp: Date.now() },
+          };
+          updateNuggetDocument(placeholder.id, pdfDoc);
+
+          // Async pipeline: Files API upload + File Search import + heading extraction
+          (async () => {
+            // 1. Upload to Files API (legacy fallback — non-blocking)
+            let pdfFileId: string | undefined;
+            try {
+              pdfFileId = await uploadToFilesAPI(
+                base64ToBlob(pdfBase64, 'application/pdf'),
+                uniqueName,
+                'application/pdf',
+              );
+            } catch (err) {
+              log.warn('Native PDF Files API upload failed:', err);
+            }
+
+            // 2. Import to File Search Store
+            let geminiDocName: string | undefined;
+            try {
+              geminiDocName = await importDocumentToStore(
+                selectedNugget.id, selectedNugget.geminiStoreName!,
+                uniqueName, pdfBase64, 'application/pdf',
+              );
+            } catch (err) {
+              log.warn('File Search import failed:', err);
+            }
+
+            // 3. Extract headings via lightweight retrieval query
+            let bookmarks: BookmarkNode[] = [];
+            let structure: Heading[] = [];
+            if (geminiDocName && selectedNugget.geminiStoreName) {
+              try {
+                const headingQuery = 'List all section headings and their hierarchy in this document. For each heading, provide the heading level (1 for top-level, 2 for sub-section, etc.), and the exact heading text. Format as a JSON array: [{"level": 1, "title": "..."}, {"level": 2, "title": "..."}, ...]';
+                const result = await retrieveChunksApi({
+                  storeName: selectedNugget.geminiStoreName,
+                  queryText: headingQuery,
+                  maxChunks: 50,
+                });
+                // Parse headings from the responseText (Gemini's natural language answer)
+                const responseText = result.responseText || '';
+                const parsed = parseHeadingsFromResponse(responseText);
+                if (parsed.length > 0) {
+                  structure = parsed;
+                  bookmarks = headingsToBookmarks(parsed);
+                  log.info(`Extracted ${parsed.length} headings via File Search for "${uniqueName}"`);
+                } else {
+                  log.warn(`No headings parsed from File Search response for "${uniqueName}"`);
+                }
+              } catch (err) {
+                log.warn('Heading extraction via File Search failed:', err);
+              }
+            }
+
+            // 4. Final update with all results
+            updateNuggetDocument(placeholder.id, {
+              ...pdfDoc,
+              fileId: pdfFileId,
+              bookmarks,
+              structure,
+              geminiDocumentName: geminiDocName,
+              geminiImportStatus: geminiDocName ? 'ready' as const : undefined,
+              status: 'ready' as const,
+              progress: 100,
+            });
+          })();
         } else {
-          // Step 2: User chose "Keep as PDF" — get base64, open modal for Gemini analysis
-          // Files API upload is deferred until the user confirms (Save) in the modal
+          // ── Fallback: no File Search Store — use legacy Gemini Flash path via PdfProcessorModal ──
           const pdfBase64 = await fileToBase64(file);
 
           // Update placeholder so the modal can display the PDF
@@ -716,15 +870,13 @@ export function useDocumentOperations({
             status: 'processing' as const,
           });
 
-          // Open the PDF Processor Modal — Gemini runs automatically inside
+          // Open the PDF Processor Modal — Gemini Flash runs automatically inside
           const result = await askPdfProcessor(pdfBase64, uniqueName);
 
           if (result === 'discard') {
-            // User wants to remove the PDF entirely — no Files API cleanup needed (never uploaded)
             removeNuggetDocument(placeholder.id);
             addToast({ type: 'info', message: 'PDF discarded', duration: 3000 });
           } else if (result === 'convert-to-markdown') {
-            // User wants Gemini markdown conversion instead
             updateNuggetDocument(placeholder.id, {
               ...placeholder,
               sourceType: 'markdown' as const,
@@ -738,11 +890,9 @@ export function useDocumentOperations({
             commitMarkdownDoc(file, placeholder, uniqueName);
             addToast({ type: 'info', message: 'Converting PDF to markdown...', duration: 3000 });
           } else if (result === 'cancel') {
-            // Cancel = discard since no bookmarks were confirmed
             removeNuggetDocument(placeholder.id);
             addToast({ type: 'info', message: 'PDF discarded', duration: 3000 });
           } else {
-            // User accepted with bookmarks — now upload to Files API and commit
             const { pdfBase64: processedBase64, bookmarks, bookmarkSource } = result;
 
             let pdfFileId: string | undefined;
