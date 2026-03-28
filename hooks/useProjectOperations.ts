@@ -88,8 +88,8 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
   // ── Nugget creation ──
 
   const handleCreateNugget = useCallback(
-    (nugget: Nugget, pendingFiles?: PendingFileUpload[]) => {
-      addNugget(nugget);
+    async (nugget: Nugget, pendingFiles?: PendingFileUpload[]) => {
+      await addNugget(nugget);
       setSelectedNuggetId(nugget.id);
       setSelectionLevel('nugget');
       // Add to target project if specified
@@ -350,7 +350,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
         createdAt: now,
         lastModifiedAt: now,
       };
-      addNugget(copiedNugget);
+      await addNugget(copiedNugget);
       addNuggetToProject(targetProjectId, newNuggetId);
     },
     [nuggets, projects, addNugget, addNuggetToProject],
@@ -387,7 +387,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
           createdAt: now,
           lastModifiedAt: now,
         };
-        addNugget(copiedNugget);
+        await addNugget(copiedNugget);
         newNuggetIds.push(newNuggetId);
       }
 
@@ -488,7 +488,7 @@ export function useProjectOperations({ recordUsage, askPdfProcessorRef }: UsePro
           createdAt: now,
           lastModifiedAt: now,
         };
-        addNugget(copiedNugget);
+        await addNugget(copiedNugget);
         setProjects((prev) => [...prev, newProject]);
       }
     },

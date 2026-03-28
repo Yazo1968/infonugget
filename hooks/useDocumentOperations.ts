@@ -658,7 +658,7 @@ export function useDocumentOperations({
         createdAt: Date.now(),
         lastModifiedAt: Date.now(),
       };
-      addNugget(newNugget);
+      await addNugget(newNugget);
       // Add to same project as the source nugget
       if (sourceProject) {
         addNuggetToProject(sourceProject.id, newNugget.id);
@@ -717,13 +717,11 @@ export function useDocumentOperations({
               selectedNugget.id, selectedNugget.geminiStoreName,
               uniqueName, btoa(unescape(encodeURIComponent(processed.content))), 'text/plain',
             ).then((geminiDocName) => {
-              if (geminiDocName) {
-                updateNuggetDocument(placeholder.id, {
-                  ...processed, name: uniqueName, fileId,
-                  geminiDocumentName: geminiDocName,
-                  geminiImportStatus: 'ready' as const,
-                });
-              }
+              updateNuggetDocument(placeholder.id, {
+                ...processed, name: uniqueName, fileId,
+                geminiDocumentName: geminiDocName,
+                geminiImportStatus: geminiDocName ? 'ready' as const : 'error' as const,
+              });
             });
           }
         })
@@ -942,13 +940,11 @@ export function useDocumentOperations({
                 selectedNugget.id, selectedNugget.geminiStoreName,
                 uniqueName, processedBase64, 'application/pdf',
               ).then((geminiDocName) => {
-                if (geminiDocName) {
-                  updateNuggetDocument(placeholder.id, {
-                    ...pdfDoc,
-                    geminiDocumentName: geminiDocName,
-                    geminiImportStatus: 'ready' as const,
-                  });
-                }
+                updateNuggetDocument(placeholder.id, {
+                  ...pdfDoc,
+                  geminiDocumentName: geminiDocName,
+                  geminiImportStatus: geminiDocName ? 'ready' as const : 'error' as const,
+                });
               });
             }
           }

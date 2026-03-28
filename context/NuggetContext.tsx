@@ -17,7 +17,7 @@ export interface NuggetContextValue {
   selectedDocument: UploadedFile | undefined;
 
   // Nugget CRUD
-  addNugget: (nugget: Nugget) => void;
+  addNugget: (nugget: Nugget) => Promise<void>;
   deleteNugget: (nuggetId: string) => Promise<void>;
   updateNugget: (nuggetId: string, updater: (n: Nugget) => Nugget) => void;
 

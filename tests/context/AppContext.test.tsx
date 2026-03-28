@@ -140,12 +140,12 @@ describe('AppContext — Project CRUD', () => {
 });
 
 describe('AppContext — Nugget CRUD', () => {
-  it('addNugget adds a nugget', () => {
+  it('addNugget adds a nugget', async () => {
     const { result } = renderHook(() => useAppContext(), { wrapper: makeWrapper() });
     const nugget = makeNugget({ name: 'Research' });
 
-    act(() => {
-      result.current.addNugget(nugget);
+    await act(async () => {
+      await result.current.addNugget(nugget);
     });
 
     expect(result.current.nuggets).toHaveLength(1);

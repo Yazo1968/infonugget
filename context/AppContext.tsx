@@ -171,7 +171,7 @@ interface AppContextValue {
   selectedNugget: Nugget | undefined;
 
   // Helpers
-  addNugget: (nugget: Nugget) => void;
+  addNugget: (nugget: Nugget) => Promise<void>;
   deleteNugget: (nuggetId: string) => Promise<void>;
   updateNugget: (nuggetId: string, updater: (n: Nugget) => Nugget) => void;
 
@@ -414,16 +414,12 @@ export const AppProvider: React.FC<{
   }, [selectedNugget, activeCardId]);
 
   // Nugget helpers
-  const addNugget = useCallback((nugget: Nugget) => {
-    setNuggets((prev) => [...prev, nugget]);
-    // Fire-and-forget: create a Gemini File Search Store for the new nugget
-    createStoreForNugget(nugget.id).then((storeName) => {
-      if (storeName) {
-        setNuggets((prev) =>
-          prev.map((n) => (n.id === nugget.id ? { ...n, geminiStoreName: storeName } : n)),
-        );
-      }
-    });
+  const addNugget = useCallback(async (nugget: Nugget) => {
+    // Create Gemini File Search Store before adding nugget to state —
+    // ensures geminiStoreName is available when documents are uploaded.
+    const storeName = await createStoreForNugget(nugget.id);
+    const nuggetWithStore = storeName ? { ...nugget, geminiStoreName: storeName } : nugget;
+    setNuggets((prev) => [...prev, nuggetWithStore]);
   }, []);
 
   const deleteNugget = useCallback(
@@ -659,18 +655,20 @@ export const AppProvider: React.FC<{
               nugget.id, nugget.geminiStoreName, doc.name,
               fileBase64, mimeType,
             ).then((geminiDocName) => {
-              if (geminiDocName) {
-                setNuggets((prev) =>
-                  prev.map((n) =>
-                    n.id !== nugget.id ? n : {
-                      ...n,
-                      documents: n.documents.map((d) =>
-                        d.id === docId ? { ...d, geminiDocumentName: geminiDocName, geminiImportStatus: 'ready' as const } : d,
-                      ),
-                    },
-                  ),
-                );
-              }
+              setNuggets((prev) =>
+                prev.map((n) =>
+                  n.id !== nugget.id ? n : {
+                    ...n,
+                    documents: n.documents.map((d) =>
+                      d.id === docId ? {
+                        ...d,
+                        geminiDocumentName: geminiDocName,
+                        geminiImportStatus: geminiDocName ? 'ready' as const : 'error' as const,
+                      } : d,
+                    ),
+                  },
+                ),
+              );
             });
           }
         }
